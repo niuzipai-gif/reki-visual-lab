@@ -112,7 +112,7 @@ export const PRESETS = Object.freeze([
   {
     id: "anomaly-signal",
     name: "异常信号",
-    filters: { grain: 0.24, chromaShift: 0.08 },
+    filters: { grain: 0.24, rgbOffset: 3 },
     createLayers: build("anomaly-signal", ({ create, random }) => [
       create("path", [
         point(random, 0.12, 0.6),

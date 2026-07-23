@@ -34,6 +34,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .entry-panel h1 { margin: 0; font-size: clamp(4.5rem, 18vw, 8rem); font-weight: 850; letter-spacing: -.08em; line-height: .86; }
 .entry-copy { max-width: 20rem; margin: 28px auto; color: var(--reki-muted); line-height: 1.7; }
 .upload-button { width: min(100%, 260px); padding: 15px 24px; border-radius: 999px; }
+.import-drop-zone { width: min(100%, 320px); margin: 14px auto 0; padding: 12px; border: 1px dashed var(--reki-edge); border-radius: 14px; color: var(--reki-muted); background: rgba(255,255,255,.28); font-size: .68rem; transition: border-color .18s ease, background .18s ease; }
+.import-drop-zone[data-dragging="true"] { border-color: rgba(180,128,5,.62); background: rgba(239,190,59,.15); }
+.drop-hint { display: block; pointer-events: none; }
+.import-feedback { margin: 12px 0 0; font-size: .72rem; }
+.import-feedback.error { color: #8a342c; }
+.import-feedback.success { color: #456630; }
 .privacy-note { margin: 16px 0 0; color: var(--reki-muted); font-size: .75rem; }
 
 .workbench-shell { width: 100vw; height: 100vh; min-height: 620px; display: grid; grid-template-columns: 78px minmax(0, 1fr); grid-template-rows: 58px 74px minmax(0,1fr) 40px; overflow: hidden; background: var(--reki-bg); }
@@ -78,6 +84,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .canvas-background.demo-canvas { background-image: url("/cosplay-reference.png"); background-position: 63% 49%; background-size: cover; }
 .canvas-background.demo-canvas::after { position: absolute; inset: 0; content: ""; pointer-events: none; background: rgba(11, 11, 9, .36); }
 .canvas-background img, .canvas-background canvas { display: block; width: 100%; height: 100%; object-fit: cover; }
+.background-source { position: absolute; inset: 0; }
+.canvas-background .hidden { visibility: hidden; }
 .canvas-surface .konvajs-content { position: relative; z-index: 1; }
 .canvas-grid-overlay { position: absolute; z-index: 2; inset: 0; pointer-events: none; background-image: linear-gradient(rgba(239,190,59,.11) 1px, transparent 1px), linear-gradient(90deg, rgba(239,190,59,.11) 1px, transparent 1px); background-size: 10% 10%; }
 .desktop-inspector, .desktop-layers { position: absolute; right: 18px; width: 214px; overflow: auto; }
@@ -87,6 +95,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .inspector-form header, .layers-panel-content header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .inspector-form header small, .layers-panel-content header small { color: var(--reki-muted); font-size: .5rem; font-weight: 800; letter-spacing: .13em; }
 .inspector-form h2, .layers-panel-content h2 { margin: 3px 0 0; font-size: .78rem; }
+.filter-panel header { display: flex; align-items: center; justify-content: space-between; }
+.filter-panel header small { color: var(--reki-muted); font-size: .5rem; font-weight: 800; letter-spacing: .13em; }
+.filter-panel h2 { margin: 3px 0 0; font-size: .78rem; }
+.filter-panel fieldset { min-width: 0; margin: 14px 0 0; padding: 0; border: 0; }
+.filter-panel legend { width: 100%; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--reki-edge); color: var(--reki-muted); font-size: .54rem; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }
+.filter-panel .color-grid { grid-template-columns: 1fr 1fr; }
+.filter-reset { width: 100%; margin-top: 8px; padding: 8px; border: 1px solid var(--reki-edge); border-radius: 9px; background: rgba(255,255,255,.5); font-size: .62rem; font-weight: 720; }
+.filter-reset:hover { background: rgba(255,255,255,.72); }
 .type-badge, .layers-panel-content header > span { padding: 4px 7px; border-radius: 999px; color: #4a3a0c; background: rgba(239,190,59,.22); font: 750 .56rem/1 ui-monospace, monospace; }
 .inspector-form fieldset { min-width: 0; margin: 14px 0 0; padding: 0; border: 0; }
 .inspector-form legend { width: 100%; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--reki-edge); color: var(--reki-muted); font-size: .54rem; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }

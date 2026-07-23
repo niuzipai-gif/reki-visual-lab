@@ -5,6 +5,7 @@ import { describe, expect, test, vi } from "vitest";
 import { Workbench } from "../Workbench.jsx";
 import { createAnnotation, createProject } from "../domain/project.js";
 import { TOOL_DEFINITIONS } from "../features/tools/toolDefinitions.js";
+import { DEFAULT_FILTER_SETTINGS } from "../features/filters/filterPipeline.js";
 
 vi.mock("../features/canvas/EditorCanvas.jsx", async () => {
   const { createAnnotation } = await import("../domain/project.js");
@@ -245,6 +246,46 @@ describe("responsive Reki workbench", () => {
     expect(document.querySelector(".canvas-stage-wrap")).not.toHaveClass(
       "demo-canvas",
     );
+  });
+
+  test("routes the bottom-image tool to pixel controls and resets all effects", async () => {
+    const user = userEvent.setup();
+    renderDemo();
+    const canvas = screen.getByRole("application", { name: "标注画布" });
+
+    await user.click(screen.getByRole("button", { name: "底图效果" }));
+    expect(screen.getByRole("form", { name: "底图效果" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("checkbox", { name: "启用阈值" }));
+    expect(JSON.parse(canvas.dataset.filters)).toMatchObject({
+      threshold: 128,
+    });
+
+    await user.click(screen.getByRole("button", { name: "重置底图效果" }));
+    expect(JSON.parse(canvas.dataset.filters)).toEqual(DEFAULT_FILTER_SETTINGS);
+  });
+
+  test("previews one continuous slider adjustment locally and commits one undo step", async () => {
+    const user = userEvent.setup();
+    renderDemo();
+    const canvas = screen.getByRole("application", { name: "标注画布" });
+    const undo = screen.getByRole("button", { name: "撤销" });
+    const initialFilters = JSON.parse(canvas.dataset.filters);
+
+    await user.click(screen.getByRole("button", { name: "底图效果" }));
+    const grain = screen.getByRole("slider", { name: "颗粒" });
+    fireEvent.change(grain, { target: { value: "0.2" } });
+    fireEvent.change(grain, { target: { value: "0.4" } });
+    fireEvent.change(grain, { target: { value: "0.6" } });
+
+    expect(JSON.parse(canvas.dataset.filters)).toMatchObject({ grain: 0.6 });
+    expect(undo).toBeDisabled();
+
+    fireEvent.pointerUp(grain);
+    expect(undo).toBeEnabled();
+    await user.click(undo);
+    expect(JSON.parse(canvas.dataset.filters)).toEqual(initialFilters);
+    expect(undo).toBeDisabled();
   });
 
   test("edits selected-layer inspector values and applies style scopes", async () => {

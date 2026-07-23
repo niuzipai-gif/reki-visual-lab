@@ -1,28 +1,44 @@
-import React, { lazy, Suspense } from "react";
+import React, { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { ImportPanel } from "./features/import/ImportPanel.jsx";
 
 const LazyWorkbench = lazy(() => import("./Workbench.jsx"));
 
-function Entry() {
-  return (
-    <main className="entry-shell">
-      <section className="entry-panel" aria-labelledby="reki-title">
-        <p className="entry-kicker">视觉标注实验室</p>
-        <h1 id="reki-title">REKI</h1>
-        <p className="entry-copy">从一张照片开始你的静态视觉实验。</p>
-        <button className="upload-button primary-button" type="button">
-          选择照片
-        </button>
-        <p className="privacy-note">照片仅在本机处理</p>
-      </section>
-    </main>
-  );
+export function useOwnedImageResource(image) {
+  const pendingDisposals = useRef(new Map());
+
+  useEffect(() => {
+    if (typeof image?.dispose !== "function") return undefined;
+    const pending = pendingDisposals.current.get(image);
+    if (pending !== undefined) {
+      clearTimeout(pending);
+      pendingDisposals.current.delete(image);
+    }
+
+    return () => {
+      const timeout = setTimeout(() => {
+        pendingDisposals.current.delete(image);
+        image.dispose();
+      }, 0);
+      pendingDisposals.current.set(image, timeout);
+    };
+  }, [image]);
 }
 
 export function App({
   initialDemoProject =
     globalThis.location?.search.includes("demo=1") ?? false,
+  decode,
 } = {}) {
-  if (!initialDemoProject) return <Entry />;
+  const [project, setProject] = useState(
+    initialDemoProject ? initialDemoProject : null,
+  );
+  useOwnedImageResource(
+    project && project !== true ? project.image : null,
+  );
+
+  if (!project) {
+    return <ImportPanel onProject={setProject} decode={decode} />;
+  }
 
   return (
     <Suspense
@@ -32,7 +48,7 @@ export function App({
         </main>
       }
     >
-      <LazyWorkbench initialDemoProject={initialDemoProject} />
+      <LazyWorkbench initialDemoProject={project} />
     </Suspense>
   );
 }

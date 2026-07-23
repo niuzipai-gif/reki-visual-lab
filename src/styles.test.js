@@ -76,4 +76,25 @@ describe("Reki CSS contracts", () => {
       css.match(/\.canvas-surface\s*\{[^}]*\}/)?.[0] ?? "",
     ).not.toMatch(/\bfilter\s*:/);
   });
+
+  test("keeps import and pixel controls compact within the approved glass system", () => {
+    expect(css).toMatch(
+      /\.import-drop-zone\s*\{[^}]*border:[^}]*var\(--reki-edge\);[^}]*border-radius:/,
+    );
+    expect(css).toMatch(
+      /\.filter-panel fieldset\s*\{[^}]*border:\s*0;/,
+    );
+    expect(css).toMatch(
+      /\.filter-reset\s*\{[^}]*border:[^}]*var\(--reki-edge\);/,
+    );
+  });
+
+  test("hides only inactive pixel sources without affecting annotation layers", () => {
+    expect(css).toMatch(
+      /\.canvas-background \.hidden\s*\{[^}]*visibility:\s*hidden;/,
+    );
+    expect(css).toMatch(
+      /\.background-source\s*\{[^}]*position:\s*absolute;/,
+    );
+  });
 });

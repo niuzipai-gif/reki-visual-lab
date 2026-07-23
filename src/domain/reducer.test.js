@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { createAnnotation, createProject } from "./project.js";
-import { createEditorState, editorReducer } from "./reducer.js";
+import {
+  MAX_HISTORY_ENTRIES,
+  createEditorState,
+  editorReducer,
+} from "./reducer.js";
 
 function addLayer(state, layer) {
   return editorReducer(state, { type: "layer/add", layer });
@@ -424,5 +428,53 @@ describe("project-level actions", () => {
     const state = createEditorState();
 
     expect(editorReducer(state, { type: "unknown" })).toBe(state);
+  });
+
+  test("resets all filter values to the supplied defaults in one commit", () => {
+    const start = createEditorState({
+      ...createProject(),
+      filters: {
+        contrast: 1.2,
+        threshold: 90,
+        grain: 0.8,
+        duotone: { dark: [0, 0, 0], light: [255, 255, 255] },
+      },
+    });
+    const defaults = {
+      threshold: null,
+      halftone: false,
+      grain: 0,
+      grainSeed: 1,
+      rgbOffset: 0,
+      scanline: 0,
+      duotone: null,
+    };
+
+    const reset = editorReducer(start, {
+      type: "filters/reset",
+      filters: defaults,
+    });
+
+    expect(reset.present.filters).toEqual(defaults);
+    expect(reset.past).toHaveLength(1);
+  });
+
+  test("caps undo history while retaining the newest commits", () => {
+    expect(MAX_HISTORY_ENTRIES).toBe(100);
+    let state = createEditorState();
+
+    for (let width = 1; width <= 105; width += 1) {
+      state = editorReducer(state, {
+        type: "canvas/update",
+        patch: { width },
+      });
+    }
+
+    expect(state.past).toHaveLength(100);
+    for (let index = 0; index < 100; index += 1) {
+      state = editorReducer(state, { type: "history/undo" });
+    }
+    expect(state.present.canvas.width).toBe(5);
+    expect(state.past).toHaveLength(0);
   });
 });

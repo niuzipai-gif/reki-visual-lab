@@ -1,5 +1,7 @@
 import { createProject } from "./project.js";
 
+export const MAX_HISTORY_ENTRIES = 100;
+
 export function createEditorState(project = createProject()) {
   return {
     past: [],
@@ -56,7 +58,7 @@ function commit(
 ) {
   return {
     ...state,
-    past: [...state.past, state.present],
+    past: [...state.past, state.present].slice(-MAX_HISTORY_ENTRIES),
     present: nextPresent,
     future: [],
     selectedLayerId: reconcileSelection(selectedLayerId, nextPresent),
@@ -80,7 +82,7 @@ export function editorReducer(state, action) {
   if (action.type === "history/redo" && state.future.length) {
     return {
       ...state,
-      past: [...state.past, state.present],
+      past: [...state.past, state.present].slice(-MAX_HISTORY_ENTRIES),
       present: state.future[0],
       future: state.future.slice(1),
       selectedLayerId: reconcileSelection(
@@ -243,6 +245,18 @@ export function editorReducer(state, action) {
     return commit(state, {
       ...state.present,
       filters: { ...state.present.filters, ...patch },
+    });
+  }
+
+  if (action.type === "filters/reset") {
+    const filters = action.filters ?? {};
+    if (valuesEqual(filters, state.present.filters)) {
+      return state;
+    }
+
+    return commit(state, {
+      ...state.present,
+      filters: structuredClone(filters),
     });
   }
 

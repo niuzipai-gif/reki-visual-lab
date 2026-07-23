@@ -1,5 +1,5 @@
 import React, { StrictMode } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { createAnnotation, createProject } from "../../domain/project.js";
 import { Inspector } from "../tools/Inspector.jsx";
@@ -839,7 +839,7 @@ describe("EditorCanvas", () => {
     expect(path).toHaveAttribute("data-stroke", "#12abef");
   });
 
-  test("draws decoded drawable backgrounds on a visible project-sized canvas", () => {
+  test("draws decoded drawable backgrounds on a visible project-sized canvas", async () => {
     const drawImage = vi.fn();
     const clearRect = vi.fn();
     const getContext = vi
@@ -869,8 +869,10 @@ describe("EditorCanvas", () => {
       expect(renderedImage).toHaveAttribute("width", "1080");
       expect(renderedImage).toHaveAttribute("height", "1350");
       expect(renderedImage).not.toHaveAttribute("hidden");
-      expect(clearRect).toHaveBeenCalledWith(0, 0, 1080, 1350);
-      expect(drawImage).toHaveBeenCalledWith(drawable, 0, 0, 1080, 1350);
+      await waitFor(() => {
+        expect(clearRect).toHaveBeenCalledWith(0, 0, 1080, 1350);
+        expect(drawImage).toHaveBeenCalledWith(drawable, 0, 0, 1080, 1350);
+      });
       expect(background.nextElementSibling).toBe(stage);
       expect(stage.nextElementSibling).toBe(grid);
       expect(stage.style.filter).toBe("");
@@ -899,8 +901,8 @@ describe("EditorCanvas", () => {
         />,
       );
 
-      expect(screen.getByTestId("background-image").tagName).toBe("IMG");
-      expect(screen.getByTestId("background-image")).toHaveAttribute(
+      expect(screen.getByTestId("background-image").tagName).toBe("CANVAS");
+      expect(screen.getByTestId("background-image-source")).toHaveAttribute(
         "src",
         "blob:reki-preview",
       );
@@ -920,7 +922,11 @@ describe("EditorCanvas", () => {
       expect(screen.getByTestId("canvas-background")).toHaveClass(
         "demo-canvas",
       );
-      expect(screen.queryByTestId("background-image")).not.toBeInTheDocument();
+      expect(screen.getByTestId("background-image")).toBeInTheDocument();
+      expect(screen.getByTestId("background-image-source")).toHaveAttribute(
+        "src",
+        "/cosplay-reference.png",
+      );
       expect(drawImage).not.toHaveBeenCalled();
     } finally {
       getContext.mockRestore();
@@ -1019,7 +1025,11 @@ describe("EditorCanvas", () => {
       />,
     );
 
-    expect(screen.queryByTestId("background-image")).not.toBeInTheDocument();
+    expect(screen.getByTestId("background-image")).toBeInTheDocument();
+    expect(screen.getByTestId("background-image-source")).toHaveAttribute(
+      "src",
+      "/cosplay-reference.png",
+    );
   });
 
   test("routes annotation interactions to layer selection and changes", () => {

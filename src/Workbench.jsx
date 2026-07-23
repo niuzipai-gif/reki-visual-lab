@@ -7,6 +7,8 @@ import { TopBar } from "./components/TopBar.jsx";
 import { createAnnotation, createProject } from "./domain/project.js";
 import { createEditorState, editorReducer } from "./domain/reducer.js";
 import { EditorCanvas } from "./features/canvas/EditorCanvas.jsx";
+import { FilterPanel } from "./features/filters/FilterPanel.jsx";
+import { DEFAULT_FILTER_SETTINGS } from "./features/filters/filterPipeline.js";
 import { Inspector } from "./features/tools/Inspector.jsx";
 import { LayersPanel } from "./features/tools/LayersPanel.jsx";
 import { PresetStrip } from "./features/tools/PresetStrip.jsx";
@@ -60,6 +62,7 @@ export function Workbench({
   const [zoom, setZoom] = useState(72);
   const [grid, setGrid] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
+  const [filterPreview, setFilterPreview] = useState(null);
   const presetSeed = useRef(40);
   const initializedSelection = useRef(false);
   const exportCloseRef = useRef(null);
@@ -167,8 +170,38 @@ export function Workbench({
       onDelete={() => selectedLayer && dispatch({ type: "layer/remove", id: selectedLayer.id })}
     />
   );
+  const visibleFilters = filterPreview ?? state.present.filters;
+  const previewFilters = (patch) => {
+    setFilterPreview((current) => ({
+      ...(current ?? state.present.filters),
+      ...patch,
+    }));
+  };
+  const commitFilters = (patch) => {
+    const filters = {
+      ...(filterPreview ?? state.present.filters),
+      ...patch,
+    };
+    setFilterPreview(null);
+    dispatch({ type: "filters/update", patch: filters });
+  };
+  const filterPanel = (
+    <FilterPanel
+      settings={visibleFilters}
+      onPreview={previewFilters}
+      onCommit={commitFilters}
+      onReset={() => {
+        setFilterPreview(null);
+        dispatch({
+          type: "filters/reset",
+          filters: DEFAULT_FILTER_SETTINGS,
+        });
+      }}
+    />
+  );
 
   const applyPreset = (preset) => {
+    setFilterPreview(null);
     const layers = preset
       .createLayers({ seed: presetSeed.current++ })
       .map((layer) => ({ ...layer, presetId: preset.id }));
@@ -180,20 +213,30 @@ export function Workbench({
     });
   };
 
-  const specialSheet = ["tools", "presets", "ai"].includes(mobileSheet)
+  const specialSheet = ["tools", "presets", "ai", "filter"].includes(mobileSheet)
     ? {
-        title: { tools: "工具", presets: "预设", ai: "AI 扫描" }[mobileSheet],
+        title: {
+          tools: "工具",
+          presets: "预设",
+          ai: "AI 扫描",
+          filter: "底图效果",
+        }[mobileSheet],
         content:
           mobileSheet === "tools" ? (
             <div className="mobile-tool-grid">
               {TOOL_DEFINITIONS.map((tool) => (
-                <button key={tool.id} type="button" aria-pressed={activeTool === tool.id} onClick={() => { setActiveTool(tool.id); setMobileSheet(null); }}>
+                <button key={tool.id} type="button" aria-pressed={activeTool === tool.id} onClick={() => {
+                  setActiveTool(tool.id);
+                  setMobileSheet(tool.id === "filter" ? "filter" : null);
+                }}>
                   {tool.label}
                 </button>
               ))}
             </div>
           ) : mobileSheet === "presets" ? (
             <PresetStrip activePreset={activePreset} onApply={(preset) => { applyPreset(preset); setMobileSheet(null); }} />
+          ) : mobileSheet === "filter" ? (
+            filterPanel
           ) : (
             <p className="pending-copy">AI 模型功能将在后续阶段接入；所有手动标注工具仍可使用。</p>
           ),
@@ -207,8 +250,14 @@ export function Workbench({
         canRedo={state.future.length > 0}
         backgroundVisible={state.present.canvas.backgroundVisible}
         canvas={state.present.canvas}
-        onUndo={() => dispatch({ type: "history/undo" })}
-        onRedo={() => dispatch({ type: "history/redo" })}
+        onUndo={() => {
+          setFilterPreview(null);
+          dispatch({ type: "history/undo" });
+        }}
+        onRedo={() => {
+          setFilterPreview(null);
+          dispatch({ type: "history/redo" });
+        }}
         onToggleBackground={() => dispatch({ type: "canvas/update", patch: { backgroundVisible: !state.present.canvas.backgroundVisible } })}
         onExport={() => setExportOpen(true)}
       />
@@ -224,7 +273,7 @@ export function Workbench({
           }`}
         >
           <EditorCanvas
-            project={state.present}
+            project={{ ...state.present, filters: visibleFilters }}
             selectedLayerId={state.selectedLayerId}
             activeTool={activeTool}
             zoom={zoom}
@@ -237,7 +286,9 @@ export function Workbench({
             onChangeLayer={(id, patch) => dispatch({ type: "layer/update", id, patch })}
           />
         </div>
-        <GlassPanel className="desktop-inspector" aria-label="高级检查器">{inspector}</GlassPanel>
+        <GlassPanel className="desktop-inspector" aria-label="高级检查器">
+          {activeTool === "filter" ? filterPanel : inspector}
+        </GlassPanel>
         <GlassPanel className="desktop-layers" aria-label="图层">{layersPanel}</GlassPanel>
       </section>
       <StatusBar zoom={zoom} grid={grid} canvas={state.present.canvas} onZoomChange={setZoom} onToggleGrid={() => setGrid((value) => !value)} />
