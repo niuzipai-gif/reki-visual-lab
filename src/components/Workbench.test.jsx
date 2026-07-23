@@ -93,6 +93,10 @@ function renderDemo() {
   return render(<Workbench initialDemoProject />);
 }
 
+async function openAdvancedSettings(user) {
+  await user.click(screen.getByRole("button", { name: "高级设置" }));
+}
+
 function repeatedBoxProject() {
   return {
     ...createProject(),
@@ -217,6 +221,7 @@ describe("responsive Reki workbench", () => {
     const canvas = await screen.findByRole("application", {
       name: "标注画布",
     });
+    await openAdvancedSettings(user);
 
     await user.clear(screen.getByRole("textbox", { name: "批量标签内容" }));
     await user.type(
@@ -224,7 +229,7 @@ describe("responsive Reki workbench", () => {
       "batch",
     );
     await user.click(
-      screen.getByRole("button", { name: "批量更新同类标签" }),
+      screen.getByRole("button", { name: "批量修改标签" }),
     );
     expect(JSON.parse(canvas.dataset.layerLabels)).toEqual([
       "batch",
@@ -246,11 +251,12 @@ describe("responsive Reki workbench", () => {
     const canvas = await screen.findByRole("application", {
       name: "标注画布",
     });
+    await openAdvancedSettings(user);
 
     fireEvent.change(screen.getByLabelText("线条颜色"), {
       target: { value: "#123456" },
     });
-    await user.click(screen.getByRole("button", { name: "应用样式到全部" }));
+    await user.click(screen.getByRole("button", { name: "将当前样式应用到全部" }));
     expect(JSON.parse(canvas.dataset.layerLineColors)).toEqual([
       "#123456",
       "#123456",
@@ -334,6 +340,7 @@ describe("responsive Reki workbench", () => {
   test("edits selected-layer inspector values and applies style scopes", async () => {
     const user = userEvent.setup();
     renderDemo();
+    await openAdvancedSettings(user);
 
     const label = screen.getByRole("textbox", { name: "当前标签" });
     await user.clear(label);
@@ -356,6 +363,7 @@ describe("responsive Reki workbench", () => {
     const user = userEvent.setup();
     render(<Workbench initialDemoProject={repeatedBoxProject()} />);
     const layers = await screen.findByRole("region", { name: "图层" });
+    await openAdvancedSettings(user);
     const batchInput = screen.getByRole("textbox", {
       name: "批量标签内容",
     });
@@ -640,6 +648,7 @@ describe("responsive Reki workbench", () => {
     renderDemo();
 
     await user.click(screen.getByRole("button", { name: /档案扫描/ }));
+    await openAdvancedSettings(user);
     const canvas = screen.getByRole("application", { name: "标注画布" });
 
     fireEvent.change(screen.getByRole("spinbutton", { name: "框宽" }), {
@@ -660,6 +669,7 @@ describe("responsive Reki workbench", () => {
 
   test("updates editable dash rhythm in selected-layer style", () => {
     renderDemo();
+    fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
     const canvas = screen.getByRole("application", { name: "标注画布" });
 
     fireEvent.change(screen.getByRole("spinbutton", { name: "虚线长度" }), {
@@ -680,6 +690,7 @@ describe("responsive Reki workbench", () => {
     await user.click(
       screen.getByRole("button", { name: "选择图层 机械标签" }),
     );
+    await openAdvancedSettings(user);
     await user.selectOptions(
       screen.getByRole("combobox", { name: "标签位置" }),
       "start",

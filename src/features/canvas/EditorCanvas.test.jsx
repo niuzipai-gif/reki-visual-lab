@@ -611,6 +611,7 @@ describe("AnnotationNode", () => {
 describe("Inspector label rendering integration", () => {
   test("updates rendered label text, position, offsets, and visibility", () => {
     const { container } = render(<InspectorCanvasHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
 
     fireEvent.change(screen.getByRole("textbox", { name: "当前标签" }), {
       target: { value: "BOX_UPDATED" },
@@ -640,6 +641,7 @@ describe("Inspector label rendering integration", () => {
 
   test("hides ineffective position choices for standalone labels while offsets still render", () => {
     const { container } = render(<InspectorCanvasHarness type="label" />);
+    fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
 
     expect(
       screen.queryByRole("combobox", { name: "标签位置" }),
@@ -658,6 +660,7 @@ describe("Inspector label rendering integration", () => {
 
   test("keeps start and end position choices for multi-point overlays", () => {
     render(<InspectorCanvasHarness type="path" />);
+    fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
 
     expect(
       screen.getByRole("combobox", { name: "标签位置" }),

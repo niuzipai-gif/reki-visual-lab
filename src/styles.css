@@ -142,6 +142,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .ai-actions .primary-button { grid-column: 1 / -1; background: var(--reki-yolk); }
 .type-badge, .layers-panel-content header > span { padding: 4px 7px; border-radius: 999px; color: #4a3a0c; background: rgba(239,190,59,.22); font: 750 .56rem/1 ui-monospace, monospace; }
 .inspector-form fieldset { min-width: 0; margin: 14px 0 0; padding: 0; border: 0; }
+.advanced-settings-button { width: 100%; margin-top: 12px; padding: 7px 9px; border: 1px solid rgba(207,153,17,.42); border-radius: 8px; color: var(--reki-ink); background: rgba(239,190,59,.16); font-size: .62rem; font-weight: 780; text-align: left; }
 .inspector-form legend { width: 100%; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--reki-edge); color: var(--reki-muted); font-size: .54rem; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }
 .control-field { display: grid; gap: 5px; margin-bottom: 8px; color: var(--reki-muted); font-size: .59rem; font-weight: 700; }
 .control-field input[type="range"] { width: 100%; accent-color: var(--reki-yolk); }

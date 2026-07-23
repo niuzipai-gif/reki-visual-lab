@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useId, useState } from "react";
 import { Paintbrush, Trash2 } from "lucide-react";
 
 const LABEL_TYPES = new Set([
@@ -57,6 +57,8 @@ export function Inspector({
   const [batchLabelDraft, setBatchLabelDraft] = useState(
     layer?.label ?? "",
   );
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const advancedPanelId = `reki-inspector-advanced-${useId().replaceAll(":", "")}`;
 
   useEffect(() => {
     setBatchLabelDraft(layer?.label ?? "");
@@ -82,6 +84,17 @@ export function Inspector({
   return (
     <div className="inspector-form">
       <header><div><small>SELECTED OBJECT</small><h2>{layer.name}</h2></div><span className="type-badge">{layer.type}</span></header>
+      <button
+        type="button"
+        className="advanced-settings-button"
+        aria-expanded={advancedOpen}
+        aria-controls={advancedPanelId}
+        onClick={() => setAdvancedOpen((open) => !open)}
+      >
+        高级设置
+      </button>
+      <div id={advancedPanelId} aria-hidden={!advancedOpen}>
+      {advancedOpen ? <>
       <fieldset>
         <legend>颜色</legend>
         <div className="color-grid">
@@ -92,11 +105,11 @@ export function Inspector({
       </fieldset>
       <fieldset>
         <legend>外观</legend>
-        <Field label={`线宽 ${style.lineWidth}px`}><input aria-label="线宽" type="range" min="1" max="12" step="1" value={style.lineWidth} onChange={(event) => patchStyle({ lineWidth: Number(event.target.value) })} /></Field>
+        <Field label={`线条粗细 ${style.lineWidth}px`}><input aria-label="线条粗细" type="range" min="1" max="12" step="1" value={style.lineWidth} onChange={(event) => patchStyle({ lineWidth: Number(event.target.value) })} /></Field>
         <Field label={`文字大小 ${style.fontSize}px`}><input aria-label="文字大小" type="range" min="8" max="64" value={style.fontSize} onChange={(event) => patchStyle({ fontSize: Number(event.target.value) })} /></Field>
         <Field label={`锚点大小 ${style.anchorSize}px`}><input aria-label="锚点大小" type="range" min="2" max="20" value={style.anchorSize} onChange={(event) => patchStyle({ anchorSize: Number(event.target.value) })} /></Field>
-        <Field label="线型">
-          <select aria-label="线型" value={style.dash.length ? "dashed" : "solid"} onChange={(event) => patchStyle({ dash: event.target.value === "dashed" ? [dashLength, dashGap] : [] })}>
+        <Field label="虚线">
+          <select aria-label="虚线" value={style.dash.length ? "dashed" : "solid"} onChange={(event) => patchStyle({ dash: event.target.value === "dashed" ? [dashLength, dashGap] : [] })}>
             <option value="solid">实线</option><option value="dashed">虚线</option>
           </select>
         </Field>
@@ -173,13 +186,15 @@ export function Inspector({
         </div>
         <div className="batch-row">
           <input aria-label="批量标签内容" type="text" value={batchLabelDraft} onChange={(event) => setBatchLabelDraft(event.target.value)} />
-          <button type="button" onClick={() => onBatchLabel(batchLabelDraft)}>批量更新同类标签</button>
+          <button type="button" onClick={() => onBatchLabel(batchLabelDraft)}>批量修改标签</button>
         </div>
       </fieldset>
       <div className="inspector-actions">
         <button type="button" onClick={() => onApplyStyle("type")}>应用样式到同类</button>
-        <button type="button" onClick={() => onApplyStyle("all")}>应用样式到全部</button>
+        <button type="button" onClick={() => onApplyStyle("all")}>将当前样式应用到全部</button>
         <button type="button" className="danger-button" onClick={onDelete}><Trash2 size={15} />删除当前对象</button>
+      </div>
+      </> : null}
       </div>
     </div>
   );
