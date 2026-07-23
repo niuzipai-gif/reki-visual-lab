@@ -846,6 +846,7 @@ describe("EditorCanvas", () => {
       .spyOn(HTMLCanvasElement.prototype, "getContext")
       .mockReturnValue({ clearRect, drawImage });
     const drawable = { width: 800, height: 1000 };
+    const onImageSourceReady = vi.fn();
 
     try {
       render(
@@ -857,6 +858,7 @@ describe("EditorCanvas", () => {
           onSelectLayer={vi.fn()}
           onCreateLayer={vi.fn()}
           onChangeLayer={vi.fn()}
+          onImageSourceReady={onImageSourceReady}
         />,
       );
 
@@ -872,6 +874,7 @@ describe("EditorCanvas", () => {
       await waitFor(() => {
         expect(clearRect).toHaveBeenCalledWith(0, 0, 1080, 1350);
         expect(drawImage).toHaveBeenCalledWith(drawable, 0, 0, 1080, 1350);
+        expect(onImageSourceReady).toHaveBeenCalledWith(drawable);
       });
       expect(background.nextElementSibling).toBe(stage);
       expect(stage.nextElementSibling).toBe(grid);

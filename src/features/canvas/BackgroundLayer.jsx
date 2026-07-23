@@ -47,7 +47,12 @@ function imageResource(image) {
   return { kind: "drawable", source };
 }
 
-export function BackgroundLayer({ image, canvasSize, filters }) {
+export function BackgroundLayer({
+  image,
+  canvasSize,
+  filters,
+  onImageSourceReady,
+}) {
   const canvasRef = useRef(null);
   const sourceCacheRef = useRef(null);
   const resource = useMemo(() => imageResource(image), [image]);
@@ -118,6 +123,7 @@ export function BackgroundLayer({ image, canvasSize, filters }) {
           dimensions.width,
           dimensions.height,
         );
+        onImageSourceReady?.(source);
         setCanvasReady(true);
         sourceCacheRef.current = {
           source,
@@ -159,6 +165,7 @@ export function BackgroundLayer({ image, canvasSize, filters }) {
     filters,
     resource,
     urlSource,
+    onImageSourceReady,
   ]);
 
   if (!isDemo && !resource) return null;

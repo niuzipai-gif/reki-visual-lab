@@ -97,4 +97,19 @@ describe("Reki CSS contracts", () => {
       /\.background-source\s*\{[^}]*position:\s*absolute;/,
     );
   });
+
+  test("keeps AI controls compact in the approved glass and yolk system", () => {
+    expect(css).toMatch(
+      /\.ai-scan-panel fieldset\s*\{[^}]*border:\s*0;/,
+    );
+    expect(css).toMatch(
+      /\.ai-scan-panel input\[type="range"\]\s*\{[^}]*accent-color:\s*var\(--reki-yolk\);/,
+    );
+    expect(css).toMatch(
+      /\.ai-actions\s*\{[^}]*display:\s*grid;[^}]*gap:/,
+    );
+    expect(css).toMatch(
+      /\.ai-privacy\s*\{[^}]*color:\s*var\(--reki-muted\);/,
+    );
+  });
 });

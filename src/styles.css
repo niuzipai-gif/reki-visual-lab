@@ -103,6 +103,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .filter-panel .color-grid { grid-template-columns: 1fr 1fr; }
 .filter-reset { width: 100%; margin-top: 8px; padding: 8px; border: 1px solid var(--reki-edge); border-radius: 9px; background: rgba(255,255,255,.5); font-size: .62rem; font-weight: 720; }
 .filter-reset:hover { background: rgba(255,255,255,.72); }
+.ai-scan-panel header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ai-scan-panel header small { color: var(--reki-muted); font-size: .5rem; font-weight: 800; letter-spacing: .13em; }
+.ai-scan-panel h2 { margin: 3px 0 0; font-size: .78rem; }
+.ai-privacy { margin: 10px 0 0; color: var(--reki-muted); font-size: .59rem; line-height: 1.55; }
+.ai-scan-panel fieldset { min-width: 0; margin: 12px 0 0; padding: 0; border: 0; }
+.ai-scan-panel legend { width: 100%; margin-bottom: 7px; padding-bottom: 5px; border-bottom: 1px solid var(--reki-edge); color: var(--reki-muted); font-size: .52rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.ai-option-grid, .ai-region-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 10px; }
+.ai-option-grid .switch-row:first-child { grid-column: 1 / -1; }
+.ai-scan-panel .switch-row { margin-bottom: 6px; font-size: .59rem; }
+.ai-scan-panel input[type="range"] { width: 100%; accent-color: var(--reki-yolk); }
+.ai-feedback { margin: 9px 0 0; color: var(--reki-muted); font-size: .6rem; line-height: 1.5; }
+.ai-error { display: grid; gap: 2px; color: #7d2f27; }
+.ai-success { color: #456630; }
+.ai-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 11px; }
+.ai-actions button { min-height: 32px; padding: 7px; border: 1px solid var(--reki-edge); border-radius: 9px; background: rgba(255,255,255,.5); font-size: .58rem; font-weight: 750; }
+.ai-actions .primary-button { grid-column: 1 / -1; background: var(--reki-yolk); }
 .type-badge, .layers-panel-content header > span { padding: 4px 7px; border-radius: 999px; color: #4a3a0c; background: rgba(239,190,59,.22); font: 750 .56rem/1 ui-monospace, monospace; }
 .inspector-form fieldset { min-width: 0; margin: 14px 0 0; padding: 0; border: 0; }
 .inspector-form legend { width: 100%; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--reki-edge); color: var(--reki-muted); font-size: .54rem; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }

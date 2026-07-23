@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import { Workbench } from "../Workbench.jsx";
@@ -20,6 +20,7 @@ vi.mock("../features/canvas/EditorCanvas.jsx", async () => {
       onSelectLayer,
       onCreateLayer,
       onChangeLayer,
+      onImageSourceReady,
     }) {
       const selected = project.layers.find(
         ({ id }) => id === selectedLayerId,
@@ -74,6 +75,14 @@ vi.mock("../features/canvas/EditorCanvas.jsx", async () => {
           <button type="button" onClick={() => onSelectLayer(null)}>
             清除画布选择
           </button>
+          <button
+            type="button"
+            onClick={() =>
+              onImageSourceReady?.({ width: 1080, height: 1350 })
+            }
+          >
+            模拟底图就绪
+          </button>
         </div>
       );
     },
@@ -95,6 +104,40 @@ function repeatedBoxProject() {
         { id, name: id, label: `before-${id}` },
       ),
     ),
+  };
+}
+
+function aiReadyProject() {
+  return {
+    ...createProject(),
+    image: { source: { width: 1080, height: 1350 } },
+    layers: [
+      createAnnotation("box", [], {
+        id: "manual-layer",
+        name: "manual",
+      }),
+    ],
+  };
+}
+
+function faceScanResult() {
+  return {
+    ok: true,
+    face: [
+      {
+        landmarks: [
+          {
+            x: 0.25,
+            y: 0.35,
+            confidence: 0.98,
+            source: "face",
+            index: 33,
+          },
+        ],
+      },
+    ],
+    hands: [],
+    pose: [],
   };
 }
 
@@ -401,7 +444,178 @@ describe("responsive Reki workbench", () => {
 
     await user.click(screen.getByRole("button", { name: "打开 AI 扫描面板" }));
     expect(screen.getByRole("heading", { name: "AI 扫描" })).toBeInTheDocument();
-    expect(screen.getByText(/模型功能将在后续阶段接入/)).toBeInTheDocument();
+    expect(screen.getByRole("form", { name: "AI 关键点扫描" })).toBeInTheDocument();
+  });
+
+  test("adds a decoded-source AI scan atomically and one undo removes it", async () => {
+    const user = userEvent.setup();
+    const scanLandmarks = vi.fn().mockResolvedValue(faceScanResult());
+    render(
+      <Workbench
+        initialDemoProject={aiReadyProject()}
+        scanLandmarks={scanLandmarks}
+      />,
+    );
+    const canvas = screen.getByRole("application", { name: "标注画布" });
+
+    const aiTool = screen.getByRole("button", { name: "AI 扫描" });
+    await user.click(aiTool);
+    expect(aiTool).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "扫描关键点" }));
+
+    expect(scanLandmarks).toHaveBeenCalledWith(
+      expect.objectContaining({ width: 1080, height: 1350 }),
+      ["face", "hands", "pose"],
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(canvas).toHaveAttribute("data-layer-count", "2");
+    expect(screen.getByText(/已生成 1 个 AI 图层/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "撤销" }));
+    expect(canvas).toHaveAttribute("data-layer-count", "1");
+    expect(screen.getByRole("button", { name: "扫描关键点" })).toBeEnabled();
+  });
+
+  test("clears only AI layers atomically and undo restores the scan", async () => {
+    const user = userEvent.setup();
+    const scanLandmarks = vi.fn().mockResolvedValue(faceScanResult());
+    render(
+      <Workbench
+        initialDemoProject={aiReadyProject()}
+        scanLandmarks={scanLandmarks}
+      />,
+    );
+    const canvas = screen.getByRole("application", { name: "标注画布" });
+
+    await user.click(screen.getByRole("button", { name: "AI 扫描" }));
+    await user.click(screen.getByRole("button", { name: "扫描关键点" }));
+    expect(canvas).toHaveAttribute("data-layer-count", "2");
+
+    await user.click(screen.getByRole("button", { name: "清除 AI 结果" }));
+    expect(canvas).toHaveAttribute("data-layer-count", "1");
+
+    await user.click(screen.getByRole("button", { name: "撤销" }));
+    expect(canvas).toHaveAttribute("data-layer-count", "2");
+  });
+
+  test("keeps manual tools usable after failure and scans again after reopen", async () => {
+    const user = userEvent.setup();
+    const scanLandmarks = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        code: "MODEL_LOAD_FAILED",
+        message: "模型下载失败",
+      })
+      .mockResolvedValueOnce(faceScanResult());
+    render(
+      <Workbench
+        initialDemoProject={aiReadyProject()}
+        scanLandmarks={scanLandmarks}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "AI 扫描" }));
+    await user.click(screen.getByRole("button", { name: "扫描关键点" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("模型下载失败");
+
+    await user.click(screen.getByRole("button", { name: "节点路径" }));
+    expect(
+      screen.getByRole("application", { name: "标注画布" }),
+    ).toHaveAttribute("data-active-tool", "node-path");
+
+    await user.click(screen.getByRole("button", { name: "AI 扫描" }));
+    await user.click(screen.getByRole("button", { name: "扫描关键点" }));
+    expect(scanLandmarks).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText(/已生成 1 个 AI 图层/)).toBeInTheDocument();
+  });
+
+  test("aborts and ignores a late desktop scan when another tool is selected", async () => {
+    const user = userEvent.setup();
+    let resolveScan;
+    let signal;
+    const scanLandmarks = vi.fn((_source, _modes, options) => {
+      signal = options.signal;
+      return new Promise((resolve) => {
+        resolveScan = resolve;
+      });
+    });
+    render(
+      <Workbench
+        initialDemoProject={aiReadyProject()}
+        scanLandmarks={scanLandmarks}
+      />,
+    );
+    const canvas = screen.getByRole("application", { name: "标注画布" });
+
+    await user.click(screen.getByRole("button", { name: "AI 扫描" }));
+    await user.click(screen.getByRole("button", { name: "扫描关键点" }));
+    await user.click(screen.getByRole("button", { name: "节点路径" }));
+
+    expect(signal.aborted).toBe(true);
+    expect(
+      screen.queryByRole("form", { name: "AI 关键点扫描" }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveScan(faceScanResult());
+      await Promise.resolve();
+    });
+    expect(canvas).toHaveAttribute("data-layer-count", "1");
+  });
+
+  test("aborts and ignores a late mobile scan when its sheet closes", async () => {
+    const user = userEvent.setup();
+    let resolveScan;
+    let signal;
+    const scanLandmarks = vi.fn((_source, _modes, options) => {
+      signal = options.signal;
+      return new Promise((resolve) => {
+        resolveScan = resolve;
+      });
+    });
+    render(
+      <Workbench
+        initialDemoProject={aiReadyProject()}
+        scanLandmarks={scanLandmarks}
+      />,
+    );
+    const canvas = screen.getByRole("application", { name: "标注画布" });
+
+    await user.click(
+      screen.getByRole("button", { name: "打开 AI 扫描面板" }),
+    );
+    await user.click(screen.getByRole("button", { name: "扫描关键点" }));
+    await user.click(screen.getByRole("button", { name: "关闭面板" }));
+
+    expect(signal.aborted).toBe(true);
+    expect(
+      screen.queryByRole("form", { name: "AI 关键点扫描" }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveScan(faceScanResult());
+      await Promise.resolve();
+    });
+    expect(canvas).toHaveAttribute("data-layer-count", "1");
+  });
+
+  test("keeps demo scanning unavailable until its URL image reports a drawable", async () => {
+    const user = userEvent.setup();
+    const scanLandmarks = vi.fn().mockResolvedValue(faceScanResult());
+    render(
+      <Workbench
+        initialDemoProject
+        scanLandmarks={scanLandmarks}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "AI 扫描" }));
+    expect(screen.getByRole("button", { name: "扫描关键点" })).toBeDisabled();
+    expect(screen.getByText(/图片加载完成后/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "模拟底图就绪" }));
+    expect(screen.getByRole("button", { name: "扫描关键点" })).toBeEnabled();
   });
 
   test("exposes a modal export placeholder with focus and Escape close", async () => {

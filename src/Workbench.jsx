@@ -6,6 +6,11 @@ import { StatusBar } from "./components/StatusBar.jsx";
 import { TopBar } from "./components/TopBar.jsx";
 import { createAnnotation, createProject } from "./domain/project.js";
 import { createEditorState, editorReducer } from "./domain/reducer.js";
+import { AiScanPanel } from "./features/ai/AiScanPanel.jsx";
+import {
+  scanImage,
+  supportsInterruptibleLandmarkScan,
+} from "./features/ai/landmarkModel.js";
 import { EditorCanvas } from "./features/canvas/EditorCanvas.jsx";
 import { FilterPanel } from "./features/filters/FilterPanel.jsx";
 import { DEFAULT_FILTER_SETTINGS } from "./features/filters/filterPipeline.js";
@@ -42,8 +47,23 @@ export function createDemoProject() {
   };
 }
 
+function drawableImageSource(image) {
+  if (!image || image.demo || typeof image === "string") return null;
+  const wrapped = image.source ?? image.element ?? image.bitmap ?? image.image;
+  if (wrapped && typeof wrapped !== "string") return wrapped;
+  if (
+    !image.url &&
+    Number.isFinite(image.width) &&
+    Number.isFinite(image.height)
+  ) {
+    return image;
+  }
+  return null;
+}
+
 export function Workbench({
   initialDemoProject = globalThis.location?.search.includes("demo=1") ?? false,
+  scanLandmarks = scanImage,
 } = {}) {
   const initialProject = useMemo(
     () =>
@@ -63,6 +83,9 @@ export function Workbench({
   const [grid, setGrid] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
   const [filterPreview, setFilterPreview] = useState(null);
+  const [aiImageSource, setAiImageSource] = useState(() =>
+    drawableImageSource(initialProject?.image),
+  );
   const presetSeed = useRef(40);
   const initializedSelection = useRef(false);
   const exportCloseRef = useRef(null);
@@ -78,6 +101,10 @@ export function Workbench({
       dispatch({ type: "selection/set", id: state.present.layers[0].id });
     }
   }, [initialProject, state.present.layers, state.selectedLayerId]);
+
+  useEffect(() => {
+    setAiImageSource(drawableImageSource(state.present.image));
+  }, [state.present.image]);
 
   useEffect(() => {
     if (!exportOpen) return undefined;
@@ -213,6 +240,30 @@ export function Workbench({
     });
   };
 
+  const hasAiResults = state.present.layers.some(
+    ({ source }) => source === "ai",
+  );
+  const createAiPanel = () => (
+    <AiScanPanel
+      imageSource={aiImageSource}
+      hasResults={hasAiResults}
+      scan={scanLandmarks}
+      interruptible={
+        scanLandmarks !== scanImage || supportsInterruptibleLandmarkScan()
+      }
+      onAddLayers={(layers) =>
+        dispatch({
+          type: "layers/addMany",
+          layers,
+          selectedLayerId: layers[0]?.id ?? null,
+        })
+      }
+      onClearResults={() =>
+        dispatch({ type: "layers/removeBySource", source: "ai" })
+      }
+    />
+  );
+
   const specialSheet = ["tools", "presets", "ai", "filter"].includes(mobileSheet)
     ? {
         title: {
@@ -238,7 +289,7 @@ export function Workbench({
           ) : mobileSheet === "filter" ? (
             filterPanel
           ) : (
-            <p className="pending-copy">AI 模型功能将在后续阶段接入；所有手动标注工具仍可使用。</p>
+            createAiPanel()
           ),
       }
     : null;
@@ -261,7 +312,14 @@ export function Workbench({
         onToggleBackground={() => dispatch({ type: "canvas/update", patch: { backgroundVisible: !state.present.canvas.backgroundVisible } })}
         onExport={() => setExportOpen(true)}
       />
-      <ToolRail activeTool={activeTool} onSelectTool={setActiveTool} onAiScan={() => setMobileSheet("ai")} />
+      <ToolRail
+        activeTool={activeTool}
+        onSelectTool={setActiveTool}
+        onAiScan={() => {
+          setActiveTool("ai");
+          setMobileSheet(null);
+        }}
+      />
       <PresetStrip activePreset={activePreset} onApply={applyPreset} />
       <section className={`canvas-workspace${grid ? " grid-visible" : ""}`} aria-label="画布工作区">
         <div
@@ -284,15 +342,24 @@ export function Workbench({
               dispatch({ type: "selection/set", id: layer.id });
             }}
             onChangeLayer={(id, patch) => dispatch({ type: "layer/update", id, patch })}
+            onImageSourceReady={setAiImageSource}
           />
         </div>
         <GlassPanel className="desktop-inspector" aria-label="高级检查器">
-          {activeTool === "filter" ? filterPanel : inspector}
+          {activeTool === "ai" && mobileSheet !== "ai"
+            ? createAiPanel()
+            : activeTool === "filter"
+              ? filterPanel
+              : inspector}
         </GlassPanel>
         <GlassPanel className="desktop-layers" aria-label="图层">{layersPanel}</GlassPanel>
       </section>
       <StatusBar zoom={zoom} grid={grid} canvas={state.present.canvas} onZoomChange={setZoom} onToggleGrid={() => setGrid((value) => !value)} />
-      <BottomDock activeSheet={mobileSheet} onOpen={setMobileSheet} onExport={() => setExportOpen(true)} />
+      <BottomDock
+        activeSheet={mobileSheet}
+        onOpen={(sheet) => setMobileSheet(sheet)}
+        onExport={() => setExportOpen(true)}
+      />
       <BottomSheet
         tab={mobileSheet}
         onTabChange={setMobileSheet}

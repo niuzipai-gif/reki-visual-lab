@@ -152,6 +152,7 @@ export function EditorCanvas({
   onSelectLayer,
   onCreateLayer,
   onChangeLayer,
+  onImageSourceReady,
 }) {
   const draftPoints = useRef([]);
   const recentTouchTap = useRef(null);
@@ -264,6 +265,7 @@ export function EditorCanvas({
               image={project.image}
               canvasSize={canvasSize}
               filters={project.filters}
+              onImageSourceReady={onImageSourceReady}
             />
           ) : null}
           <Stage

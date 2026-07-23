@@ -31,7 +31,14 @@ export function ToolRail({ activeTool, onSelectTool, onAiScan }) {
     <aside className="tool-rail glass-panel">
       <span className="rail-label">TOOLS</span>
       <div role="toolbar" aria-label="标注工具">
-        <button type="button" onClick={onAiScan} aria-label="AI 扫描"><Sparkles size={19} /><span>AI 扫描</span></button>
+        <button
+          type="button"
+          onClick={onAiScan}
+          aria-label="AI 扫描"
+          aria-pressed={activeTool === "ai"}
+        >
+          <Sparkles size={19} /><span>AI 扫描</span>
+        </button>
         {TOOL_DEFINITIONS.map((tool) => {
           const Icon = ICONS[tool.id];
           return (

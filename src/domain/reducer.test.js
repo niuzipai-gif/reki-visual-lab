@@ -235,6 +235,61 @@ describe("layer actions", () => {
     ]);
   });
 
+  test("adds an AI scan atomically and one undo removes every generated layer", () => {
+    const manual = createAnnotation("box", [], { id: "manual" });
+    const first = createAnnotation("nodeCloud", [], {
+      id: "ai-nodes",
+      source: "ai",
+    });
+    const second = createAnnotation("path", [], {
+      id: "ai-path",
+      source: "ai",
+    });
+    const start = addLayer(createEditorState(), manual);
+    const added = editorReducer(start, {
+      type: "layers/addMany",
+      layers: [first, second],
+      selectedLayerId: first.id,
+    });
+    const undone = editorReducer(added, { type: "history/undo" });
+
+    expect(added.present.layers).toEqual([manual, first, second]);
+    expect(added.selectedLayerId).toBe(first.id);
+    expect(added.past).toHaveLength(start.past.length + 1);
+    expect(undone.present.layers).toEqual([manual]);
+  });
+
+  test("clears only AI layers atomically and one undo restores the scan", () => {
+    const manual = createAnnotation("box", [], { id: "manual" });
+    const first = createAnnotation("nodeCloud", [], {
+      id: "ai-nodes",
+      source: "ai",
+    });
+    const second = createAnnotation("path", [], {
+      id: "ai-path",
+      source: "ai",
+    });
+    const start = [manual, first, second].reduce(
+      addLayer,
+      createEditorState(),
+    );
+    const cleared = editorReducer(start, {
+      type: "layers/removeBySource",
+      source: "ai",
+    });
+    const undone = editorReducer(cleared, { type: "history/undo" });
+
+    expect(cleared.present.layers).toEqual([manual]);
+    expect(cleared.past).toHaveLength(start.past.length + 1);
+    expect(undone.present.layers).toEqual([manual, first, second]);
+    expect(
+      editorReducer(cleared, {
+        type: "layers/removeBySource",
+        source: "ai",
+      }),
+    ).toBe(cleared);
+  });
+
   test("ignores structurally unchanged nested layer patches", () => {
     const annotation = createAnnotation("path", [], {
       id: "stable-style",

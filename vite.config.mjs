@@ -8,6 +8,9 @@ export default defineConfig({
   optimizeDeps: {
     include: ["react", "react-dom/client"],
   },
+  worker: {
+    format: "es",
+  },
   server: {
     host: "0.0.0.0",
     allowedHosts: ["terminal.local"],

@@ -64,6 +64,28 @@ describe("BackgroundLayer", () => {
     );
   });
 
+  test("reports only a successfully drawn source as AI-scan ready", async () => {
+    const drawable = { width: 800, height: 1000 };
+    const onImageSourceReady = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+    });
+
+    render(
+      <BackgroundLayer
+        image={drawable}
+        canvasSize={canvasSize}
+        filters={{}}
+        onImageSourceReady={onImageSourceReady}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(onImageSourceReady).toHaveBeenCalledWith(drawable),
+    );
+  });
+
   test("keeps the visible canvas mounted when drawImage rejects a drawable", () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
       clearRect: vi.fn(),
@@ -164,6 +186,7 @@ describe("BackgroundLayer", () => {
       callback(0);
       return 1;
     });
+    const onImageSourceReady = vi.fn();
     render(
       <BackgroundLayer
         image={{ demo: true }}
@@ -172,6 +195,7 @@ describe("BackgroundLayer", () => {
           threshold: 128,
           duotone: { dark: [10, 20, 30], light: [240, 220, 170] },
         }}
+        onImageSourceReady={onImageSourceReady}
       />,
     );
 
@@ -180,6 +204,7 @@ describe("BackgroundLayer", () => {
     expect(source).toHaveAttribute("src", "/cosplay-reference.png");
     fireEvent.load(source);
     await waitFor(() => expect(putImageData).toHaveBeenCalledTimes(1));
+    expect(onImageSourceReady).toHaveBeenCalledWith(source);
     expect(Array.from(putImageData.mock.calls[0][0].data)).toEqual([
       10, 20, 30, 255,
     ]);

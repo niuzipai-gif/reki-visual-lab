@@ -92,6 +92,34 @@ export function editorReducer(state, action) {
     };
   }
 
+  if (action.type === "layers/addMany") {
+    const ids = new Set(state.present.layers.map(({ id }) => id));
+    const layers = [];
+    for (const layer of action.layers ?? []) {
+      if (!layer?.id || ids.has(layer.id)) continue;
+      ids.add(layer.id);
+      layers.push(layer);
+    }
+    if (!layers.length) return state;
+
+    return commit(
+      state,
+      {
+        ...state.present,
+        layers: [...state.present.layers, ...layers],
+      },
+      action.selectedLayerId ?? layers[0].id,
+    );
+  }
+
+  if (action.type === "layers/removeBySource") {
+    const layers = state.present.layers.filter(
+      (layer) => layer.source !== action.source,
+    );
+    if (layers.length === state.present.layers.length) return state;
+    return commit(state, { ...state.present, layers });
+  }
+
   if (action.type === "layer/add") {
     if (hasLayer(state.present, action.layer.id)) {
       return state;

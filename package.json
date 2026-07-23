@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node scripts/prepare-sites-build.mjs",
+    "build": "vite build && npm run test:worker-build && node scripts/prepare-sites-build.mjs",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:sites": "node --test tests/sites-worker.test.mjs"
+    "test:sites": "node --test tests/sites-worker.test.mjs",
+    "test:worker-build": "node --test tests/worker-build-output.test-node.mjs"
   },
   "dependencies": {
-    "@mediapipe/tasks-vision": "^0.10.35",
+    "@mediapipe/tasks-vision": "0.10.22-rc.20250304",
     "@vitejs/plugin-react": "5.0.4",
     "idb-keyval": "^6.3.0",
     "konva": "^10.3.0",
