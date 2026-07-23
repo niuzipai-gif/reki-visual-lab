@@ -1,7 +1,14 @@
 import React from "react";
 import { Grid3X3, HardDrive, ZoomIn } from "lucide-react";
 
-export function StatusBar({ zoom, grid, canvas, onZoomChange, onToggleGrid }) {
+export function StatusBar({ zoom, grid, canvas, saveStatus = "idle", onZoomChange, onToggleGrid }) {
+  const saveLabel = {
+    saving: "保存中",
+    saved: "已保存",
+    "saved-pruned": "已保存，已清理最旧项目",
+    error: "保存失败",
+    conflict: "保存冲突",
+  }[saveStatus];
   return (
     <footer className="status-bar" role="status">
       <label className="status-control">
@@ -14,6 +21,7 @@ export function StatusBar({ zoom, grid, canvas, onZoomChange, onToggleGrid }) {
         <Grid3X3 size={14} />网格{grid ? "开启" : "关闭"}
       </button>
       <span>{canvas.width} × {canvas.height}</span>
+      {saveLabel ? <span className={`save-status ${saveStatus}`}>{saveLabel}</span> : null}
       <strong><HardDrive size={14} />照片仅在本机处理</strong>
     </footer>
   );

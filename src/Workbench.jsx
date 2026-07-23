@@ -64,6 +64,9 @@ function drawableImageSource(image) {
 export function Workbench({
   initialDemoProject = globalThis.location?.search.includes("demo=1") ?? false,
   scanLandmarks = scanImage,
+  onProjectChange,
+  onReplacePhoto,
+  saveStatus = "idle",
 } = {}) {
   const initialProject = useMemo(
     () =>
@@ -89,6 +92,15 @@ export function Workbench({
   const presetSeed = useRef(40);
   const initializedSelection = useRef(false);
   const exportCloseRef = useRef(null);
+  const lastNotifiedProject = useRef(state.present);
+  const replaceInputRef = useRef(null);
+  const [replaceFeedback, setReplaceFeedback] = useState(null);
+
+  useEffect(() => {
+    if (lastNotifiedProject.current === state.present) return;
+    lastNotifiedProject.current = state.present;
+    onProjectChange?.(state.present);
+  }, [onProjectChange, state.present]);
 
   useEffect(() => {
     if (
@@ -123,8 +135,6 @@ export function Workbench({
       }
     };
   }, [exportOpen]);
-
-  if (!state.present.image) return null;
 
   const selectedLayer = state.present.layers.find(
     ({ id }) => id === state.selectedLayerId,
@@ -344,6 +354,46 @@ export function Workbench({
             onChangeLayer={(id, patch) => dispatch({ type: "layer/update", id, patch })}
             onImageSourceReady={setAiImageSource}
           />
+          {!state.present.image ? (
+            <div className="missing-source-panel" role="status">
+              <b>原始照片缺失</b>
+              <span>标注已保留。添加原照片或选择替代照片即可继续。</span>
+              <input
+                ref={replaceInputRef}
+                className="sr-only"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                aria-label="添加或替换照片"
+                onChange={async (event) => {
+                  const [file] = event.target.files ?? [];
+                  event.target.value = "";
+                  if (!file || !onReplacePhoto) return;
+                  setReplaceFeedback("正在读取照片…");
+                  try {
+                    const nextProject = await onReplacePhoto(file);
+                    if (nextProject) {
+                      dispatch({ type: "project/load", project: nextProject });
+                      setReplaceFeedback("照片已恢复");
+                    }
+                  } catch (error) {
+                    setReplaceFeedback(
+                      error instanceof Error
+                        ? error.message
+                        : "无法读取这张图片",
+                    );
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => replaceInputRef.current?.click()}
+              >
+                添加或替换照片
+              </button>
+              {replaceFeedback ? <small>{replaceFeedback}</small> : null}
+            </div>
+          ) : null}
         </div>
         <GlassPanel className="desktop-inspector" aria-label="高级检查器">
           {activeTool === "ai" && mobileSheet !== "ai"
@@ -354,7 +404,7 @@ export function Workbench({
         </GlassPanel>
         <GlassPanel className="desktop-layers" aria-label="图层">{layersPanel}</GlassPanel>
       </section>
-      <StatusBar zoom={zoom} grid={grid} canvas={state.present.canvas} onZoomChange={setZoom} onToggleGrid={() => setGrid((value) => !value)} />
+      <StatusBar zoom={zoom} grid={grid} canvas={state.present.canvas} saveStatus={saveStatus} onZoomChange={setZoom} onToggleGrid={() => setGrid((value) => !value)} />
       <BottomDock
         activeSheet={mobileSheet}
         onOpen={(sheet) => setMobileSheet(sheet)}

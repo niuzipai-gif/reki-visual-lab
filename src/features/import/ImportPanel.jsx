@@ -8,7 +8,7 @@ import {
 
 const ACCEPTED_TYPES = SUPPORTED_IMAGE_TYPES.join(",");
 
-export function ImportPanel({ onProject, decode = decodeImage }) {
+export function ImportPanel({ onProject, decode = decodeImage, children }) {
   const inputRef = useRef(null);
   const mountedRef = useRef(false);
   const requestRef = useRef(0);
@@ -135,6 +135,7 @@ export function ImportPanel({ onProject, decode = decodeImage }) {
           </p>
         ) : null}
         <p className="privacy-note">照片仅在本机处理</p>
+        {children}
       </section>
     </main>
   );
