@@ -260,14 +260,13 @@ export function EditorCanvas({
             height: fitted.height,
           }}
         >
-          {project.canvas.backgroundVisible ? (
-            <BackgroundLayer
-              image={project.image}
-              canvasSize={canvasSize}
-              filters={project.filters}
-              onImageSourceReady={onImageSourceReady}
-            />
-          ) : null}
+          <BackgroundLayer
+            image={project.image}
+            canvasSize={canvasSize}
+            filters={project.filters}
+            showOriginal={project.canvas.backgroundVisible === false}
+            onImageSourceReady={onImageSourceReady}
+          />
           <Stage
             width={fitted.width}
             height={fitted.height}

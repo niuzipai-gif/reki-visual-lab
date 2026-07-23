@@ -43,9 +43,9 @@ describe("project factories", () => {
       label: "label_01",
       value: null,
       style: {
-        lineColor: "#efbe3b",
-        textColor: "#fff2c4",
-        anchorColor: "#efbe3b",
+        lineColor: "#e5484d",
+        textColor: "#fff7ed",
+        anchorColor: "#ff6b6b",
         lineWidth: 2,
         fontSize: 14,
         anchorSize: 5,
@@ -80,9 +80,9 @@ describe("project factories", () => {
     expect(Object.isFrozen(DEFAULT_STYLE)).toBe(true);
     expect(Object.isFrozen(DEFAULT_STYLE.dash)).toBe(true);
     expect(DEFAULT_STYLE).toEqual({
-      lineColor: "#efbe3b",
-      textColor: "#fff2c4",
-      anchorColor: "#efbe3b",
+      lineColor: "#e5484d",
+      textColor: "#fff7ed",
+      anchorColor: "#ff6b6b",
       lineWidth: 2,
       fontSize: 14,
       anchorSize: 5,

@@ -312,6 +312,7 @@ export function Workbench({
         canUndo={state.past.length > 0}
         canRedo={state.future.length > 0}
         backgroundVisible={state.present.canvas.backgroundVisible}
+        canCompare={Boolean(state.present.image)}
         canvas={state.present.canvas}
         onUndo={() => {
           setFilterPreview(null);

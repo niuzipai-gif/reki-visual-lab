@@ -2,6 +2,8 @@ import fs from "node:fs";
 import { describe, expect, test } from "vitest";
 
 const css = fs.readFileSync("src/styles.css", "utf8");
+const indexHtml = fs.readFileSync("index.html", "utf8");
+const markSvg = fs.readFileSync("public/reki-mark.svg", "utf8");
 
 describe("Reki CSS contracts", () => {
   test("defines and uses only the exact public design tokens", () => {
@@ -34,6 +36,14 @@ describe("Reki CSS contracts", () => {
     ]) {
       expect(css).not.toMatch(new RegExp(`${alias.replaceAll("-", "\\-")}\\s*:`));
     }
+  });
+
+  test("uses the dedicated hand-drawn Reki mark and favicon assets", () => {
+    expect(indexHtml).toContain('href="/favicon.svg"');
+    expect(markSvg).toContain("e5484d");
+    expect(markSvg).toContain("efbe3b");
+    expect(css).toContain(".entry-brand-mark");
+    expect(css).toContain(".brand-icon img");
   });
 
   test("uses the dynamic viewport without a fixed mobile minimum height", () => {

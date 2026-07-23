@@ -357,8 +357,8 @@ describe("landmark layer conversion", () => {
       ai: { mode: "pose", detectionIndex: 0 },
     });
     expect(layers[0].style).toMatchObject({
-      lineColor: "#efbe3b",
-      anchorColor: "#efbe3b",
+      lineColor: "#e5484d",
+      anchorColor: "#ff6b6b",
     });
   });
 

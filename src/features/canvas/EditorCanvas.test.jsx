@@ -147,7 +147,17 @@ vi.mock("react-konva", () => {
     );
   }
 
-  function Circle({ name, hitStrokeWidth, fill, radius }) {
+  function Circle({
+    name,
+    hitStrokeWidth,
+    fill,
+    radius,
+    x,
+    y,
+    draggable,
+    onDragStart,
+    onDragEnd,
+  }) {
     return (
       <span
         data-konva="Circle"
@@ -155,6 +165,21 @@ vi.mock("react-konva", () => {
         data-hit-stroke-width={hitStrokeWidth}
         data-fill={fill}
         data-radius={radius}
+        data-x={x}
+        data-y={y}
+        data-draggable={String(Boolean(draggable))}
+        onMouseDown={(event) => onDragStart?.({ evt: event, cancelBubble: false })}
+        onDragEnd={(event) => {
+          event.stopPropagation();
+          onDragEnd?.({
+            cancelBubble: false,
+            target: {
+              x: () => konvaState.drag.x / konvaState.stageScale,
+              y: () => konvaState.drag.y / konvaState.stageScale,
+              position: vi.fn(),
+            },
+          })
+        }}
       />
     );
   }
@@ -179,9 +204,9 @@ vi.mock("react-konva", () => {
 });
 
 const style = {
-  lineColor: "#efbe3b",
-  textColor: "#fff2c4",
-  anchorColor: "#efbe3b",
+  lineColor: "#e5484d",
+  textColor: "#fff7ed",
+  anchorColor: "#ff6b6b",
   lineWidth: 2,
   fontSize: 14,
   anchorSize: 5,
@@ -323,6 +348,54 @@ describe("AnnotationNode", () => {
         { x: 0.6, y: 0.65 },
       ],
     });
+  });
+
+  test("renders draggable resize handles and writes normalized resize changes", () => {
+    const onChange = vi.fn();
+    const annotation = layer("box", "resizable", [
+      { x: 0.2, y: 0.2 },
+      { x: 0.6, y: 0.6 },
+    ]);
+    konvaState.drag = { x: 864, y: 1215 };
+
+    const { container } = render(
+      <AnnotationNode
+        layer={annotation}
+        canvasSize={{ width: 1080, height: 1350 }}
+        selected
+        onSelect={vi.fn()}
+        onChange={onChange}
+      />,
+    );
+
+    expect(container.querySelectorAll('[data-name^="resize-handle-"]')).toHaveLength(8);
+    fireEvent.dragEnd(container.querySelector('[data-name="resize-handle-se"]'));
+
+    expect(onChange).toHaveBeenCalledWith({
+      points: [
+        { x: 0.2, y: 0.2 },
+        { x: 0.8, y: 0.9 },
+      ],
+    });
+  });
+
+  test("does not render resize handles for locked layers", () => {
+    const annotation = layer(
+      "box",
+      "locked-resizable",
+      [{ x: 0.2, y: 0.2 }, { x: 0.6, y: 0.6 }],
+      { locked: true },
+    );
+    const { container } = render(
+      <AnnotationNode
+        layer={annotation}
+        canvasSize={{ width: 1080, height: 1350 }}
+        selected
+        onSelect={vi.fn()}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(container.querySelectorAll('[data-name^="resize-handle-"]')).toHaveLength(0);
   });
 
   test("uses selected layer label offsets when rendering leader text", () => {
@@ -836,7 +909,11 @@ describe("EditorCanvas", () => {
       />,
     );
 
-    expect(screen.queryByTestId("canvas-background")).not.toBeInTheDocument();
+    expect(screen.getByTestId("canvas-background")).toHaveAttribute(
+      "data-original",
+      "true",
+    );
+    expect(screen.getByTestId("canvas-background").style.filter).toBe("");
     expect(surface.style.filter).toBe("");
     expect(screen.getByTestId("canvas-grid")).toBeInTheDocument();
     expect(path).toHaveAttribute("data-stroke", "#12abef");
@@ -1016,7 +1093,10 @@ describe("EditorCanvas", () => {
       />,
     );
 
-    expect(screen.queryByTestId("background-image")).not.toBeInTheDocument();
+    expect(screen.getByTestId("canvas-background")).toHaveAttribute(
+      "data-original",
+      "true",
+    );
   });
 
   test("keeps demo workbench annotations renderable without passing a fake bitmap to Konva", () => {

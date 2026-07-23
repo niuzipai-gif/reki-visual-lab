@@ -1,10 +1,15 @@
 import React from "react";
 import { Circle, Group, Line, Rect, Text } from "react-konva";
 import { denormalizePoint, normalizePoint } from "../../domain/geometry.js";
+import {
+  resizeBoundsFromHandle,
+  resizeNormalizedPoints,
+} from "../../domain/transform.js";
 
 const HIT_STROKE_WIDTH = 28;
 const TRANSPARENT_HIT_FILL = "rgba(0,0,0,0.001)";
 const STACK_OFFSET = 12;
+const RESIZE_HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 
 function flattenPoints(points) {
   return points.flatMap(({ x, y }) => [x, y]);
@@ -272,6 +277,20 @@ function clampTranslation(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
+function handlePosition(bounds, handle) {
+  const x = handle.includes("w")
+    ? bounds.x
+    : handle.includes("e")
+      ? bounds.x + bounds.width
+      : bounds.x + bounds.width / 2;
+  const y = handle.includes("n")
+    ? bounds.y
+    : handle.includes("s")
+      ? bounds.y + bounds.height
+      : bounds.y + bounds.height / 2;
+  return { x, y };
+}
+
 export function AnnotationNode({
   layer,
   canvasSize,
@@ -314,6 +333,43 @@ export function AnnotationNode({
     });
   }
 
+  function finishResize(handle, event) {
+    event.cancelBubble = true;
+    const normalizedBounds = {
+      x: bounds.x / canvasSize.width,
+      y: bounds.y / canvasSize.height,
+      width: bounds.width / canvasSize.width,
+      height: bounds.height / canvasSize.height,
+    };
+    const pointer = {
+      x: event.target.x() / canvasSize.width,
+      y: event.target.y() / canvasSize.height,
+    };
+    const nextBounds = resizeBoundsFromHandle(
+      normalizedBounds,
+      handle,
+      pointer,
+    );
+    const nextPoints = resizeNormalizedPoints(
+      layer.points ?? [],
+      normalizedBounds,
+      nextBounds,
+    );
+    const patch = { points: nextPoints };
+    if (layer.type === "label") {
+      patch.style = {
+        ...style,
+        fontSize: Math.max(
+          6,
+          Math.round(style.fontSize * (nextBounds.height / normalizedBounds.height)),
+        ),
+      };
+    }
+    const position = handlePosition(bounds, handle);
+    event.target.position(position);
+    onChange?.(patch);
+  }
+
   return (
     <Group
       id={layer.id}
@@ -340,6 +396,28 @@ export function AnnotationNode({
             listening={false}
           />
           <Anchors points={points} style={style} />
+          {!layer.locked
+            ? RESIZE_HANDLES.map((handle) => {
+                const position = handlePosition(bounds, handle);
+                return (
+                  <Circle
+                    key={`resize:${handle}`}
+                    name={`resize-handle-${handle}`}
+                    x={position.x}
+                    y={position.y}
+                    radius={7}
+                    fill={style.anchorColor}
+                    stroke={style.textColor}
+                    strokeWidth={1}
+                    draggable
+                    onDragStart={(event) => {
+                      event.cancelBubble = true;
+                    }}
+                    onDragEnd={(event) => finishResize(handle, event)}
+                  />
+                );
+              })
+            : null}
         </>
       ) : null}
     </Group>

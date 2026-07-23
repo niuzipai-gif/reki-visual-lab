@@ -32,6 +32,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .entry-panel { width: min(100%, 560px); padding: clamp(36px, 8vw, 72px); text-align: center; border: 1px solid rgba(255,255,255,.8); border-radius: 32px; background: var(--reki-surface-strong); box-shadow: 0 28px 80px rgba(39,33,18,.13); backdrop-filter: blur(var(--reki-blur)); }
 .entry-kicker { margin: 0 0 16px; color: var(--reki-muted); font-size: .72rem; font-weight: 800; letter-spacing: .18em; }
 .entry-panel h1 { margin: 0; font-size: clamp(4.5rem, 18vw, 8rem); font-weight: 850; letter-spacing: -.08em; line-height: .86; }
+.entry-brand-mark { display: block; width: 72px; height: 72px; margin: 0 auto 20px; filter: drop-shadow(0 12px 18px rgba(39,33,18,.12)); }
 .entry-copy { max-width: 20rem; margin: 28px auto; color: var(--reki-muted); line-height: 1.7; }
 .upload-button { width: min(100%, 260px); padding: 15px 24px; border-radius: 999px; }
 .import-drop-zone { width: min(100%, 320px); margin: 14px auto 0; padding: 12px; border: 1px dashed var(--reki-edge); border-radius: 14px; color: var(--reki-muted); background: rgba(255,255,255,.28); font-size: .68rem; transition: border-color .18s ease, background .18s ease; }
@@ -63,6 +64,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .top-bar { grid-column: 1 / -1; z-index: 20; display: grid; grid-template-columns: minmax(190px,1fr) auto auto minmax(140px,1fr); align-items: center; gap: 14px; padding: 0 16px; border-bottom: 1px solid var(--reki-edge); background: var(--reki-surface); backdrop-filter: blur(var(--reki-blur)); }
 .brand-lockup { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .brand-icon { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 10px; color: #30270d; background: var(--reki-yolk); }
+.brand-icon img { width: 26px; height: 26px; }
 .brand-lockup > span:last-child { display: grid; line-height: 1; }
 .brand-lockup b { font-size: .88rem; letter-spacing: .12em; }
 .brand-lockup small { margin-top: 5px; color: var(--reki-muted); font-size: .53rem; font-weight: 760; letter-spacing: .11em; }

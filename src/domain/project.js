@@ -1,7 +1,7 @@
 export const DEFAULT_STYLE = Object.freeze({
-  lineColor: "#efbe3b",
-  textColor: "#fff2c4",
-  anchorColor: "#efbe3b",
+  lineColor: "#e5484d",
+  textColor: "#fff7ed",
+  anchorColor: "#ff6b6b",
   lineWidth: 2,
   fontSize: 14,
   anchorSize: 5,

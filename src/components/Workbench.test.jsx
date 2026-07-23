@@ -266,8 +266,8 @@ describe("responsive Reki workbench", () => {
     await user.click(screen.getByRole("button", { name: "撤销" }));
     expect(JSON.parse(canvas.dataset.layerLineColors)).toEqual([
       "#123456",
-      "#efbe3b",
-      "#efbe3b",
+      "#e5484d",
+      "#e5484d",
     ]);
   });
 

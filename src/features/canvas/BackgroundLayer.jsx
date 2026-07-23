@@ -51,6 +51,7 @@ export function BackgroundLayer({
   image,
   canvasSize,
   filters,
+  showOriginal = false,
   onImageSourceReady,
 }) {
   const canvasRef = useRef(null);
@@ -96,7 +97,8 @@ export function BackgroundLayer({
           willReadFrequently: true,
         });
         if (!context) return;
-        const active = hasActivePixelFilters(filters);
+        const activeFilters = showOriginal ? {} : filters;
+        const active = hasActivePixelFilters(activeFilters);
         const cached = sourceCacheRef.current;
         if (
           active &&
@@ -106,7 +108,7 @@ export function BackgroundLayer({
           cached.pixels
         ) {
           context.putImageData(
-            applyPixelFilters(cached.pixels, filters),
+            applyPixelFilters(cached.pixels, activeFilters),
             0,
             0,
           );
@@ -143,7 +145,7 @@ export function BackgroundLayer({
             dimensions.height,
           );
           sourceCacheRef.current.pixels = pixels;
-          context.putImageData(applyPixelFilters(pixels, filters), 0, 0);
+          context.putImageData(applyPixelFilters(pixels, activeFilters), 0, 0);
           setRenderError(null);
         } catch {
           // Drawing succeeded, so the canvas remains a safe unfiltered fallback.
@@ -163,6 +165,7 @@ export function BackgroundLayer({
     dimensions.height,
     dimensions.width,
     filters,
+    showOriginal,
     resource,
     urlSource,
     onImageSourceReady,
@@ -173,8 +176,9 @@ export function BackgroundLayer({
   return (
     <div
       data-testid="canvas-background"
-      className={`canvas-background${isDemo ? " demo-canvas" : ""}`}
-      style={{ filter: previewFilter(filters) }}
+      className={`canvas-background${isDemo && !showOriginal ? " demo-canvas" : ""}`}
+      data-original={String(showOriginal)}
+      style={{ filter: showOriginal ? "" : previewFilter(filters) }}
     >
       {resource?.kind === "url" ? (
         <img

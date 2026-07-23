@@ -491,9 +491,9 @@ describe("device-local project store", () => {
       label: "label_01",
       style: {
         lineWidth: 3,
-        lineColor: "#efbe3b",
-        textColor: "#fff2c4",
-        anchorColor: "#efbe3b",
+        lineColor: "#e5484d",
+        textColor: "#fff7ed",
+        anchorColor: "#ff6b6b",
         fontSize: 14,
         anchorSize: 5,
         dash: [],
