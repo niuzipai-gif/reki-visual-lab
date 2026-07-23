@@ -51,6 +51,39 @@ describe("editor history", () => {
     expect(changed.future).toEqual([]);
     expect(changed.present.canvas.width).toBe(900);
   });
+
+  test("applies every preset layer and filter as one undoable commit", () => {
+    const first = createAnnotation("box", [], {
+      id: "preset-box",
+      presetId: "archive-scan",
+    });
+    const second = createAnnotation("leader", [], {
+      id: "preset-leader",
+      presetId: "archive-scan",
+    });
+    const start = createEditorState(createProject());
+    const applied = editorReducer(start, {
+      type: "preset/apply",
+      layers: [first, second],
+      filters: { contrast: 1.18, grain: 0.12 },
+      selectedLayerId: first.id,
+    });
+    const undone = editorReducer(applied, { type: "history/undo" });
+    const redone = editorReducer(undone, { type: "history/redo" });
+
+    expect(applied.present.layers).toEqual([first, second]);
+    expect(applied.present.filters).toEqual({
+      contrast: 1.18,
+      grain: 0.12,
+    });
+    expect(applied.selectedLayerId).toBe(first.id);
+    expect(applied.past).toHaveLength(1);
+    expect(undone.present.layers).toEqual([]);
+    expect(undone.present.filters).toEqual({});
+    expect(undone.selectedLayerId).toBeNull();
+    expect(redone.present.layers).toEqual([first, second]);
+    expect(redone.selectedLayerId).toBeNull();
+  });
 });
 
 describe("layer actions", () => {
@@ -166,6 +199,51 @@ describe("layer actions", () => {
       locked: false,
     });
     expect(locked.past).toHaveLength(3);
+  });
+
+  test("updates many layers atomically and one undo restores them all", () => {
+    const first = createAnnotation("box", [], {
+      id: "first",
+      label: "before-first",
+    });
+    const second = createAnnotation("box", [], {
+      id: "second",
+      label: "before-second",
+    });
+    const start = [first, second].reduce(addLayer, createEditorState());
+    const updated = editorReducer(start, {
+      type: "layers/updateMany",
+      updates: [
+        { id: first.id, patch: { label: "batch" } },
+        { id: second.id, patch: { label: "batch" } },
+      ],
+    });
+    const undone = editorReducer(updated, { type: "history/undo" });
+
+    expect(updated.present.layers.map(({ label }) => label)).toEqual([
+      "batch",
+      "batch",
+    ]);
+    expect(updated.past).toHaveLength(start.past.length + 1);
+    expect(undone.present.layers.map(({ label }) => label)).toEqual([
+      "before-first",
+      "before-second",
+    ]);
+  });
+
+  test("ignores structurally unchanged nested layer patches", () => {
+    const annotation = createAnnotation("path", [], {
+      id: "stable-style",
+    });
+    const state = addLayer(createEditorState(), annotation);
+
+    const next = editorReducer(state, {
+      type: "layer/update",
+      id: annotation.id,
+      patch: { style: structuredClone(annotation.style) },
+    });
+
+    expect(next).toBe(state);
   });
 
   test.each([

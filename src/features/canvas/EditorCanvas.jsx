@@ -1,9 +1,16 @@
-import React, { useEffect, useMemo, useRef } from "react";
-import { Image, Layer, Stage } from "react-konva";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { Layer, Stage } from "react-konva";
 import { normalizePoint } from "../../domain/geometry.js";
 import { createAnnotation } from "../../domain/project.js";
 import { TOOL_DEFINITIONS } from "../tools/toolDefinitions.js";
 import { AnnotationNode } from "./AnnotationNode.jsx";
+import { BackgroundLayer } from "./BackgroundLayer.jsx";
 
 const TOOL_BY_ID = new Map(
   TOOL_DEFINITIONS.map((definition) => [definition.id, definition]),
@@ -105,23 +112,43 @@ function isJitteredDoubleTap(previous, current, canvasSize) {
   );
 }
 
-function pointFromEvent(event, canvasSize) {
+function pointFromEvent(event, canvasSize, stageScale) {
   const stage = event.target.getStage();
   const point = stage?.getPointerPosition();
   if (!point) return null;
 
-  const normalized = normalizePoint(point, canvasSize);
+  const normalized = normalizePoint(
+    {
+      x: point.x / stageScale,
+      y: point.y / stageScale,
+    },
+    canvasSize,
+  );
   return { x: clamp(normalized.x), y: clamp(normalized.y) };
 }
 
-function imageElement(image) {
-  return image?.element ?? image?.bitmap ?? image?.image ?? image;
+function fittedCanvas(canvasSize, availableSize, zoom) {
+  const fitScale = Math.min(
+    availableSize.width / canvasSize.width,
+    availableSize.height / canvasSize.height,
+  );
+  const safeFitScale =
+    Number.isFinite(fitScale) && fitScale > 0 ? fitScale : 1;
+  const scale = safeFitScale * (zoom / 100);
+
+  return {
+    width: canvasSize.width * scale,
+    height: canvasSize.height * scale,
+    scale,
+  };
 }
 
 export function EditorCanvas({
   project,
   selectedLayerId,
   activeTool = "select",
+  zoom = 100,
+  grid = false,
   onSelectLayer,
   onCreateLayer,
   onChangeLayer,
@@ -129,6 +156,9 @@ export function EditorCanvas({
   const draftPoints = useRef([]);
   const recentTouchTap = useRef(null);
   const canvasSize = project.canvas;
+  const viewportRef = useRef(null);
+  const [availableSize, setAvailableSize] = useState(canvasSize);
+  const fitted = fittedCanvas(canvasSize, availableSize, zoom);
   const tool = TOOL_BY_ID.get(activeTool) ?? TOOL_BY_ID.get("select");
   const visibleLayers = useMemo(
     () => project.layers.filter((layer) => layer.visible),
@@ -139,6 +169,18 @@ export function EditorCanvas({
     draftPoints.current = [];
     recentTouchTap.current = null;
   }, [activeTool]);
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || typeof ResizeObserver === "undefined") return undefined;
+
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      if (width > 0 && height > 0) setAvailableSize({ width, height });
+    });
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
 
   function create(type, points) {
     const annotation = createAnnotation(type, points);
@@ -152,7 +194,7 @@ export function EditorCanvas({
       return;
     }
 
-    const point = pointFromEvent(event, canvasSize);
+    const point = pointFromEvent(event, canvasSize, fitted.scale);
     if (!point) return;
 
     if (tool.objectType === "leader" || tool.objectType === "path") {
@@ -192,42 +234,70 @@ export function EditorCanvas({
   }
 
   return (
-    <div
-      data-testid="editor-canvas"
-      role="application"
-      aria-label="标注画布"
-      tabIndex={0}
-    >
-      <Stage
-        width={canvasSize.width}
-        height={canvasSize.height}
-        onClick={(event) => handleCreate(event, "mouse")}
-        onTap={(event) => handleCreate(event, "touch")}
-        onDblClick={completePath}
-        onDblTap={completePath}
+    <>
+      <span id="canvas-keyboard-help" className="sr-only">
+        Escape 清除选择。使用节点路径工具时，Enter 完成路径。
+      </span>
+      <div
+        ref={viewportRef}
+        data-testid="editor-canvas"
+        className="editor-canvas-viewport"
+        role="application"
+        aria-label="标注画布"
+        aria-describedby="canvas-keyboard-help"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") onSelectLayer?.(null);
+          if (event.key === "Enter") completePath();
+        }}
       >
-        <Layer>
-          {project.canvas.backgroundVisible && project.image ? (
-            <Image
-              name="background-image"
-              image={imageElement(project.image)}
-              width={canvasSize.width}
-              height={canvasSize.height}
-              listening={false}
+        <div
+          data-testid="canvas-surface"
+          className="canvas-surface"
+          style={{
+            width: fitted.width,
+            height: fitted.height,
+          }}
+        >
+          {project.canvas.backgroundVisible ? (
+            <BackgroundLayer
+              image={project.image}
+              canvasSize={canvasSize}
+              filters={project.filters}
             />
           ) : null}
-          {visibleLayers.map((layer) => (
-            <AnnotationNode
-              key={layer.id}
-              layer={layer}
-              canvasSize={canvasSize}
-              selected={layer.id === selectedLayerId}
-              onSelect={() => onSelectLayer?.(layer.id)}
-              onChange={(patch) => onChangeLayer?.(layer.id, patch)}
+          <Stage
+            width={fitted.width}
+            height={fitted.height}
+            scaleX={fitted.scale}
+            scaleY={fitted.scale}
+            onClick={(event) => handleCreate(event, "mouse")}
+            onTap={(event) => handleCreate(event, "touch")}
+            onDblClick={completePath}
+            onDblTap={completePath}
+          >
+            <Layer>
+              {visibleLayers.map((layer) => (
+                <AnnotationNode
+                  key={layer.id}
+                  layer={layer}
+                  canvasSize={canvasSize}
+                  selected={layer.id === selectedLayerId}
+                  onSelect={() => onSelectLayer?.(layer.id)}
+                  onChange={(patch) => onChangeLayer?.(layer.id, patch)}
+                />
+              ))}
+            </Layer>
+          </Stage>
+          {grid ? (
+            <div
+              className="canvas-grid-overlay"
+              data-testid="canvas-grid"
+              aria-hidden="true"
             />
-          ))}
-        </Layer>
-      </Stage>
-    </div>
+          ) : null}
+        </div>
+      </div>
+    </>
   );
 }

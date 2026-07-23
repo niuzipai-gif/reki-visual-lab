@@ -13,9 +13,33 @@ function hasLayer(project, id) {
   return project.layers.some((layer) => layer.id === id);
 }
 
+function valuesEqual(first, second) {
+  if (Object.is(first, second)) return true;
+  if (
+    first === null ||
+    second === null ||
+    typeof first !== "object" ||
+    typeof second !== "object"
+  ) {
+    return false;
+  }
+  if (Array.isArray(first) !== Array.isArray(second)) return false;
+
+  const firstKeys = Object.keys(first);
+  const secondKeys = Object.keys(second);
+  return (
+    firstKeys.length === secondKeys.length &&
+    firstKeys.every(
+      (key) =>
+        Object.hasOwn(second, key) &&
+        valuesEqual(first[key], second[key]),
+    )
+  );
+}
+
 function hasEffectivePatch(target, patch) {
   return Object.entries(patch).some(
-    ([key, value]) => !Object.is(target[key], value),
+    ([key, value]) => !valuesEqual(target[key], value),
   );
 }
 
@@ -25,13 +49,17 @@ function reconcileSelection(selectedLayerId, project) {
     : null;
 }
 
-function commit(state, nextPresent) {
+function commit(
+  state,
+  nextPresent,
+  selectedLayerId = state.selectedLayerId,
+) {
   return {
     ...state,
     past: [...state.past, state.present],
     present: nextPresent,
     future: [],
-    selectedLayerId: reconcileSelection(state.selectedLayerId, nextPresent),
+    selectedLayerId: reconcileSelection(selectedLayerId, nextPresent),
   };
 }
 
@@ -90,6 +118,50 @@ export function editorReducer(state, action) {
         layer.id === action.id ? { ...layer, ...patch } : layer,
       ),
     });
+  }
+
+  if (action.type === "layers/updateMany") {
+    const updates = new Map();
+    for (const update of action.updates ?? []) {
+      if (!hasLayer(state.present, update.id)) continue;
+      const { id: _ignoredId, ...patch } = update.patch ?? {};
+      updates.set(update.id, { ...(updates.get(update.id) ?? {}), ...patch });
+    }
+
+    let changed = false;
+    const layers = state.present.layers.map((layer) => {
+      const patch = updates.get(layer.id);
+      if (!patch || !hasEffectivePatch(layer, patch)) return layer;
+      changed = true;
+      return { ...layer, ...patch };
+    });
+    if (!changed) return state;
+
+    return commit(state, { ...state.present, layers });
+  }
+
+  if (action.type === "preset/apply") {
+    const existingIds = new Set(state.present.layers.map(({ id }) => id));
+    const layersToAdd = (action.layers ?? []).filter(
+      ({ id }) => !existingIds.has(id),
+    );
+    const filters = {
+      ...state.present.filters,
+      ...(action.filters ?? {}),
+    };
+    if (
+      !layersToAdd.length &&
+      valuesEqual(filters, state.present.filters)
+    ) {
+      return state;
+    }
+
+    const nextPresent = {
+      ...state.present,
+      layers: [...state.present.layers, ...layersToAdd],
+      filters,
+    };
+    return commit(state, nextPresent, action.selectedLayerId ?? null);
   }
 
   if (action.type === "layer/remove") {

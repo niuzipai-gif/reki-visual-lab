@@ -126,9 +126,8 @@ function Anchors({ points, style }) {
   ));
 }
 
-function LeaderShape({ layer, points, style }) {
+function LeaderShape({ points, style }) {
   if (points.length < 2) return null;
-  const endpoint = points.at(-1);
 
   return (
     <>
@@ -140,14 +139,6 @@ function LeaderShape({ layer, points, style }) {
         fill={style.anchorColor}
         opacity={style.opacity}
         hitStrokeWidth={HIT_STROKE_WIDTH}
-      />
-      <Text
-        x={endpoint.x + 8}
-        y={endpoint.y - style.fontSize / 2}
-        text={layer.label}
-        fill={style.textColor}
-        fontSize={style.fontSize}
-        opacity={style.opacity}
       />
     </>
   );
@@ -191,11 +182,38 @@ function OrbitShape({ points, style }) {
 
 function LabelShape({ layer, points, style }) {
   if (!points.length) return null;
+  const labelOffset = layer.labelOffset ?? { x: 0, y: 0 };
+  if (layer.showLabel === false) return null;
 
   return (
     <Text
-      x={points[0].x}
-      y={points[0].y}
+      x={points[0].x + labelOffset.x}
+      y={points[0].y + labelOffset.y}
+      text={layer.label}
+      fill={style.textColor}
+      fontSize={style.fontSize}
+      opacity={style.opacity}
+    />
+  );
+}
+
+function AnnotationLabel({ layer, points, style }) {
+  if (
+    layer.type === "label" ||
+    layer.showLabel === false ||
+    !points.length
+  ) {
+    return null;
+  }
+  const labelPoint =
+    layer.labelPosition === "start" ? points[0] : points.at(-1);
+  const labelOffset = layer.labelOffset ?? { x: 0, y: 0 };
+
+  return (
+    <Text
+      name="annotation-label"
+      x={labelPoint.x + 8 + labelOffset.x}
+      y={labelPoint.y - style.fontSize / 2 + labelOffset.y}
       text={layer.label}
       fill={style.textColor}
       fontSize={style.fontSize}
@@ -213,7 +231,7 @@ function AnnotationShape({ layer, points, style }) {
     case "path":
       return <PathShape points={points} style={style} />;
     case "leader":
-      return <LeaderShape layer={layer} points={points} style={style} />;
+      return <LeaderShape points={points} style={style} />;
     case "nodeCloud":
       return (
         <>
@@ -306,6 +324,7 @@ export function AnnotationNode({
     >
       <NodeHitTargets layer={layer} points={points} style={style} />
       <AnnotationShape layer={layer} points={points} style={style} />
+      <AnnotationLabel layer={layer} points={points} style={style} />
       {selected ? (
         <>
           <Rect
