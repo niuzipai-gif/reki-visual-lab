@@ -12,6 +12,7 @@ import {
   supportsInterruptibleLandmarkScan,
 } from "./features/ai/landmarkModel.js";
 import { EditorCanvas } from "./features/canvas/EditorCanvas.jsx";
+import { ExportDialog } from "./features/export/ExportDialog.jsx";
 import { FilterPanel } from "./features/filters/FilterPanel.jsx";
 import { DEFAULT_FILTER_SETTINGS } from "./features/filters/filterPipeline.js";
 import { Inspector } from "./features/tools/Inspector.jsx";
@@ -85,6 +86,7 @@ export function Workbench({
   const [zoom, setZoom] = useState(72);
   const [grid, setGrid] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
   const [filterPreview, setFilterPreview] = useState(null);
   const [aiImageSource, setAiImageSource] = useState(() =>
     drawableImageSource(initialProject?.image),
@@ -123,7 +125,7 @@ export function Workbench({
     const previouslyFocused = document.activeElement;
     const close = () => setExportOpen(false);
     const handleKeyDown = (event) => {
-      if (event.key === "Escape") close();
+      if (event.key === "Escape" && !exportBusy) close();
     };
 
     document.addEventListener("keydown", handleKeyDown);
@@ -134,7 +136,7 @@ export function Workbench({
         previouslyFocused.focus();
       }
     };
-  }, [exportOpen]);
+  }, [exportBusy, exportOpen]);
 
   const selectedLayer = state.present.layers.find(
     ({ id }) => id === state.selectedLayerId,
@@ -420,12 +422,12 @@ export function Workbench({
         specialContent={specialSheet?.content}
       />
       {exportOpen ? (
-        <div className="pending-dialog-backdrop">
-          <GlassPanel role="dialog" aria-modal="true" aria-label="导出设置" className="pending-dialog">
-            <h2>导出图片</h2><p>高清导出将在下一阶段接入。当前画布状态已准备好。</p>
-            <button ref={exportCloseRef} type="button" aria-label="关闭导出设置" className="primary-button" onClick={() => setExportOpen(false)}>完成</button>
-          </GlassPanel>
-        </div>
+        <ExportDialog
+          project={state.present}
+          closeButtonRef={exportCloseRef}
+          onBusyChange={setExportBusy}
+          onClose={() => { if (!exportBusy) setExportOpen(false); }}
+        />
       ) : null}
     </main>
   );

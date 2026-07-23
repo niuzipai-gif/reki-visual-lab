@@ -28,7 +28,8 @@ function pointBounds(points) {
   };
 }
 
-function annotationBounds(layer, points, style) {
+// Kept as the single normalized-geometry contract shared by editor tooling and export QA.
+export function annotationBounds(layer, points, style) {
   const bounds = pointBounds(points);
 
   if (layer.type === "stackBox") {
