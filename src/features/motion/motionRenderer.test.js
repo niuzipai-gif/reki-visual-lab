@@ -48,7 +48,77 @@ describe("motionRenderer", () => {
       kind: "gif",
       signal: controller.signal,
       renderFrame,
+      canvasFactory: () => ({ getContext: () => ({}) }),
     })).rejects.toMatchObject({ name: "AbortError" });
     expect(renderFrame).toHaveBeenCalledTimes(1);
+  });
+
+  test("paces WebM frame requests at 24fps instead of stopping after a burst", async () => {
+    const waitForFrame = vi.fn(async () => {});
+    const requestFrame = vi.fn();
+    const recorderInstances = [];
+    class Recorder {
+      static isTypeSupported() { return true; }
+      constructor() { recorderInstances.push(this); }
+      start() {}
+      stop() {
+        this.ondataavailable?.({ data: new Blob(["webm"], { type: "video/webm" }) });
+        this.onstop?.();
+      }
+    }
+    const canvasFactory = vi.fn(() => ({
+      getContext: () => ({ clearRect: vi.fn(), drawImage: vi.fn() }),
+      captureStream: vi.fn((frameRate) => ({ getVideoTracks: () => [{ requestFrame }] , frameRate })),
+    }));
+    const progress = vi.fn();
+    const result = await renderMotion({
+      project: { canvas: { width: 100, height: 100 }, motion: { durationMs: 1000 } },
+      sourceBitmap: {},
+      environment: { MediaRecorder: Recorder },
+      canvasFactory,
+      decodeFrame: async () => ({ close: vi.fn() }),
+      waitForFrame,
+      onProgress: progress,
+      renderFrame: async () => new Blob(["frame"], { type: "image/png" }),
+    });
+    expect(result).toMatchObject({ extension: "webm", plan: { frameCount: 24, fps: 24 } });
+    expect(canvasFactory.mock.results[0].value.captureStream).toHaveBeenCalledWith(0);
+    expect(requestFrame).toHaveBeenCalledTimes(24);
+    expect(waitForFrame).toHaveBeenCalledTimes(24);
+    expect(waitForFrame).toHaveBeenLastCalledWith(1000 / 24, undefined);
+    expect(progress).toHaveBeenLastCalledWith(24, 24);
+    expect(recorderInstances).toHaveLength(1);
+  });
+
+  test("falls back to WebM when a supported MP4 encoder fails to configure", async () => {
+    const recorderInstances = [];
+    class Recorder {
+      static isTypeSupported() { return true; }
+      constructor() { recorderInstances.push(this); }
+      start() {}
+      stop() {
+        this.ondataavailable?.({ data: new Blob(["webm"], { type: "video/webm" }) });
+        this.onstop?.();
+      }
+    }
+    class BrokenVideoEncoder {
+      static async isConfigSupported() { return { supported: true }; }
+      configure() { throw new Error("H.264 configuration failed"); }
+      close() {}
+    }
+    const result = await renderMotion({
+      project: { canvas: { width: 100, height: 100 }, motion: { durationMs: 1000 } },
+      sourceBitmap: {},
+      environment: { VideoEncoder: BrokenVideoEncoder, MediaRecorder: Recorder },
+      canvasFactory: () => ({
+        getContext: () => ({ clearRect: vi.fn(), drawImage: vi.fn() }),
+        captureStream: () => ({ getVideoTracks: () => [{ requestFrame: vi.fn() }] }),
+      }),
+      decodeFrame: async () => ({ close: vi.fn() }),
+      waitForFrame: async () => {},
+      renderFrame: async () => new Blob(["frame"], { type: "image/png" }),
+    });
+    expect(result).toMatchObject({ extension: "webm", container: "webm" });
+    expect(recorderInstances).toHaveLength(1);
   });
 });

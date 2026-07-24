@@ -20,9 +20,17 @@ vi.mock("../src/features/canvas/EditorCanvas.jsx", () => ({
   },
 }));
 
+async function renderWorkbench() {
+  render(<App initialDemoProject />);
+  // The editor is intentionally code-split; under a fully parallel Vitest run
+  // its module transform can exceed Testing Library's 1s default without being
+  // a product failure.
+  return screen.findByRole("application", { name: "标注画布" }, { timeout: 10_000 });
+}
+
 test("exposes every competitor-baseline editing control", async () => {
   const user = userEvent.setup();
-  render(<App initialDemoProject />);
+  await renderWorkbench();
 
   for (const name of [
     "点框工具",
@@ -74,12 +82,11 @@ test("exposes every competitor-baseline editing control", async () => {
   const advancedIds = advancedButtons.map((button) => button.getAttribute("aria-controls"));
   expect(new Set(advancedIds).size).toBe(2);
   for (const id of advancedIds) expect(document.getElementById(id)).toBeInTheDocument();
-});
+}, 15_000);
 
 test("applies batch labels to same-type layers and styles to every layer", async () => {
   const user = userEvent.setup();
-  render(<App initialDemoProject />);
-  const canvas = await screen.findByRole("application", { name: "标注画布" });
+  const canvas = await renderWorkbench();
   await user.click(await screen.findByRole("button", { name: "高级设置" }));
 
   const layers = screen.getByRole("region", { name: "图层" });
@@ -98,11 +105,11 @@ test("applies batch labels to same-type layers and styles to every layer", async
   });
   await user.click(screen.getByRole("button", { name: "将当前样式应用到全部" }));
   expect(JSON.parse(canvas.dataset.layerLineColors).every((color) => color === "#123456")).toBe(true);
-});
+}, 15_000);
 
 test("keeps layer visibility, lock, ordering, duplication, and delete operations accessible", async () => {
   const user = userEvent.setup();
-  render(<App initialDemoProject />);
+  await renderWorkbench();
   const layers = await screen.findByRole("region", { name: "图层" });
   const first = within(layers).getAllByRole("listitem")[0];
 
@@ -113,12 +120,12 @@ test("keeps layer visibility, lock, ordering, duplication, and delete operations
   }
   await user.click(within(first).getByRole("button", { name: /隐藏/ }));
   expect(within(first).getByRole("button", { name: /显示/ })).toBeInTheDocument();
-});
+}, 15_000);
 
 test("keeps motion export choices available alongside the competitor editing tools", async () => {
   const user = userEvent.setup();
-  render(<App initialDemoProject />);
+  await renderWorkbench();
   await user.click(await screen.findByRole("button", { name: "导出图片" }));
   await user.click(screen.getByLabelText("动画视频"));
   expect(screen.getByRole("button", { name: "导出视频" })).toBeEnabled();
-});
+}, 15_000);
