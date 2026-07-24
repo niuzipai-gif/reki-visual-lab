@@ -335,6 +335,12 @@ export function Workbench({
       />
       <PresetStrip activePreset={activePreset} onApply={applyPreset} />
       <section className={`canvas-workspace${grid ? " grid-visible" : ""}`} aria-label="画布工作区">
+        <img
+          className="canvas-brand-mark"
+          src="/brand/reki-character-mark.png"
+          alt=""
+          aria-hidden="true"
+        />
         <div
           className={`canvas-stage-wrap${
             state.present.image?.demo &&

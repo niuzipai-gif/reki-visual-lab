@@ -27,7 +27,7 @@ export function TopBar({
   return (
     <header className="top-bar">
       <div className="brand-lockup" aria-label="REKI 视觉标注实验室">
-        <span className="brand-icon"><img src="/reki-mark.svg" alt="" /></span>
+        <span className="brand-icon"><img src="/brand/reki-character-mark.png" alt="" /></span>
         <span><b>REKI</b><small>VISUAL ANNOTATION LAB</small></span>
       </div>
       <div className="top-history" aria-label="历史与对比">

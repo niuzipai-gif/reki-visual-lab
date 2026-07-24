@@ -69,7 +69,7 @@ export function ImportPanel({ onProject, decode = decodeImage, children }) {
   return (
     <main className="entry-shell">
       <section className="entry-panel" aria-labelledby="reki-title">
-        <img className="entry-brand-mark" src="/reki-mark.svg" alt="" />
+        <img className="entry-brand-mark" src="/brand/reki-character-mark.png" alt="" />
         <p className="entry-kicker">视觉标注实验室</p>
         <h1 id="reki-title">REKI</h1>
         <p className="entry-copy">从一张照片开始你的静态视觉实验。</p>

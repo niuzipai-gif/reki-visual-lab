@@ -4,17 +4,19 @@ import { describe, expect, test } from "vitest";
 const css = fs.readFileSync("src/styles.css", "utf8");
 const indexHtml = fs.readFileSync("index.html", "utf8");
 const markSvg = fs.readFileSync("public/reki-mark.svg", "utf8");
+const brandCharacter = fs.readFileSync("public/brand/reki-character.png");
+const brandCharacterMark = fs.readFileSync("public/brand/reki-character-mark.png");
 
 describe("Reki CSS contracts", () => {
   test("defines and uses only the exact public design tokens", () => {
     const tokens = {
-      "--reki-bg": "#ece8dd",
+      "--reki-bg": "#efe4d4",
       "--reki-surface": "rgba(255, 255, 255, .58)",
       "--reki-surface-strong": "rgba(250, 248, 241, .78)",
       "--reki-edge": "rgba(49, 43, 27, .13)",
       "--reki-ink": "#29271f",
       "--reki-muted": "#716c61",
-      "--reki-yolk": "#efbe3b",
+      "--reki-yolk": "#b02f3e",
       "--reki-radius-panel": "22px",
       "--reki-blur": "24px",
     };
@@ -40,10 +42,23 @@ describe("Reki CSS contracts", () => {
 
   test("uses the dedicated hand-drawn Reki mark and favicon assets", () => {
     expect(indexHtml).toContain('href="/favicon.svg"');
-    expect(markSvg).toContain("e5484d");
-    expect(markSvg).toContain("efbe3b");
+    expect(indexHtml).toContain('<meta name="theme-color" content="#efe4d4" />');
+    expect(markSvg).toContain("reki-character-mark.png");
+    expect(fs.existsSync("public/brand/reki-character.png")).toBe(true);
+    expect(fs.existsSync("public/brand/reki-character-mark.png")).toBe(true);
+    expect(brandCharacter.length).toBeGreaterThan(100);
+    expect(brandCharacterMark.length).toBeGreaterThan(100);
     expect(css).toContain(".entry-brand-mark");
     expect(css).toContain(".brand-icon img");
+  });
+
+  test("keeps the canvas branding decorative and pointer-transparent", () => {
+    expect(css).toMatch(
+      /\.canvas-brand-mark\s*\{[^}]*position:\s*absolute;[^}]*pointer-events:\s*none;/,
+    );
+    expect(css).toMatch(
+      /@media \(max-width: 759px\)[\s\S]*?\.canvas-brand-mark\s*\{[^}]*opacity:/,
+    );
   });
 
   test("uses the dynamic viewport without a fixed mobile minimum height", () => {
