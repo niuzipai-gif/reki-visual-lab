@@ -20,6 +20,7 @@ import { LayersPanel } from "./features/tools/LayersPanel.jsx";
 import { PresetStrip } from "./features/tools/PresetStrip.jsx";
 import { ToolRail } from "./features/tools/ToolRail.jsx";
 import { TOOL_DEFINITIONS } from "./features/tools/toolDefinitions.js";
+import { useResizablePanels } from "./hooks/useResizablePanels.js";
 
 export function createDemoProject() {
   const project = createProject({ width: 1080, height: 1350 });
@@ -97,6 +98,12 @@ export function Workbench({
   const lastNotifiedProject = useRef(state.present);
   const replaceInputRef = useRef(null);
   const [replaceFeedback, setReplaceFeedback] = useState(null);
+  const {
+    desktopWidth,
+    sheetHeight,
+    desktopSeparatorProps,
+    sheetSeparatorProps,
+  } = useResizablePanels();
 
   useEffect(() => {
     if (lastNotifiedProject.current === state.present) return;
@@ -330,7 +337,11 @@ export function Workbench({
         }}
       />
       <PresetStrip activePreset={activePreset} onApply={applyPreset} />
-      <section className={`canvas-workspace${grid ? " grid-visible" : ""}`} aria-label="画布工作区">
+      <section
+        className={`canvas-workspace${grid ? " grid-visible" : ""}`}
+        aria-label="画布工作区"
+        style={{ "--reki-panel-width": `${desktopWidth}px` }}
+      >
         <img
           className="canvas-brand-mark"
           src="/brand/reki-character-mark.png"
@@ -403,6 +414,7 @@ export function Workbench({
             </div>
           ) : null}
         </div>
+        <div className="desktop-panel-resizer" {...desktopSeparatorProps} />
         <GlassPanel className="desktop-inspector" aria-label="高级检查器">
           {activeTool === "ai" && mobileSheet !== "ai"
             ? createAiPanel()
@@ -426,6 +438,8 @@ export function Workbench({
         layers={layersPanel}
         specialTitle={specialSheet?.title}
         specialContent={specialSheet?.content}
+        height={sheetHeight}
+        resizeHandleProps={sheetSeparatorProps}
       />
       {exportOpen ? (
         <ExportDialog

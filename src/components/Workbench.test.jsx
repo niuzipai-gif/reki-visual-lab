@@ -727,4 +727,17 @@ describe("responsive Reki workbench", () => {
     });
     expect(canvas).toHaveAttribute("data-selected-label-position", "start");
   });
+
+  test("provides an accessible desktop separator for expanding the layer work area", () => {
+    renderDemo();
+
+    const separator = screen.getByRole("separator", {
+      name: "调整右侧工作区宽度",
+    });
+    fireEvent.keyDown(separator, { key: "End" });
+
+    expect(screen.getByLabelText("高级检查器").parentElement).toHaveStyle(
+      "--reki-panel-width: 520px",
+    );
+  });
 });

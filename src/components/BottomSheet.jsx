@@ -10,13 +10,23 @@ export function BottomSheet({
   layers,
   specialTitle,
   specialContent,
+  height = 62,
+  resizeHandleProps,
 }) {
   if (!tab) return null;
   const selectedTab = tab === "layers" ? "layers" : "style";
 
   return (
-    <GlassPanel className="bottom-sheet" role="dialog" aria-label="移动端编辑面板" aria-modal="false">
-      <div className="sheet-handle" aria-hidden="true" />
+    <GlassPanel
+      className="bottom-sheet"
+      role="dialog"
+      aria-label="移动端编辑面板"
+      aria-modal="false"
+      style={{ "--reki-sheet-height": `${height}vh` }}
+    >
+      <div className="sheet-resize-handle" {...resizeHandleProps}>
+        <span className="sheet-handle" aria-hidden="true" />
+      </div>
       <div className="sheet-header">
         {specialTitle ? (
           <h2>{specialTitle}</h2>
