@@ -67,6 +67,8 @@ export function AiStylePanel({
     onApply?.(recommendation, action);
   }
 
+  const canRequest = Boolean(imageSource) && status.type !== "loading";
+
   return (
     <section className="ai-style-panel" aria-label="AI 风格建议">
       <header>
@@ -80,7 +82,9 @@ export function AiStylePanel({
         仅分析图片特征并建议编辑风格，不生成图片；原图不会上传，浏览器只发送去标识化特征摘要。
       </p>
       {status.type === "idle" ? (
-        <p className="ai-feedback">先做一次本地分析，再获取三套可应用的编辑方案。</p>
+        <p className="ai-feedback">
+          {imageSource ? "先做一次本地分析，再获取三套可应用的编辑方案。" : "图片加载完成后即可分析并获取风格建议。"}
+        </p>
       ) : null}
       {status.type === "loading" ? (
         <p className="ai-feedback" role="status" aria-live="polite">正在分析图片并请求风格建议…</p>
@@ -123,7 +127,7 @@ export function AiStylePanel({
         type="button"
         className="primary-button ai-style-request"
         onClick={requestAdvice}
-        disabled={status.type === "loading"}
+        disabled={!canRequest}
       >
         {recommendations.length ? "重新获取建议" : "获取 AI 风格建议"}
       </button>
