@@ -340,7 +340,7 @@ export function Workbench({
       <section
         className={`canvas-workspace${grid ? " grid-visible" : ""}`}
         aria-label="画布工作区"
-        style={{ "--reki-panel-width": `${desktopWidth}px` }}
+        style={{ "--reki-panel-preference": `${desktopWidth}px` }}
       >
         <img
           className="canvas-brand-mark"

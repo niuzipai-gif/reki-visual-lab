@@ -737,7 +737,7 @@ describe("responsive Reki workbench", () => {
     fireEvent.keyDown(separator, { key: "End" });
 
     expect(screen.getByLabelText("高级检查器").parentElement).toHaveStyle(
-      "--reki-panel-width: 520px",
+      "--reki-panel-preference: 520px",
     );
   });
 });

@@ -127,6 +127,12 @@ describe("Reki CSS contracts", () => {
     );
   });
 
+  test("keeps a usable canvas width on narrow desktop screens when the inspector grows", () => {
+    expect(css).toMatch(
+      /@media \(min-width: 760px\) and \(max-width: 900px\)[\s\S]*?\.canvas-workspace\s*\{[^}]*--reki-panel-width:\s*min\(var\(--reki-panel-preference, 320px\),\s*calc\(100vw - 360px\)\);/,
+    );
+  });
+
   test("keeps both history controls visible on mobile", () => {
     const mobileRules = css.match(
       /@media \(max-width: 759px\)\s*\{[\s\S]*?(?=@media \(max-width: 420px\))/,

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const DESKTOP_STORAGE_KEY = "reki.desktop-panel-width";
 const SHEET_STORAGE_KEY = "reki.mobile-sheet-height";
@@ -39,6 +39,13 @@ export function useResizablePanels() {
   const [sheetHeight, setSheetHeightState] = useState(() =>
     readPersisted(SHEET_STORAGE_KEY, DEFAULT_SHEET_HEIGHT, SHEET_MIN, SHEET_MAX),
   );
+  const activeDragRef = useRef(null);
+
+  const stopActiveDrag = useCallback(() => {
+    activeDragRef.current?.stop();
+  }, []);
+
+  useEffect(() => stopActiveDrag, [stopActiveDrag]);
 
   const setDesktopWidth = useCallback((next) => {
     setDesktopWidthState((current) => {
@@ -58,6 +65,7 @@ export function useResizablePanels() {
   const beginDesktopResize = useCallback((event) => {
     if (event.button !== 0) return;
     event.preventDefault();
+    stopActiveDrag();
     const startX = event.clientX;
     const startWidth = desktopWidth;
     const move = (moveEvent) => setDesktopWidth(startWidth - (moveEvent.clientX - startX));
@@ -65,15 +73,18 @@ export function useResizablePanels() {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
       window.removeEventListener("pointercancel", stop);
+      if (activeDragRef.current?.stop === stop) activeDragRef.current = null;
     };
+    activeDragRef.current = { stop };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop, { once: true });
     window.addEventListener("pointercancel", stop, { once: true });
-  }, [desktopWidth, setDesktopWidth]);
+  }, [desktopWidth, setDesktopWidth, stopActiveDrag]);
 
   const beginSheetResize = useCallback((event) => {
     if (event.button !== 0) return;
     event.preventDefault();
+    stopActiveDrag();
     const startY = event.clientY;
     const startHeight = sheetHeight;
     const viewportHeight = Math.max(window.innerHeight, 1);
@@ -82,11 +93,13 @@ export function useResizablePanels() {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
       window.removeEventListener("pointercancel", stop);
+      if (activeDragRef.current?.stop === stop) activeDragRef.current = null;
     };
+    activeDragRef.current = { stop };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop, { once: true });
     window.addEventListener("pointercancel", stop, { once: true });
-  }, [setSheetHeight, sheetHeight]);
+  }, [setSheetHeight, sheetHeight, stopActiveDrag]);
 
   const desktopSeparatorProps = useMemo(() => ({
     role: "separator",
@@ -98,10 +111,16 @@ export function useResizablePanels() {
     "aria-valuenow": desktopWidth,
     onPointerDown: beginDesktopResize,
     onKeyDown: (event) => {
-      if (event.key === "ArrowLeft") setDesktopWidth((value) => value - 16);
-      if (event.key === "ArrowRight") setDesktopWidth((value) => value + 16);
-      if (event.key === "Home") setDesktopWidth(DESKTOP_MIN);
-      if (event.key === "End") setDesktopWidth(DESKTOP_MAX);
+      const movement = {
+        ArrowLeft: () => setDesktopWidth((value) => value - 16),
+        ArrowRight: () => setDesktopWidth((value) => value + 16),
+        Home: () => setDesktopWidth(DESKTOP_MIN),
+        End: () => setDesktopWidth(DESKTOP_MAX),
+      }[event.key];
+      if (movement) {
+        event.preventDefault();
+        movement();
+      }
     },
   }), [beginDesktopResize, desktopWidth, setDesktopWidth]);
 
@@ -115,10 +134,16 @@ export function useResizablePanels() {
     "aria-valuenow": sheetHeight,
     onPointerDown: beginSheetResize,
     onKeyDown: (event) => {
-      if (event.key === "ArrowUp") setSheetHeight((value) => value + 4);
-      if (event.key === "ArrowDown") setSheetHeight((value) => value - 4);
-      if (event.key === "Home") setSheetHeight(SHEET_MIN);
-      if (event.key === "End") setSheetHeight(SHEET_MAX);
+      const movement = {
+        ArrowUp: () => setSheetHeight((value) => value + 4),
+        ArrowDown: () => setSheetHeight((value) => value - 4),
+        Home: () => setSheetHeight(SHEET_MIN),
+        End: () => setSheetHeight(SHEET_MAX),
+      }[event.key];
+      if (movement) {
+        event.preventDefault();
+        movement();
+      }
     },
   }), [beginSheetResize, setSheetHeight, sheetHeight]);
 
