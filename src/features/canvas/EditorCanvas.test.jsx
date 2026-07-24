@@ -64,16 +64,34 @@ vi.mock("react-konva", () => {
   function Group({
     children,
     id,
+    name,
     draggable,
     onClick,
     onTap,
     onDragEnd,
+    x,
+    y,
+    scaleX,
+    scaleY,
+    rotation,
+    opacity,
+    listening,
+    ...props
   }) {
     return (
       <div
         data-konva="Group"
         data-layer-id={id}
+        data-name={name}
         data-draggable={String(Boolean(draggable))}
+        data-x={x}
+        data-y={y}
+        data-scale-x={scaleX}
+        data-scale-y={scaleY}
+        data-rotation={rotation}
+        data-opacity={opacity}
+        data-listening={String(listening)}
+        {...props}
         onClick={(event) => {
           event.stopPropagation();
           onClick?.({ evt: event });
@@ -348,6 +366,44 @@ describe("AnnotationNode", () => {
         { x: 0.6, y: 0.65 },
       ],
     });
+  });
+
+  test("applies an animation frame to selected geometry without duplicate glitch hit targets", () => {
+    const animated = layer(
+      "box",
+      "animated-glitch",
+      [{ x: 0.2, y: 0.3 }, { x: 0.6, y: 0.7 }],
+      {
+        animation: {
+          type: "glitch",
+          durationMs: 1000,
+          delayMs: 0,
+          loop: true,
+          amplitude: 0.8,
+          direction: "normal",
+        },
+      },
+    );
+    const { container } = render(
+      <AnnotationNode
+        layer={animated}
+        canvasSize={{ width: 1000, height: 1000 }}
+        selected
+        animationTimeMs={250}
+        onSelect={vi.fn()}
+        onChange={vi.fn()}
+      />,
+    );
+
+    const layerNode = container.querySelector('[data-layer-id="animated-glitch"]');
+    const ghosts = container.querySelectorAll('[data-name="annotation-glitch-ghost"]');
+    const geometry = container.querySelector('[data-name="annotation-motion-geometry"]');
+
+    expect(layerNode).toHaveAttribute("data-motion", "glitch");
+    expect(geometry).toHaveAttribute("data-opacity", expect.any(String));
+    expect(ghosts).toHaveLength(2);
+    expect([...ghosts].every((ghost) => ghost.dataset.listening === "false")).toBe(true);
+    expect(container.querySelectorAll('[data-name="box-hit-area"]')).toHaveLength(3);
   });
 
   test("renders draggable resize handles and writes normalized resize changes", () => {
@@ -1199,6 +1255,38 @@ describe("EditorCanvas", () => {
 
     fireEvent.click(container.querySelector('[data-layer-id="caption"]'));
     expect(onSelectLayer).toHaveBeenCalledWith("caption");
+  });
+
+  test("forwards the global animation cursor into visible annotations", () => {
+    const animated = layer(
+      "box",
+      "canvas-motion",
+      [{ x: 0.2, y: 0.2 }, { x: 0.6, y: 0.6 }],
+      {
+        animation: {
+          type: "glitch",
+          durationMs: 1000,
+          delayMs: 0,
+          loop: true,
+          amplitude: 0.8,
+          direction: "normal",
+        },
+      },
+    );
+    const { container } = render(
+      <EditorCanvas
+        project={projectWith({ layers: [animated] })}
+        activeTool="select"
+        selectedLayerId="canvas-motion"
+        animationTimeMs={250}
+        onSelectLayer={vi.fn()}
+        onCreateLayer={vi.fn()}
+        onChangeLayer={vi.fn()}
+      />,
+    );
+
+    const geometry = container.querySelector('[data-name="annotation-motion-geometry"]');
+    expect(geometry).toHaveAttribute("data-opacity", "0.88");
   });
 
   test("lets empty space between node targets bubble to the canvas", () => {

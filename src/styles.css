@@ -122,6 +122,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .inspector-form header, .layers-panel-content header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .inspector-form header small, .layers-panel-content header small { color: var(--reki-muted); font-size: .5rem; font-weight: 800; letter-spacing: .13em; }
 .inspector-form h2, .layers-panel-content h2 { margin: 3px 0 0; font-size: .78rem; }
+.inspector-motion-stack { display: grid; gap: 14px; }
+.motion-panel { padding-top: 14px; border-top: 1px solid var(--reki-edge); }
+.motion-panel header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.motion-panel header small { color: var(--reki-muted); font-size: .5rem; font-weight: 800; letter-spacing: .13em; }
+.motion-panel h2 { margin: 3px 0 0; font-size: .78rem; }
+.motion-panel .control-field { margin-top: 10px; }
+.motion-range-grid { margin-top: 2px; }
+.motion-play-button, .motion-restart-button { border: 1px solid var(--reki-edge); border-radius: 8px; background: rgba(255,255,255,.5); color: var(--reki-ink); font: 740 .58rem/1 inherit; }
+.motion-play-button { min-height: 30px; padding: 0 10px; background: rgba(176,47,62,.16); }
+.motion-restart-button { width: 100%; min-height: 31px; margin-top: 10px; padding: 7px 9px; }
+.motion-play-button:hover, .motion-restart-button:hover { background: rgba(255,255,255,.82); }
+.motion-timeline { margin-top: 12px; padding: 9px; border: 1px solid var(--reki-edge); border-radius: 10px; background: rgba(255,255,255,.28); }
+.motion-timeline-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; color: var(--reki-muted); font-size: .56rem; font-variant-numeric: tabular-nums; }
+.motion-timeline-row strong { color: var(--reki-ink); font-size: .59rem; }
+.motion-timeline input { width: 100%; margin-top: 6px; accent-color: var(--reki-yolk); }
 .filter-panel header { display: flex; align-items: center; justify-content: space-between; }
 .filter-panel header small { color: var(--reki-muted); font-size: .5rem; font-weight: 800; letter-spacing: .13em; }
 .filter-panel h2 { margin: 3px 0 0; font-size: .78rem; }

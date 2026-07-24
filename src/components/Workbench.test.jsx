@@ -20,6 +20,7 @@ vi.mock("../features/canvas/EditorCanvas.jsx", async () => {
       onCreateLayer,
       onChangeLayer,
       onImageSourceReady,
+      animationTimeMs,
     }) {
       const selected = project.layers.find(
         ({ id }) => id === selectedLayerId,
@@ -48,6 +49,8 @@ vi.mock("../features/canvas/EditorCanvas.jsx", async () => {
           )}
           data-filters={JSON.stringify(project.filters)}
           data-effect-stack={JSON.stringify(project.effectStack)}
+          data-animation-time={animationTimeMs}
+          data-selected-animation={JSON.stringify(selected?.animation ?? null)}
         >
           <button
             type="button"
@@ -726,6 +729,25 @@ describe("responsive Reki workbench", () => {
       y: -9,
     });
     expect(canvas).toHaveAttribute("data-selected-label-position", "start");
+  });
+
+  test("edits selected layer animation through the global timeline inspector", async () => {
+    const user = userEvent.setup();
+    renderDemo();
+    const canvas = screen.getByRole("application", { name: "标注画布" });
+
+    await user.selectOptions(screen.getByLabelText("动画类型"), "pulse");
+    expect(JSON.parse(canvas.dataset.selectedAnimation)).toMatchObject({
+      type: "pulse",
+    });
+    expect(screen.getByRole("button", { name: "暂停动画预览" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "暂停动画预览" }));
+    expect(screen.getByRole("button", { name: "播放动画预览" })).toBeVisible();
+    fireEvent.change(screen.getByRole("slider", { name: "全局时间轴" }), {
+      target: { value: "750" },
+    });
+    expect(canvas).toHaveAttribute("data-animation-time", "750");
+    expect(canvas).toHaveAttribute("data-animation-time", "750");
   });
 
   test("provides an accessible desktop separator for expanding the layer work area", () => {

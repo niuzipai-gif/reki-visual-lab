@@ -153,6 +153,7 @@ export function EditorCanvas({
   onCreateLayer,
   onChangeLayer,
   onImageSourceReady,
+  animationTimeMs = 0,
 }) {
   const draftPoints = useRef([]);
   const recentTouchTap = useRef(null);
@@ -285,6 +286,7 @@ export function EditorCanvas({
                   layer={layer}
                   canvasSize={canvasSize}
                   selected={layer.id === selectedLayerId}
+                  animationTimeMs={animationTimeMs}
                   onSelect={() => onSelectLayer?.(layer.id)}
                   onChange={(patch) => onChangeLayer?.(layer.id, patch)}
                 />

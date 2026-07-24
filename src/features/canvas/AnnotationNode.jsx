@@ -5,6 +5,7 @@ import {
   resizeBoundsFromHandle,
   resizeNormalizedPoints,
 } from "../../domain/transform.js";
+import { resolveAnimation } from "../motion/animationRuntime.js";
 
 const HIT_STROKE_WIDTH = 28;
 const TRANSPARENT_HIT_FILL = "rgba(0,0,0,0.001)";
@@ -297,12 +298,63 @@ export function AnnotationNode({
   selected,
   onSelect,
   onChange,
+  animationTimeMs = 0,
 }) {
   const points = (layer.points ?? []).map((point) =>
     denormalizePoint(point, canvasSize),
   );
   const style = layer.style;
   const bounds = annotationBounds(layer, points, style);
+  const motion = resolveAnimation(layer.animation, animationTimeMs);
+  const motionOrigin = {
+    x: bounds.x + bounds.width / 2,
+    y: bounds.y + bounds.height / 2,
+  };
+  const motionTransform = {
+    x: motionOrigin.x + motion.translateX * canvasSize.width,
+    y: motionOrigin.y + motion.translateY * canvasSize.height,
+    offsetX: motionOrigin.x,
+    offsetY: motionOrigin.y,
+    scaleX: motion.scale,
+    scaleY: motion.scale,
+    rotation: motion.rotation,
+    opacity: motion.opacity,
+  };
+
+  function motionGeometry({ ghost = false, ghostColor, xOffset = 0 } = {}) {
+    const renderedStyle = ghostColor
+      ? {
+          ...style,
+          lineColor: ghostColor,
+          textColor: ghostColor,
+          anchorColor: ghostColor,
+          opacity: style.opacity * 0.52,
+        }
+      : style;
+    const shouldClip = motion.drawProgress < 1;
+    return (
+      <Group
+        name={ghost ? "annotation-glitch-ghost" : "annotation-motion-geometry"}
+        x={motionTransform.x + xOffset}
+        y={motionTransform.y}
+        offsetX={motionTransform.offsetX}
+        offsetY={motionTransform.offsetY}
+        scaleX={motionTransform.scaleX}
+        scaleY={motionTransform.scaleY}
+        rotation={motionTransform.rotation}
+        opacity={motionTransform.opacity * (ghost ? motion.flash : 1)}
+        clipX={shouldClip ? bounds.x : undefined}
+        clipY={shouldClip ? bounds.y - 4 : undefined}
+        clipWidth={shouldClip ? Math.max(0, bounds.width * motion.drawProgress + 8) : undefined}
+        clipHeight={shouldClip ? bounds.height + 8 : undefined}
+        listening={!ghost}
+      >
+        {!ghost ? <NodeHitTargets layer={layer} points={points} style={renderedStyle} /> : null}
+        <AnnotationShape layer={layer} points={points} style={renderedStyle} />
+        <AnnotationLabel layer={layer} points={points} style={renderedStyle} />
+      </Group>
+    );
+  }
 
   function select(event) {
     event.cancelBubble = true;
@@ -374,14 +426,19 @@ export function AnnotationNode({
     <Group
       id={layer.id}
       name={`annotation${selected ? " selected" : ""}`}
+      data-motion={layer.animation?.type ?? "none"}
       draggable={!layer.locked}
       onClick={select}
       onTap={select}
       onDragEnd={layer.locked ? undefined : finishDrag}
     >
-      <NodeHitTargets layer={layer} points={points} style={style} />
-      <AnnotationShape layer={layer} points={points} style={style} />
-      <AnnotationLabel layer={layer} points={points} style={style} />
+      {layer.animation?.type === "glitch" ? (
+        <>
+          {motionGeometry({ ghost: true, ghostColor: "#e5484d", xOffset: -4 })}
+          {motionGeometry({ ghost: true, ghostColor: "#3177ff", xOffset: 4 })}
+        </>
+      ) : null}
+      {motionGeometry()}
       {selected ? (
         <>
           <Rect

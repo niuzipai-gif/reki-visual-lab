@@ -15,6 +15,7 @@ import {
 import { EditorCanvas } from "./features/canvas/EditorCanvas.jsx";
 import { ExportDialog } from "./features/export/ExportDialog.jsx";
 import { FilterPanel } from "./features/filters/FilterPanel.jsx";
+import { MotionPanel } from "./features/motion/MotionPanel.jsx";
 import { Inspector } from "./features/tools/Inspector.jsx";
 import { LayersPanel } from "./features/tools/LayersPanel.jsx";
 import { PresetStrip } from "./features/tools/PresetStrip.jsx";
@@ -88,6 +89,9 @@ export function Workbench({
   const [grid, setGrid] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
+  const [motionPlaying, setMotionPlaying] = useState(false);
+  const [motionTimeMs, setMotionTimeMs] = useState(0);
+  const [motionClockEpoch, setMotionClockEpoch] = useState(0);
   const [aiImageSource, setAiImageSource] = useState(() =>
     drawableImageSource(initialProject?.image),
   );
@@ -97,6 +101,7 @@ export function Workbench({
   const exportCloseRef = useRef(null);
   const lastNotifiedProject = useRef(state.present);
   const replaceInputRef = useRef(null);
+  const motionTimeRef = useRef(0);
   const [replaceFeedback, setReplaceFeedback] = useState(null);
   const {
     desktopWidth,
@@ -146,6 +151,25 @@ export function Workbench({
     };
   }, [exportBusy, exportOpen]);
 
+  useEffect(() => {
+    if (!motionPlaying || typeof requestAnimationFrame !== "function") {
+      return undefined;
+    }
+
+    const startedAt = performance.now() - motionTimeRef.current;
+    let frameId = null;
+    const tick = (now) => {
+      const next = (now - startedAt) % 4000;
+      motionTimeRef.current = next;
+      setMotionTimeMs(next);
+      frameId = requestAnimationFrame(tick);
+    };
+    frameId = requestAnimationFrame(tick);
+    return () => {
+      if (frameId !== null) cancelAnimationFrame(frameId);
+    };
+  }, [motionClockEpoch, motionPlaying]);
+
   const selectedLayer = state.present.layers.find(
     ({ id }) => id === state.selectedLayerId,
   ) ?? null;
@@ -155,6 +179,23 @@ export function Workbench({
 
   const updateSelected = (patch) => {
     if (selectedLayer) dispatch({ type: "layer/update", id: selectedLayer.id, patch });
+  };
+
+  const setPreviewTime = (timeMs) => {
+    const next = Math.max(0, Math.min(4000, Number(timeMs) || 0));
+    motionTimeRef.current = next;
+    setMotionTimeMs(next);
+  };
+
+  const updateSelectedAnimation = (animation) => {
+    if (!selectedLayer) return;
+    dispatch({ type: "layer/animation", id: selectedLayer.id, animation });
+    if (animation.type !== "none") setMotionPlaying(true);
+  };
+
+  const restartMotionPreview = () => {
+    setPreviewTime(0);
+    setMotionClockEpoch((epoch) => epoch + 1);
   };
 
   const applyStyle = (scope) => {
@@ -216,13 +257,29 @@ export function Workbench({
     />
   );
   const inspector = (
-    <Inspector
-      layer={selectedLayer}
-      onPatch={updateSelected}
-      onBatchLabel={batchLabel}
-      onApplyStyle={applyStyle}
-      onDelete={() => selectedLayer && dispatch({ type: "layer/remove", id: selectedLayer.id })}
-    />
+    <div className="inspector-motion-stack">
+      <Inspector
+        layer={selectedLayer}
+        onPatch={updateSelected}
+        onBatchLabel={batchLabel}
+        onApplyStyle={applyStyle}
+        onDelete={() => selectedLayer && dispatch({ type: "layer/remove", id: selectedLayer.id })}
+      />
+      {selectedLayer ? (
+        <MotionPanel
+          layer={selectedLayer}
+          playing={motionPlaying}
+          timeMs={motionTimeMs}
+          onChange={updateSelectedAnimation}
+          onPlayChange={setMotionPlaying}
+          onRestart={restartMotionPreview}
+          onTimelineChange={(timeMs) => {
+            setMotionPlaying(false);
+            setPreviewTime(timeMs);
+          }}
+        />
+      ) : null}
+    </div>
   );
   const handleEffectAction = (action, id, patch) => {
     if (action === "add") dispatch({ type: "effects/add", effect: id });
@@ -362,6 +419,7 @@ export function Workbench({
             activeTool={activeTool}
             zoom={zoom}
             grid={grid}
+            animationTimeMs={motionTimeMs}
             onSelectLayer={(id) => dispatch({ type: "selection/set", id })}
             onCreateLayer={(layer) => {
               dispatch({ type: "layer/add", layer });
