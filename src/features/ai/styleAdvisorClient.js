@@ -74,7 +74,8 @@ async function readJsonResponse(response) {
     }
     try {
       return JSON.parse(new TextDecoder().decode(buffer));
-    } catch {
+    } catch (error) {
+      if (error?.name === "AbortError") throw error;
       throw codedError("INVALID_JSON");
     }
   }
@@ -116,6 +117,7 @@ export async function requestStyleAdvice(features, options = {}) {
       payload = await readJsonResponse(response);
     } catch (error) {
       if (error?.code === "RESPONSE_TOO_LARGE") return errorResult(error);
+      if (error?.name === "AbortError") throw error;
       payload = null;
       if (response?.ok) return errorResult({ code: "INVALID_JSON" });
     }

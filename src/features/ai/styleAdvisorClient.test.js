@@ -127,4 +127,22 @@ describe("style advisor client", () => {
 
     expect(result).toMatchObject({ ok: false, error: "INVALID_JSON" });
   });
+
+  test("normalizes an abort during response reading as caller cancellation", async () => {
+    const caller = new AbortController();
+    const response = {
+      ok: true,
+      headers: { get: () => null },
+      arrayBuffer: vi.fn(() => {
+        caller.abort();
+        return Promise.reject(new DOMException("aborted", "AbortError"));
+      }),
+    };
+    const result = await requestStyleAdvice({ width: 10 }, {
+      fetchImpl: vi.fn().mockResolvedValue(response),
+      signal: caller.signal,
+    });
+
+    expect(result).toMatchObject({ ok: false, error: "ABORTED" });
+  });
 });
