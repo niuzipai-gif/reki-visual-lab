@@ -18,12 +18,26 @@ describe("project factories", () => {
       image: null,
       filters: {},
       effectStack: [],
+      motion: { durationMs: 4000 },
       layers: [],
     });
     expect(project.id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
     expect(project.updatedAt).toEqual(expect.any(Number));
+  });
+
+  test("persists a bounded four-second global motion duration", () => {
+    const normalized = normalizeProject({
+      ...createProject(),
+      motion: { durationMs: 99999 },
+    });
+
+    expect(normalized.motion).toEqual({ durationMs: 10000 });
+    expect(normalizeProject({ ...createProject(), motion: { durationMs: 0 } }).motion)
+      .toEqual({ durationMs: 1000 });
+    expect(normalizeProject({ ...createProject(), motion: null }).motion)
+      .toEqual({ durationMs: 4000 });
   });
 
   test("migrates flat legacy filters into effect cards without mutating the saved project", () => {

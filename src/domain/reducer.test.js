@@ -204,6 +204,19 @@ describe("editor history", () => {
 });
 
 describe("layer actions", () => {
+  test("updates the persisted global motion duration as one undoable commit", () => {
+    const start = createEditorState(createProject());
+    const updated = editorReducer(start, {
+      type: "motion/update",
+      patch: { durationMs: 5200 },
+    });
+
+    expect(updated.present.motion).toEqual({ durationMs: 5200 });
+    expect(updated.past).toHaveLength(1);
+    expect(editorReducer(updated, { type: "history/undo" }).present.motion)
+      .toEqual({ durationMs: 4000 });
+  });
+
   test("updates a layer animation as one sanitized undoable commit", () => {
     const layer = createAnnotation("path", [], { id: "animated-layer" });
     const start = addLayer(createEditorState(), layer);

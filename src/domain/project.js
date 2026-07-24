@@ -16,6 +16,19 @@ export const DEFAULT_STYLE = Object.freeze({
   curveTension: 0,
 });
 
+export const DEFAULT_MOTION = Object.freeze({
+  durationMs: 4000,
+});
+
+export function sanitizeMotion(motion) {
+  const duration = Number(motion?.durationMs);
+  return {
+    durationMs: Number.isFinite(duration)
+      ? Math.max(1000, Math.min(10000, Math.round(duration)))
+      : DEFAULT_MOTION.durationMs,
+  };
+}
+
 export function createProject({ width = 1080, height = 1350 } = {}) {
   return {
     id: crypto.randomUUID(),
@@ -26,6 +39,7 @@ export function createProject({ width = 1080, height = 1350 } = {}) {
     image: null,
     filters: {},
     effectStack: [],
+    motion: { ...DEFAULT_MOTION },
     layers: [],
   };
 }
@@ -61,6 +75,7 @@ export function normalizeProject(project) {
     },
     filters: {},
     effectStack,
+    motion: sanitizeMotion(project.motion),
     layers: Array.isArray(project.layers)
       ? project.layers.map((layer) => ({
           ...layer,

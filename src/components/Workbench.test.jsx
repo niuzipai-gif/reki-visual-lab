@@ -51,6 +51,7 @@ vi.mock("../features/canvas/EditorCanvas.jsx", async () => {
           data-effect-stack={JSON.stringify(project.effectStack)}
           data-animation-time={animationTimeMs}
           data-selected-animation={JSON.stringify(selected?.animation ?? null)}
+          data-motion-duration={project.motion?.durationMs}
         >
           <button
             type="button"
@@ -748,6 +749,47 @@ describe("responsive Reki workbench", () => {
     });
     expect(canvas).toHaveAttribute("data-animation-time", "750");
     expect(canvas).toHaveAttribute("data-animation-time", "750");
+
+    fireEvent.change(screen.getByLabelText("全局动画时长"), {
+      target: { value: "5200" },
+    });
+    expect(canvas).toHaveAttribute("data-motion-duration", "5200");
+    expect(screen.getByRole("slider", { name: "全局时间轴" }))
+      .toHaveAttribute("max", "5200");
+  });
+
+  test("advances the RAF preview cursor and freezes it when paused or restarted", async () => {
+    const user = userEvent.setup();
+    const callbacks = [];
+    const cancelFrame = vi.fn();
+    const now = vi.spyOn(performance, "now").mockReturnValue(1000);
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    }));
+    vi.stubGlobal("cancelAnimationFrame", cancelFrame);
+
+    try {
+      renderDemo();
+      const canvas = screen.getByRole("application", { name: "标注画布" });
+      await user.selectOptions(screen.getByLabelText("动画类型"), "pulse");
+
+      expect(callbacks).toHaveLength(1);
+      await act(async () => {
+        callbacks[0](1600);
+      });
+      expect(canvas).toHaveAttribute("data-animation-time", "600");
+
+      await user.click(screen.getByRole("button", { name: "暂停动画预览" }));
+      expect(cancelFrame).toHaveBeenCalled();
+      expect(canvas).toHaveAttribute("data-animation-time", "600");
+
+      await user.click(screen.getByRole("button", { name: "重新开始动画预览" }));
+      expect(canvas).toHaveAttribute("data-animation-time", "0");
+    } finally {
+      now.mockRestore();
+      vi.unstubAllGlobals();
+    }
   });
 
   test("provides an accessible desktop separator for expanding the layer work area", () => {

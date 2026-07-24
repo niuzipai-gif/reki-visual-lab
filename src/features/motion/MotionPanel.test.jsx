@@ -72,4 +72,21 @@ describe("MotionPanel", () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ amplitude: 0.75 }));
     expect(onRestart).toHaveBeenCalledTimes(1);
   });
+
+  test("edits the persisted global preview duration", () => {
+    const onTimelineDurationChange = vi.fn();
+    render(
+      <MotionPanel
+        layer={animatedLayer()}
+        timelineDurationMs={4000}
+        onTimelineDurationChange={onTimelineDurationChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("全局动画时长"), {
+      target: { value: "5200" },
+    });
+
+    expect(onTimelineDurationChange).toHaveBeenCalledWith(5200);
+  });
 });

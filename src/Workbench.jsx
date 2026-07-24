@@ -103,6 +103,7 @@ export function Workbench({
   const replaceInputRef = useRef(null);
   const motionTimeRef = useRef(0);
   const [replaceFeedback, setReplaceFeedback] = useState(null);
+  const timelineDurationMs = state.present.motion?.durationMs ?? 4000;
   const {
     desktopWidth,
     sheetHeight,
@@ -159,7 +160,7 @@ export function Workbench({
     const startedAt = performance.now() - motionTimeRef.current;
     let frameId = null;
     const tick = (now) => {
-      const next = (now - startedAt) % 4000;
+      const next = (now - startedAt) % timelineDurationMs;
       motionTimeRef.current = next;
       setMotionTimeMs(next);
       frameId = requestAnimationFrame(tick);
@@ -168,7 +169,7 @@ export function Workbench({
     return () => {
       if (frameId !== null) cancelAnimationFrame(frameId);
     };
-  }, [motionClockEpoch, motionPlaying]);
+  }, [motionClockEpoch, motionPlaying, timelineDurationMs]);
 
   const selectedLayer = state.present.layers.find(
     ({ id }) => id === state.selectedLayerId,
@@ -181,8 +182,8 @@ export function Workbench({
     if (selectedLayer) dispatch({ type: "layer/update", id: selectedLayer.id, patch });
   };
 
-  const setPreviewTime = (timeMs) => {
-    const next = Math.max(0, Math.min(4000, Number(timeMs) || 0));
+  const setPreviewTime = (timeMs, durationMs = timelineDurationMs) => {
+    const next = Math.max(0, Math.min(durationMs, Number(timeMs) || 0));
     motionTimeRef.current = next;
     setMotionTimeMs(next);
   };
@@ -195,6 +196,13 @@ export function Workbench({
 
   const restartMotionPreview = () => {
     setPreviewTime(0);
+    setMotionClockEpoch((epoch) => epoch + 1);
+  };
+
+  const updateTimelineDuration = (durationMs) => {
+    const duration = Math.max(1000, Math.min(10000, Math.round(Number(durationMs) || 4000)));
+    dispatch({ type: "motion/update", patch: { durationMs: duration } });
+    setPreviewTime(motionTimeRef.current, duration);
     setMotionClockEpoch((epoch) => epoch + 1);
   };
 
@@ -270,9 +278,11 @@ export function Workbench({
           layer={selectedLayer}
           playing={motionPlaying}
           timeMs={motionTimeMs}
+          timelineDurationMs={timelineDurationMs}
           onChange={updateSelectedAnimation}
           onPlayChange={setMotionPlaying}
           onRestart={restartMotionPreview}
+          onTimelineDurationChange={updateTimelineDuration}
           onTimelineChange={(timeMs) => {
             setMotionPlaying(false);
             setPreviewTime(timeMs);

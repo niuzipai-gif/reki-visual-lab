@@ -44,6 +44,7 @@ export function MotionPanel({
   onPlayChange,
   onRestart,
   onTimelineChange,
+  onTimelineDurationChange,
 }) {
   if (!layer) return null;
   const animation = animationFor(layer);
@@ -150,6 +151,18 @@ export function MotionPanel({
           <strong>时间轴</strong>
           <span>{seconds(timeMs)}s / {seconds(duration)}s</span>
         </div>
+        <label className="control-field motion-global-duration" htmlFor="motion-global-duration">
+          全局动画时长
+          <input
+            id="motion-global-duration"
+            type="number"
+            min="1000"
+            max="10000"
+            step="100"
+            value={duration}
+            onChange={(event) => onTimelineDurationChange?.(Number(event.target.value))}
+          />
+        </label>
         <input
           aria-label="全局时间轴"
           type="range"

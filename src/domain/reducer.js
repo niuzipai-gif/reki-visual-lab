@@ -1,4 +1,4 @@
-import { createProject, normalizeProject } from "./project.js";
+import { createProject, normalizeProject, sanitizeMotion } from "./project.js";
 import {
   sanitizeEditorPatch,
   styleToEditorPatch,
@@ -425,6 +425,15 @@ export function editorReducer(state, action) {
       ...state.present,
       canvas: { ...state.present.canvas, ...patch },
     });
+  }
+
+  if (action.type === "motion/update") {
+    const motion = sanitizeMotion({
+      ...state.present.motion,
+      ...(action.patch && typeof action.patch === "object" ? action.patch : {}),
+    });
+    if (valuesEqual(state.present.motion, motion)) return state;
+    return commit(state, { ...state.present, motion });
   }
 
   if (action.type === "effects/add") {
