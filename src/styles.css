@@ -143,6 +143,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .ai-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 11px; }
 .ai-actions button { min-height: 32px; padding: 7px; border: 1px solid var(--reki-edge); border-radius: 9px; background: rgba(255,255,255,.5); font-size: .58rem; font-weight: 750; }
 .ai-actions .primary-button { grid-column: 1 / -1; background: var(--reki-yolk); }
+.ai-panels-stack { display: grid; gap: 18px; }
+.ai-style-panel { padding-top: 16px; border-top: 1px solid var(--reki-edge); }
+.ai-style-panel header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ai-style-panel header small { color: var(--reki-muted); font-size: .5rem; font-weight: 800; letter-spacing: .13em; }
+.ai-style-panel h2 { margin: 3px 0 0; font-size: .78rem; }
+.ai-style-panel .ai-privacy { margin-top: 10px; }
+.ai-style-cards { display: grid; gap: 8px; margin-top: 11px; }
+.ai-style-card { padding: 9px; border: 1px solid var(--reki-edge); border-radius: 12px; background: rgba(255,255,255,.36); }
+.ai-style-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; }
+.ai-style-card-heading small { color: var(--reki-muted); font: 700 .49rem/1 ui-monospace, monospace; letter-spacing: .08em; }
+.ai-style-card h3 { margin: 3px 0 0; font-size: .7rem; }
+.ai-style-card-heading > span { color: var(--reki-muted); font: 700 .5rem/1 ui-monospace, monospace; }
+.ai-style-card p { margin: 8px 0 0; color: var(--reki-muted); font-size: .59rem; line-height: 1.45; }
+.ai-style-risk { display: block; margin-top: 6px; color: #7d2f27; font-size: .54rem; line-height: 1.4; }
+.ai-style-card button { width: 100%; margin-top: 8px; padding: 7px; border-radius: 8px; font-size: .59rem; }
+.ai-style-request { width: 100%; margin-top: 11px; padding: 8px; border-radius: 9px; font-size: .61rem; }
 .type-badge, .layers-panel-content header > span { padding: 4px 7px; border-radius: 999px; color: #6f1f2c; background: rgba(176,47,62,.22); font: 750 .56rem/1 ui-monospace, monospace; }
 .inspector-form fieldset { min-width: 0; margin: 14px 0 0; padding: 0; border: 0; }
 .advanced-settings-button { width: 100%; margin-top: 12px; padding: 7px 9px; border: 1px solid rgba(207,153,17,.42); border-radius: 8px; color: var(--reki-ink); background: rgba(176,47,62,.16); font-size: .62rem; font-weight: 780; text-align: left; }

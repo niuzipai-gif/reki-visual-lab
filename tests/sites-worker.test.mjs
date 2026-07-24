@@ -61,6 +61,50 @@ test("does not turn missing API or write requests into the app shell", async () 
   }
 });
 
+test("returns JSON status when style advice is not configured", async () => {
+  const response = await worker.fetch(
+    new Request("https://example.test/api/style-advice", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ features: { width: 100 } }),
+    }),
+    { ASSETS: { fetch: async () => new Response("asset", { status: 200 }) } },
+  );
+
+  assert.equal(response.status, 503);
+  assert.match(response.headers.get("content-type"), /application\/json/);
+  assert.equal((await response.json()).error.code, "AI_NOT_CONFIGURED");
+});
+
+test("proxies a sanitized summary to MiniMax without exposing the key", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({ recommendations: [] }) } }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const response = await worker.fetch(
+      new Request("https://example.test/api/style-advice", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ features: { width: 100, image: "raw-image", data: [1, 2] } }),
+      }),
+      { ASSETS: { fetch: async () => new Response("asset", { status: 200 }) }, MINIMAX_API_KEY: "test-token" },
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].init.headers.authorization, /^Bearer /);
+    assert.doesNotMatch(JSON.stringify(calls[0].init.body), /raw-image/);
+    assert.doesNotMatch(JSON.stringify(await response.json()), /test-token/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("emits the files required by Sites packaging", async () => {
   await access(new URL("../dist/client/index.html", import.meta.url));
   await access(new URL("../dist/server/index.js", import.meta.url));

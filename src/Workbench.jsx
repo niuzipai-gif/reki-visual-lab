@@ -7,6 +7,7 @@ import { TopBar } from "./components/TopBar.jsx";
 import { createAnnotation, createProject } from "./domain/project.js";
 import { createEditorState, editorReducer } from "./domain/reducer.js";
 import { AiScanPanel } from "./features/ai/AiScanPanel.jsx";
+import { AiStylePanel } from "./features/ai/AiStylePanel.jsx";
 import {
   scanImage,
   supportsInterruptibleLandmarkScan,
@@ -256,24 +257,27 @@ export function Workbench({
     ({ source }) => source === "ai",
   );
   const createAiPanel = () => (
-    <AiScanPanel
-      imageSource={aiImageSource}
-      hasResults={hasAiResults}
-      scan={scanLandmarks}
-      interruptible={
-        scanLandmarks !== scanImage || supportsInterruptibleLandmarkScan()
-      }
-      onAddLayers={(layers) =>
-        dispatch({
-          type: "layers/addMany",
-          layers,
-          selectedLayerId: layers[0]?.id ?? null,
-        })
-      }
-      onClearResults={() =>
-        dispatch({ type: "layers/removeBySource", source: "ai" })
-      }
-    />
+    <div className="ai-panels-stack">
+      <AiScanPanel
+        imageSource={aiImageSource}
+        hasResults={hasAiResults}
+        scan={scanLandmarks}
+        interruptible={
+          scanLandmarks !== scanImage || supportsInterruptibleLandmarkScan()
+        }
+        onAddLayers={(layers) =>
+          dispatch({
+            type: "layers/addMany",
+            layers,
+            selectedLayerId: layers[0]?.id ?? null,
+          })
+        }
+        onClearResults={() =>
+          dispatch({ type: "layers/removeBySource", source: "ai" })
+        }
+      />
+      <AiStylePanel imageSource={aiImageSource} dispatch={dispatch} />
+    </div>
   );
 
   const specialSheet = ["tools", "presets", "ai", "filter"].includes(mobileSheet)
