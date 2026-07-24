@@ -85,7 +85,3 @@ export function createAnnotation(type, points = [], overrides = {}) {
     ...overrides,
   };
 }
-import {
-  legacyFiltersToEffectStack,
-  normalizeEffectStack,
-} from "../features/filters/effectStack.js";
