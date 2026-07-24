@@ -16,10 +16,26 @@ function LayerButton({ label, onClick, disabled, children }) {
   return <button type="button" aria-label={label} title={label} onClick={onClick} disabled={disabled}>{children}</button>;
 }
 
-export function LayersPanel({ layers, selectedLayerId, onSelect, onAction }) {
+export function LayersPanel({ layers, selectedLayerId, onSelect, onAction, onClearAll }) {
   return (
     <div className="layers-panel-content">
-      <header><div><small>OBJECT STACK</small><h2>图层</h2></div><span>{layers.length}</span></header>
+      <header>
+        <div><small>OBJECT STACK</small><h2>图层</h2></div>
+        <div className="layers-panel-header-actions">
+          <span>{layers.length}</span>
+          <button
+            type="button"
+            className="layers-clear-button"
+            aria-label="清除全部图层"
+            title="清除全部图层"
+            onClick={onClearAll}
+            disabled={!layers.length}
+          >
+            <Trash2 size={13} />
+            <span>清除全部</span>
+          </button>
+        </div>
+      </header>
       {layers.length ? (
         <ol className="layer-list">
           {layers.map((layer, index) => (

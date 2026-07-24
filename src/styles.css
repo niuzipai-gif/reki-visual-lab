@@ -159,7 +159,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .ai-style-risk { display: block; margin-top: 6px; color: #7d2f27; font-size: .54rem; line-height: 1.4; }
 .ai-style-card button { width: 100%; margin-top: 8px; padding: 7px; border-radius: 8px; font-size: .59rem; }
 .ai-style-request { width: 100%; margin-top: 11px; padding: 8px; border-radius: 9px; font-size: .61rem; }
-.type-badge, .layers-panel-content header > span { padding: 4px 7px; border-radius: 999px; color: #6f1f2c; background: rgba(176,47,62,.22); font: 750 .56rem/1 ui-monospace, monospace; }
+.type-badge, .layers-panel-header-actions > span { padding: 4px 7px; border-radius: 999px; color: #6f1f2c; background: rgba(176,47,62,.22); font: 750 .56rem/1 ui-monospace, monospace; }
+.layers-panel-header-actions { display: flex; align-items: center; gap: 5px; }
+.layers-clear-button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; border: 1px solid var(--reki-edge); border-radius: 7px; color: var(--reki-muted); background: rgba(255,255,255,.38); font-size: .5rem; font-weight: 760; white-space: nowrap; }
+.layers-clear-button:hover:not(:disabled) { color: #7d2f27; background: rgba(255,255,255,.72); }
 .inspector-form fieldset { min-width: 0; margin: 14px 0 0; padding: 0; border: 0; }
 .advanced-settings-button { width: 100%; margin-top: 12px; padding: 7px 9px; border: 1px solid rgba(207,153,17,.42); border-radius: 8px; color: var(--reki-ink); background: rgba(176,47,62,.16); font-size: .62rem; font-weight: 780; text-align: left; }
 .inspector-form legend { width: 100%; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--reki-edge); color: var(--reki-muted); font-size: .54rem; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }

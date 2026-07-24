@@ -389,6 +389,30 @@ describe("layer actions", () => {
     ).toBe(cleared);
   });
 
+  test("clears every layer as one undoable commit and resets selection", () => {
+    const first = createAnnotation("box", [], { id: "clear-first" });
+    const second = createAnnotation("path", [], { id: "clear-second" });
+    const start = {
+      ...addLayer(addLayer(createEditorState(), first), second),
+      selectedLayerId: second.id,
+    };
+
+    const cleared = editorReducer(start, { type: "layers/clear" });
+    const undone = editorReducer(cleared, { type: "history/undo" });
+
+    expect(cleared.present.layers).toEqual([]);
+    expect(cleared.selectedLayerId).toBeNull();
+    expect(cleared.past).toHaveLength(start.past.length + 1);
+    expect(undone.present.layers).toEqual([first, second]);
+    expect(undone.selectedLayerId).toBeNull();
+  });
+
+  test("does not create history when clearing an already empty stack", () => {
+    const start = createEditorState();
+
+    expect(editorReducer(start, { type: "layers/clear" })).toBe(start);
+  });
+
   test("ignores structurally unchanged nested layer patches", () => {
     const annotation = createAnnotation("path", [], {
       id: "stable-style",

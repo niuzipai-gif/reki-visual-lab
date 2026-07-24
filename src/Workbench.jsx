@@ -195,12 +195,19 @@ export function Workbench({
     dispatch(actions[action]);
   };
 
+  const clearAllLayers = () => {
+    if (!state.present.layers.length) return;
+    if (!window.confirm("确定清除全部图层吗？此操作可通过撤销恢复。")) return;
+    dispatch({ type: "layers/clear" });
+  };
+
   const layersPanel = (
     <LayersPanel
       layers={state.present.layers}
       selectedLayerId={state.selectedLayerId}
       onSelect={(id) => dispatch({ type: "selection/set", id })}
       onAction={handleLayerAction}
+      onClearAll={clearAllLayers}
     />
   );
   const inspector = (

@@ -506,6 +506,29 @@ describe("responsive Reki workbench", () => {
     expect(canvas).toHaveAttribute("data-layer-count", "2");
   });
 
+  test("confirms before clearing every layer and undo restores the stack", async () => {
+    const user = userEvent.setup();
+    const confirmation = vi.spyOn(window, "confirm");
+    confirmation.mockReturnValueOnce(false).mockReturnValueOnce(true);
+    renderDemo();
+    const canvas = screen.getByRole("application", { name: "标注画布" });
+    const clearButton = screen.getByRole("button", { name: "清除全部图层" });
+
+    await user.click(clearButton);
+    expect(confirmation).toHaveBeenCalledWith(
+      "确定清除全部图层吗？此操作可通过撤销恢复。",
+    );
+    expect(canvas).toHaveAttribute("data-layer-count", "3");
+
+    await user.click(clearButton);
+    expect(canvas).toHaveAttribute("data-layer-count", "0");
+    expect(clearButton).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "撤销" }));
+    expect(canvas).toHaveAttribute("data-layer-count", "3");
+    confirmation.mockRestore();
+  });
+
   test("keeps manual tools usable after failure and scans again after reopen", async () => {
     const user = userEvent.setup();
     const scanLandmarks = vi

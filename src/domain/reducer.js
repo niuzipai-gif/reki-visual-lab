@@ -124,6 +124,15 @@ export function editorReducer(state, action) {
     return commit(state, { ...state.present, layers });
   }
 
+  if (action.type === "layers/clear") {
+    if (!state.present.layers.length) return state;
+    return commit(
+      state,
+      { ...state.present, layers: [] },
+      null,
+    );
+  }
+
   if (action.type === "layer/add") {
     if (hasLayer(state.present, action.layer.id)) {
       return state;
