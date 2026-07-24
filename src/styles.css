@@ -240,7 +240,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
   .preset-scroll button { flex-basis: auto; height: 39px; padding: 7px 12px; border-radius: 999px; }
   .preset-scroll button small { display: none; }
   .canvas-workspace { grid-column: 1; min-height: 0; padding: 8px 8px 86px; background: #e4d7c6; }
-  .canvas-brand-mark { right: 12px; bottom: 96px; width: 150px; opacity: .035; }
   .canvas-stage-wrap { border-radius: 18px; }
   .bottom-dock { position: fixed; z-index: 60; right: 10px; bottom: 10px; left: 10px; height: 66px; align-items: center; justify-content: space-around; padding: 6px; background: rgba(250,248,241,.72); }
   .bottom-dock button { display: grid; min-width: 42px; height: 52px; padding: 5px 4px; place-items: center; gap: 2px; border: 1px solid transparent; border-radius: 14px; color: var(--reki-muted); background: transparent; }
@@ -275,5 +274,5 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 }
 
 @media (max-width: 720px) {
-  .canvas-brand-mark { opacity: .025; }
+  .canvas-brand-mark { right: 12px; bottom: 96px; width: 150px; opacity: .025; }
 }
