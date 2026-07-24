@@ -1,4 +1,5 @@
 import { createProject } from "./project.js";
+import { styleToEditorPatch } from "../features/ai/styleAdvisor.js";
 
 export const MAX_HISTORY_ENTRIES = 100;
 
@@ -192,6 +193,46 @@ export function editorReducer(state, action) {
       filters,
     };
     return commit(state, nextPresent, action.selectedLayerId ?? null);
+  }
+
+  if (action.type === "style/apply") {
+    const recommendation = action.recommendation ?? action.patch ?? {};
+    const generatedPatch = Array.isArray(recommendation.layers)
+      ? {
+          filters: recommendation.filters ?? {},
+          layers: structuredClone(recommendation.layers),
+        }
+      : styleToEditorPatch(recommendation, {
+          features: action.features,
+          seed: action.seed,
+        });
+    const generatedLayers = (generatedPatch.layers ?? []).map((layer) => ({
+      ...structuredClone(layer),
+      source: "ai-style",
+    }));
+    const existingIds = new Set(state.present.layers.map(({ id }) => id));
+    const layersToAdd = generatedLayers.filter(({ id }) => {
+      if (!id || existingIds.has(id)) return false;
+      existingIds.add(id);
+      return true;
+    });
+    const filters = {
+      ...state.present.filters,
+      ...(action.filters ?? generatedPatch.filters ?? {}),
+    };
+    if (!layersToAdd.length && valuesEqual(filters, state.present.filters)) {
+      return state;
+    }
+    const nextPresent = {
+      ...state.present,
+      layers: [...state.present.layers, ...layersToAdd],
+      filters,
+    };
+    return commit(
+      state,
+      nextPresent,
+      action.selectedLayerId ?? layersToAdd[0]?.id ?? null,
+    );
   }
 
   if (action.type === "layer/remove") {

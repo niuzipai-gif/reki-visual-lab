@@ -88,6 +88,31 @@ describe("editor history", () => {
     expect(redone.present.layers).toEqual([first, second]);
     expect(redone.selectedLayerId).toBeNull();
   });
+
+  test("applies an AI style atomically, marks generated layers, and selects the first", () => {
+    const start = createEditorState();
+    const recommendation = {
+      id: "style-test",
+      filters: { contrast: 1.16, grain: 0.12 },
+      layers: [
+        createAnnotation("path", [{ x: 0.1, y: 0.2 }], { id: "style-path" }),
+        createAnnotation("label", [{ x: 0.2, y: 0.3 }], { id: "style-label" }),
+      ],
+    };
+
+    const applied = editorReducer(start, {
+      type: "style/apply",
+      recommendation,
+    });
+    const undone = editorReducer(applied, { type: "history/undo" });
+
+    expect(applied.present.filters).toEqual(recommendation.filters);
+    expect(applied.present.layers).toHaveLength(2);
+    expect(applied.present.layers.every(({ source }) => source === "ai-style")).toBe(true);
+    expect(applied.selectedLayerId).toBe("style-path");
+    expect(applied.past).toHaveLength(1);
+    expect(undone.present).toEqual(start.present);
+  });
 });
 
 describe("layer actions", () => {
