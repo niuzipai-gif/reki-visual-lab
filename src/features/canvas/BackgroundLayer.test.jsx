@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { BackgroundLayer } from "./BackgroundLayer.jsx";
 import { analyzeImageFeatures } from "../ai/styleAdvisor.js";
+import { applyEffectStack } from "../filters/effectStack.js";
 
 const canvasSize = { width: 1080, height: 1350 };
 const filters = {
@@ -17,6 +18,31 @@ afterEach(() => {
 });
 
 describe("BackgroundLayer", () => {
+  test("renders the supplied effect stack with the same pixels used by static export", async () => {
+    const sourcePixels = new ImageData(
+      new Uint8ClampedArray([100, 150, 200, 255]), 1, 1,
+    );
+    const effectStack = [{
+      id: "brightness-1", type: "brightness", name: "亮度", visible: true,
+      opacity: 1, settings: { amount: 1.2 },
+    }];
+    const putImageData = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      clearRect: vi.fn(), drawImage: vi.fn(),
+      getImageData: vi.fn(() => sourcePixels), putImageData,
+    });
+    vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+
+    render(<BackgroundLayer image={{ width: 1, height: 1 }} canvasSize={{ width: 1, height: 1 }} filters={{}} effectStack={effectStack} />);
+    await waitFor(() => expect(putImageData).toHaveBeenCalledTimes(1));
+    expect(Array.from(putImageData.mock.calls[0][0].data)).toEqual(
+      Array.from(applyEffectStack(sourcePixels, effectStack).data),
+    );
+  });
+
   test("uses a URL image source with a dedicated filtered output canvas", () => {
     render(
       <BackgroundLayer
@@ -485,13 +511,15 @@ describe("BackgroundLayer", () => {
     const originalFile = new Blob(["original"], { type: "image/png" });
     const drawImage = vi.fn();
     vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(originalSource));
+    const getImageData = vi.fn(
+      () => new ImageData(new Uint8ClampedArray([120, 120, 120, 255]), 1, 1),
+    );
+    const putImageData = vi.fn();
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
       clearRect: vi.fn(),
       drawImage,
-      getImageData: vi.fn(
-        () => new ImageData(new Uint8ClampedArray([120, 120, 120, 255]), 1, 1),
-      ),
-      putImageData: vi.fn(),
+      getImageData,
+      putImageData,
     });
     vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
       callback(0);
@@ -504,6 +532,7 @@ describe("BackgroundLayer", () => {
         image={image}
         canvasSize={{ width: 1, height: 1 }}
         filters={{ threshold: 128 }}
+        effectStack={[{ id: "rgb", type: "rgbOffset", name: "RGB 偏移", visible: true, opacity: 1, settings: { offset: 1 } }]}
       />,
     );
     await waitFor(() =>
@@ -511,17 +540,22 @@ describe("BackgroundLayer", () => {
     );
 
     drawImage.mockClear();
+    getImageData.mockClear();
+    putImageData.mockClear();
     rerender(
       <BackgroundLayer
         image={image}
         canvasSize={{ width: 1, height: 1 }}
         filters={{ threshold: 128 }}
+        effectStack={[{ id: "rgb", type: "rgbOffset", name: "RGB 偏移", visible: true, opacity: 1, settings: { offset: 1 } }]}
         showOriginal
       />,
     );
     await waitFor(() =>
       expect(drawImage).toHaveBeenCalledWith(originalSource, 0, 0, 1, 1),
     );
+    expect(getImageData).not.toHaveBeenCalled();
+    expect(putImageData).not.toHaveBeenCalled();
 
     drawImage.mockClear();
     rerender(

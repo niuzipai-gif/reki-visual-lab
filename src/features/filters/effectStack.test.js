@@ -92,6 +92,20 @@ describe("effect stack", () => {
     expect(Array.from(output.data)).toEqual([255, 255, 255, 255]);
   });
 
+  test("uses halftone and duotone strength as an additional visible mix", () => {
+    const half = applyEffectStack(image([100, 100, 100, 255]), [{
+      id: "half", type: "halftone", name: "网点", visible: true, opacity: 1,
+      settings: { amount: 0.5 },
+    }]);
+    expect(Array.from(half.data)).toEqual([178, 178, 178, 255]);
+
+    const duo = applyEffectStack(image([100, 150, 200, 255]), [{
+      id: "duo", type: "duotone", name: "双色调", visible: true, opacity: 1,
+      settings: { amount: 0.5, dark: [0, 0, 0], light: [255, 255, 255] },
+    }]);
+    expect(Array.from(duo.data)).toEqual([121, 146, 171, 255]);
+  });
+
   test("keeps CSS-only legacy style filters as visible cards", () => {
     const effects = legacyFiltersToEffectStack({
       brightness: 1.08,

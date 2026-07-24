@@ -60,7 +60,7 @@ function effectIsActive(type, settings) {
         Number.isFinite(Number(settings.value))
       );
     case "halftone":
-      return true;
+      return finite(settings.amount, 1) > 0;
     case "grain":
       return finite(settings.amount) > 0;
     case "rgbOffset":
@@ -68,7 +68,11 @@ function effectIsActive(type, settings) {
     case "scanline":
       return finite(settings.amount) > 0;
     case "duotone":
-      return validPalette(settings.dark) && validPalette(settings.light);
+      return (
+        finite(settings.amount, 1) > 0 &&
+        validPalette(settings.dark) &&
+        validPalette(settings.light)
+      );
     default:
       return false;
   }
@@ -297,7 +301,10 @@ export function applyEffectStack(imageData, stack = []) {
           new ImageData(new Uint8ClampedArray(data), width, height),
           effectToLegacySettings(effect),
         );
-    data = blendPixels(data, processed.data, effect.opacity);
+    const strength = ["halftone", "duotone"].includes(effect.type)
+      ? clamp(finite(effect.settings.amount, 1), 0, 1)
+      : 1;
+    data = blendPixels(data, processed.data, effect.opacity * strength);
     if (effect.type === "contrast") {
       legacyContrastAmount = contrastAmount ?? finite(effect.settings.amount, 1);
       if (canCombineLegacySharpness) combinedSharpness.add(index + 1);

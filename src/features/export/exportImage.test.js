@@ -5,6 +5,7 @@ import {
   isSafeExport,
   renderProjectToBlob,
 } from "./exportImage.js";
+import { applyEffectStack } from "../filters/effectStack.js";
 
 describe("export planning", () => {
   test("creates exact 2x output dimensions", () => {
@@ -105,10 +106,19 @@ describe("composition export", () => {
   });
 
   test("applies named effect-stack pixels after drawing a complete image", async () => {
+    const sourcePixels = new ImageData(
+      new Uint8ClampedArray([100, 150, 200, 255, 30, 60, 90, 255]),
+      2,
+      1,
+    );
+    const effectStack = [{
+      id: "brightness-1", type: "brightness", name: "亮度", visible: true,
+      opacity: 1, settings: { amount: 1.2 },
+    }];
     const context = {
       clearRect: vi.fn(),
       drawImage: vi.fn(),
-      getImageData: vi.fn(() => new ImageData(2, 2)),
+      getImageData: vi.fn(() => sourcePixels),
       putImageData: vi.fn(),
       save: vi.fn(),
       restore: vi.fn(),
@@ -130,10 +140,7 @@ describe("composition export", () => {
       project: {
         canvas: { width: 2, height: 2 },
         filters: {},
-        effectStack: [{
-          id: "brightness-1", type: "brightness", name: "亮度", visible: true,
-          opacity: 1, settings: { amount: 1.2 },
-        }],
+        effectStack,
         layers: [],
       },
       sourceBitmap: { width: 2, height: 2 },
@@ -141,6 +148,9 @@ describe("composition export", () => {
     });
     expect(context.filter).toBe("none");
     expect(context.putImageData).toHaveBeenCalledTimes(1);
+    expect(Array.from(context.putImageData.mock.calls[0][0].data)).toEqual(
+      Array.from(applyEffectStack(sourcePixels, effectStack).data),
+    );
     expect(canvas.width).toBe(0);
     expect(canvas.height).toBe(0);
     vi.unstubAllGlobals();

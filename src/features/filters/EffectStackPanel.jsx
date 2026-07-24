@@ -7,11 +7,11 @@ const DEFAULT_SETTINGS = Object.freeze({
   saturation: { amount: 0.85 },
   sharpness: { amount: 0.35, legacyContrast: false },
   threshold: { value: 128 },
-  halftone: {},
+  halftone: { amount: 1 },
   grain: { amount: 0.3, seed: 1 },
   rgbOffset: { offset: 4 },
   scanline: { amount: 0.35 },
-  duotone: { dark: [18, 22, 24], light: [239, 190, 59] },
+  duotone: { amount: 1, dark: [18, 22, 24], light: [239, 190, 59] },
 });
 
 function clamp(value, minimum, maximum, fallback = minimum) {
@@ -37,7 +37,9 @@ function rangeFor(effect) {
     case "sharpness": return { key: "amount", label: "强度", min: 0, max: 2, step: 0.05, fallback: 0 };
     case "threshold": return { key: "value", label: "阈值", min: 0, max: 255, step: 1, fallback: 128 };
     case "grain":
-    case "scanline": return { key: "amount", label: "强度", min: 0, max: 1, step: 0.05, fallback: 0 };
+    case "scanline":
+    case "halftone":
+    case "duotone": return { key: "amount", label: "强度", min: 0, max: 1, step: 0.05, fallback: 1 };
     case "rgbOffset": return { key: "offset", label: "偏移", min: -12, max: 12, step: 1, fallback: 0 };
     default: return null;
   }
@@ -48,10 +50,9 @@ function EffectSettings({ effect, onAction }) {
   const updateSettings = (patch) => onAction?.("update", effect.id, {
     settings: { ...effect.settings, ...patch },
   });
-  if (range) {
+  const rangeControl = range ? (() => {
     const value = effect.settings?.[range.key] ?? range.fallback;
-    return (
-      <label className="control-field">
+    return <label className="control-field">
         {range.label}
         <input
           type="range"
@@ -62,18 +63,20 @@ function EffectSettings({ effect, onAction }) {
           value={value}
           onChange={(event) => updateSettings({ [range.key]: Number(event.target.value) })}
         />
-      </label>
-    );
+      </label>;
+  })() : null;
+  if (effect.type !== "duotone") {
+    return rangeControl ?? <p className="effect-settings-note">此效果没有额外参数。</p>;
   }
   if (effect.type === "duotone") {
-    return <div className="color-grid">
+    return <>{rangeControl}<div className="color-grid">
       <label className="control-field">暗部
         <input type="color" aria-label={`${effect.name} 暗部颜色`} value={rgbToHex(effect.settings?.dark)} onChange={(event) => updateSettings({ dark: hexToRgb(event.target.value) })} />
       </label>
       <label className="control-field">亮部
         <input type="color" aria-label={`${effect.name} 亮部颜色`} value={rgbToHex(effect.settings?.light)} onChange={(event) => updateSettings({ light: hexToRgb(event.target.value) })} />
       </label>
-    </div>;
+    </div></>;
   }
   return <p className="effect-settings-note">此效果没有额外参数。</p>;
 }
@@ -92,8 +95,8 @@ export function EffectStackPanel({ effects = [], onAction }) {
             <strong>{label}</strong>
             <button type="button" aria-label={`展开 ${label} 设置`} aria-expanded={isOpen} onClick={() => setOpenId(isOpen ? null : effect.id)}>设置</button>
           </div>
-          <label className="control-field effect-opacity">不透明度
-            <input type="range" aria-label={`${label} 不透明度`} min="0" max="1" step="0.05" value={effect.opacity} onChange={(event) => onAction?.("update", effect.id, { opacity: Number(event.target.value) })} />
+          <label className="control-field effect-opacity">不透明度 {Math.round(effect.opacity * 100)}%
+            <input type="range" aria-label={`${label} 不透明度`} aria-valuetext={`${Math.round(effect.opacity * 100)}%`} min="0" max="100" step="1" value={Math.round(effect.opacity * 100)} onChange={(event) => onAction?.("update", effect.id, { opacity: Number(event.target.value) / 100 })} />
           </label>
           {isOpen ? <div className="effect-settings"><EffectSettings effect={effect} onAction={onAction} /></div> : null}
           <div className="effect-card-actions">
