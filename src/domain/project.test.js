@@ -44,6 +44,18 @@ describe("project factories", () => {
     expect(legacy.filters).toEqual({ grain: 0.2, rgbOffset: 2 });
   });
 
+  test("treats an explicit empty effect stack as authoritative over stale flat filters", () => {
+    const normalized = normalizeProject({
+      ...createProject(),
+      version: 1,
+      filters: { grain: 0.4 },
+      effectStack: [],
+    });
+
+    expect(normalized.effectStack).toEqual([]);
+    expect(normalized.filters).toEqual({});
+  });
+
   test("uses the editor canvas defaults when dimensions are omitted", () => {
     expect(createProject().canvas).toEqual({
       width: 1080,

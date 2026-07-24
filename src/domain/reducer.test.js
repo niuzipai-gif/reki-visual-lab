@@ -77,9 +77,13 @@ describe("editor history", () => {
 
     expect(applied.present.layers).toEqual([first, second]);
     expect(applied.present.filters).toEqual({});
-    expect(applied.present.effectStack).toEqual([
-      expect.objectContaining({ type: "grain", settings: { amount: 0.12, seed: 1 } }),
+    expect(applied.present.effectStack.map(({ type }) => type)).toEqual([
+      "contrast",
+      "grain",
     ]);
+    expect(applied.present.effectStack[1]).toEqual(
+      expect.objectContaining({ type: "grain", settings: { amount: 0.12, seed: 1 } }),
+    );
     expect(applied.selectedLayerId).toBe(first.id);
     expect(applied.past).toHaveLength(1);
     expect(undone.present.layers).toEqual([]);
@@ -107,9 +111,13 @@ describe("editor history", () => {
     const undone = editorReducer(applied, { type: "history/undo" });
 
     expect(applied.present.filters).toEqual({});
-    expect(applied.present.effectStack).toEqual([
-      expect.objectContaining({ type: "grain", settings: { amount: 0.12, seed: 1 } }),
+    expect(applied.present.effectStack.map(({ type }) => type)).toEqual([
+      "contrast",
+      "grain",
     ]);
+    expect(applied.present.effectStack[1]).toEqual(
+      expect.objectContaining({ type: "grain", settings: { amount: 0.12, seed: 1 } }),
+    );
     expect(applied.present.layers).toHaveLength(2);
     expect(applied.present.layers.every(({ source }) => source === "ai-style")).toBe(true);
     expect(applied.selectedLayerId).toBe("style-path");
@@ -562,6 +570,53 @@ describe("project-level actions", () => {
     ]);
   });
 
+  test("keeps CSS-only preset and AI filter patches as visible effect cards", () => {
+    const preset = editorReducer(createEditorState(), {
+      type: "preset/apply",
+      filters: { contrast: 1.18, saturation: 0.82 },
+    });
+    const styled = editorReducer(createEditorState(), {
+      type: "style/apply",
+      recommendation: {
+        filters: { brightness: 1.04, sharpness: 0.25 },
+        layers: [],
+      },
+    });
+
+    expect(preset.present.filters).toEqual({});
+    expect(preset.present.effectStack.map(({ type }) => type)).toEqual([
+      "contrast",
+      "saturation",
+    ]);
+    expect(styled.present.filters).toEqual({});
+    expect(styled.present.effectStack.map(({ type }) => type)).toEqual([
+      "brightness",
+      "sharpness",
+    ]);
+  });
+
+  test("converts legacy filter update and reset actions into effect stack mutations", () => {
+    const start = createEditorState();
+    const updated = editorReducer(start, {
+      type: "filters/update",
+      patch: { grain: 0.2, contrast: 1.15 },
+    });
+    const reset = editorReducer(updated, {
+      type: "filters/reset",
+      filters: { scanline: 0.4 },
+    });
+
+    expect(updated.present.filters).toEqual({});
+    expect(updated.present.effectStack.map(({ type }) => type)).toEqual([
+      "contrast",
+      "grain",
+    ]);
+    expect(reset.present.filters).toEqual({});
+    expect(reset.present.effectStack).toEqual([
+      expect.objectContaining({ type: "scanline", settings: { amount: 0.4 } }),
+    ]);
+  });
+
   test("merges canvas and filter patches without discarding existing values", () => {
     const start = createEditorState();
     const resized = editorReducer(start, {
@@ -582,10 +637,11 @@ describe("project-level actions", () => {
       height: 1350,
       backgroundVisible: false,
     });
-    expect(refiltered.present.filters).toEqual({
-      contrast: 1.2,
-      grain: 0.15,
-    });
+    expect(refiltered.present.filters).toEqual({});
+    expect(refiltered.present.effectStack.map(({ type }) => type)).toEqual([
+      "contrast",
+      "grain",
+    ]);
     expect(start.present.canvas.width).toBe(1080);
     expect(start.present.filters).toEqual({});
   });
@@ -710,6 +766,7 @@ describe("project-level actions", () => {
         grain: 0.8,
         duotone: { dark: [0, 0, 0], light: [255, 255, 255] },
       },
+      effectStack: undefined,
     });
     const defaults = {
       threshold: null,
@@ -726,7 +783,8 @@ describe("project-level actions", () => {
       filters: defaults,
     });
 
-    expect(reset.present.filters).toEqual(defaults);
+    expect(reset.present.filters).toEqual({});
+    expect(reset.present.effectStack).toEqual([]);
     expect(reset.past).toHaveLength(1);
   });
 

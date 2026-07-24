@@ -38,8 +38,9 @@ export function normalizeProject(project) {
     project.filters && typeof project.filters === "object" && !Array.isArray(project.filters)
       ? project.filters
       : {};
+  const hasExplicitStack = Array.isArray(project.effectStack);
   const suppliedStack = normalizeEffectStack(project.effectStack);
-  const effectStack = suppliedStack.length
+  const effectStack = hasExplicitStack
     ? suppliedStack
     : legacyFiltersToEffectStack(legacyFilters);
 

@@ -203,7 +203,9 @@ function migrateProject(rawProject) {
         ...project,
         version: 2,
         filters: {},
-        effectStack: legacyFiltersToEffectStack(project.filters ?? {}),
+        effectStack: Array.isArray(project.effectStack)
+          ? normalizeEffectStack(project.effectStack)
+          : legacyFiltersToEffectStack(project.filters ?? {}),
       };
       version = 2;
       continue;

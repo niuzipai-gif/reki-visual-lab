@@ -528,6 +528,27 @@ describe("device-local project store", () => {
     });
   });
 
+  test("keeps an explicit empty v1 effect stack empty instead of reviving stale filters", async () => {
+    await set(
+      "project:empty-effects",
+      {
+        id: "empty-effects",
+        version: 1,
+        name: "Empty",
+        updatedAt: 0,
+        canvas: { width: 10, height: 10 },
+        filters: { grain: 0.3 },
+        effectStack: [],
+        layers: [],
+      },
+      rawStore,
+    );
+
+    const loaded = await loadProject("empty-effects");
+    expect(loaded.project.effectStack).toEqual([]);
+    expect(loaded.project.filters).toEqual({});
+  });
+
   test("reports corrupt records and rejects malformed IDs and oversized state", async () => {
     await set("project:broken", { id: "different", version: 1 }, rawStore);
     await expect(loadProject("broken")).rejects.toMatchObject({

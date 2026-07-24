@@ -1,6 +1,10 @@
 import { applyPixelFilters } from "./filterPipeline.js";
 
 export const EFFECT_TYPES = Object.freeze([
+  "brightness",
+  "contrast",
+  "saturation",
+  "sharpness",
   "threshold",
   "halftone",
   "grain",
@@ -10,6 +14,10 @@ export const EFFECT_TYPES = Object.freeze([
 ]);
 
 const EFFECT_NAMES = Object.freeze({
+  brightness: "亮度",
+  contrast: "对比度",
+  saturation: "饱和度",
+  sharpness: "锐化",
   threshold: "阈值",
   halftone: "网点",
   grain: "颗粒",
@@ -39,8 +47,18 @@ function validPalette(value) {
 
 function effectIsActive(type, settings) {
   switch (type) {
+    case "brightness":
+    case "contrast":
+    case "saturation":
+      return finite(settings.amount, 1) !== 1;
+    case "sharpness":
+      return finite(settings.amount) > 0;
     case "threshold":
-      return Number.isFinite(Number(settings.value));
+      return (
+        settings.value !== null &&
+        settings.value !== undefined &&
+        Number.isFinite(Number(settings.value))
+      );
     case "halftone":
       return true;
     case "grain":
@@ -58,6 +76,11 @@ function effectIsActive(type, settings) {
 
 function settingsForLegacyType(type, filters) {
   switch (type) {
+    case "brightness":
+    case "contrast":
+    case "saturation":
+    case "sharpness":
+      return { amount: filters[type] };
     case "threshold":
       return { value: filters.threshold };
     case "halftone":
@@ -77,6 +100,11 @@ function settingsForLegacyType(type, filters) {
 
 function effectToLegacySettings(effect) {
   switch (effect.type) {
+    case "brightness":
+    case "contrast":
+    case "saturation":
+    case "sharpness":
+      return { [effect.type]: effect.settings.amount };
     case "threshold":
       return { threshold: effect.settings.value };
     case "halftone":
@@ -158,6 +186,15 @@ export function legacyFilterPatchToEffects(filters = {}) {
   }));
 }
 
+/** Convert explicit effect cards back to the legacy-shaped settings for compatibility actions. */
+export function effectStackToLegacyFilters(stack = []) {
+  const filters = {};
+  for (const effect of normalizeEffectStack(stack)) {
+    Object.assign(filters, effectToLegacySettings(effect));
+  }
+  return filters;
+}
+
 function blendPixels(base, processed, opacity) {
   const output = new Uint8ClampedArray(base.length);
   const inverse = 1 - opacity;
@@ -165,6 +202,52 @@ function blendPixels(base, processed, opacity) {
     output[index] = Math.round(base[index] * inverse + processed[index] * opacity);
   }
   return output;
+}
+
+function byte(value) {
+  return Math.round(clamp(finite(value), 0, 255));
+}
+
+function applyColorEffect(data, width, height, effect) {
+  const amount = finite(effect.settings.amount, effect.type === "sharpness" ? 0 : 1);
+  const output = new Uint8ClampedArray(data);
+  if (effect.type === "brightness") {
+    for (let index = 0; index < output.length; index += 4) {
+      output[index] = byte(output[index] * amount);
+      output[index + 1] = byte(output[index + 1] * amount);
+      output[index + 2] = byte(output[index + 2] * amount);
+    }
+  }
+  if (effect.type === "contrast") {
+    for (let index = 0; index < output.length; index += 4) {
+      output[index] = byte((output[index] - 128) * amount + 128);
+      output[index + 1] = byte((output[index + 1] - 128) * amount + 128);
+      output[index + 2] = byte((output[index + 2] - 128) * amount + 128);
+    }
+  }
+  if (effect.type === "saturation") {
+    for (let index = 0; index < output.length; index += 4) {
+      const luminance = output[index] * 0.299 + output[index + 1] * 0.587 + output[index + 2] * 0.114;
+      output[index] = byte(luminance + (output[index] - luminance) * amount);
+      output[index + 1] = byte(luminance + (output[index + 1] - luminance) * amount);
+      output[index + 2] = byte(luminance + (output[index + 2] - luminance) * amount);
+    }
+  }
+  if (effect.type === "sharpness") {
+    const source = new Uint8ClampedArray(output);
+    const strength = clamp(amount, 0, 1);
+    const pixel = (x, y, channel) => source[(Math.max(0, Math.min(height - 1, y)) * width + Math.max(0, Math.min(width - 1, x))) * 4 + channel];
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        for (let channel = 0; channel < 3; channel += 1) {
+          const center = pixel(x, y, channel);
+          const average = (pixel(x - 1, y, channel) + pixel(x + 1, y, channel) + pixel(x, y - 1, channel) + pixel(x, y + 1, channel)) / 4;
+          output[(y * width + x) * 4 + channel] = byte(center + (center - average) * strength);
+        }
+      }
+    }
+  }
+  return new ImageData(output, width, height);
 }
 
 /** Apply visible effects in card order without mutating the supplied image. */
@@ -179,12 +262,13 @@ export function applyEffectStack(imageData, stack = []) {
   let data = new Uint8ClampedArray(source);
   for (const effect of normalizeEffectStack(stack)) {
     if (!effect.visible || effect.opacity <= 0 || !effectIsActive(effect.type, effect.settings)) continue;
-    const processed = applyPixelFilters(
-      new ImageData(new Uint8ClampedArray(data), width, height),
-      effectToLegacySettings(effect),
-    );
+    const processed = ["brightness", "contrast", "saturation", "sharpness"].includes(effect.type)
+      ? applyColorEffect(data, width, height, effect)
+      : applyPixelFilters(
+          new ImageData(new Uint8ClampedArray(data), width, height),
+          effectToLegacySettings(effect),
+        );
     data = blendPixels(data, processed.data, effect.opacity);
   }
   return new ImageData(data, width, height);
 }
-

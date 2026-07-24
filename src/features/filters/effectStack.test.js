@@ -91,4 +91,20 @@ describe("effect stack", () => {
 
     expect(Array.from(output.data)).toEqual([255, 255, 255, 255]);
   });
+
+  test("keeps CSS-only legacy style filters as visible cards", () => {
+    const effects = legacyFiltersToEffectStack({
+      brightness: 1.08,
+      contrast: 1.2,
+      saturation: 0.8,
+      sharpness: 0.3,
+    });
+
+    expect(effects).toEqual([
+      expect.objectContaining({ type: "brightness", settings: { amount: 1.08 } }),
+      expect.objectContaining({ type: "contrast", settings: { amount: 1.2 } }),
+      expect.objectContaining({ type: "saturation", settings: { amount: 0.8 } }),
+      expect.objectContaining({ type: "sharpness", settings: { amount: 0.3 } }),
+    ]);
+  });
 });

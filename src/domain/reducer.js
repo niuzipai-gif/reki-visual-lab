@@ -5,7 +5,9 @@ import {
 } from "../features/ai/styleAdvisor.js";
 import {
   createEffect,
+  effectStackToLegacyFilters,
   legacyFilterPatchToEffects,
+  legacyFiltersToEffectStack,
   normalizeEffectStack,
 } from "../features/filters/effectStack.js";
 
@@ -397,25 +399,29 @@ export function editorReducer(state, action) {
 
   if (action.type === "filters/update") {
     const patch = action.patch ?? {};
-    if (!hasEffectivePatch(state.present.filters, patch)) {
+    const legacyFilters = effectStackToLegacyFilters(state.present.effectStack ?? []);
+    const effectStack = legacyFiltersToEffectStack({ ...legacyFilters, ...patch });
+    if (valuesEqual(effectStack, state.present.effectStack ?? [])) {
       return state;
     }
 
     return commit(state, {
       ...state.present,
-      filters: { ...state.present.filters, ...patch },
+      filters: {},
+      effectStack,
     });
   }
 
   if (action.type === "filters/reset") {
-    const filters = action.filters ?? {};
-    if (valuesEqual(filters, state.present.filters)) {
+    const effectStack = legacyFiltersToEffectStack(action.filters ?? {});
+    if (valuesEqual(effectStack, state.present.effectStack ?? [])) {
       return state;
     }
 
     return commit(state, {
       ...state.present,
-      filters: structuredClone(filters),
+      filters: {},
+      effectStack,
     });
   }
 
