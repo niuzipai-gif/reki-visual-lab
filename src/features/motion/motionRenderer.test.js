@@ -1,4 +1,9 @@
 import { describe, expect, test, vi } from "vitest";
+
+vi.mock("mp4-muxer", () => ({
+  ArrayBufferTarget: class { buffer = new ArrayBuffer(0); },
+  Muxer: class { addVideoChunk() {} finalize() {} },
+}));
 import {
   createLivePhotoBundle,
   createMotionPlan,
@@ -120,5 +125,30 @@ describe("motionRenderer", () => {
     });
     expect(result).toMatchObject({ extension: "webm", container: "webm" });
     expect(recorderInstances).toHaveLength(1);
+  });
+
+  test("closes a successful MP4 encoder after finalizing", async () => {
+    const close = vi.fn();
+    class VideoEncoder {
+      static async isConfigSupported() { return { supported: true }; }
+      constructor() {}
+      configure() {}
+      encode() {}
+      async flush() {}
+      close = close;
+    }
+    class VideoFrame {
+      constructor() {}
+      close() {}
+    }
+    const result = await renderMotion({
+      project: { canvas: { width: 100, height: 100 }, motion: { durationMs: 1000 } },
+      sourceBitmap: {},
+      environment: { VideoEncoder, VideoFrame },
+      decodeFrame: async () => ({ close: vi.fn() }),
+      renderFrame: async () => new Blob(["frame"], { type: "image/png" }),
+    });
+    expect(result.extension).toBe("mp4");
+    expect(close).toHaveBeenCalledTimes(1);
   });
 });

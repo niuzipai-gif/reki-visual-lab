@@ -19,6 +19,10 @@ vi.mock("./exportImage.js", () => ({
 }));
 vi.mock("../motion/motionRenderer.js", () => ({
   MOTION_PRESET: { durationMs: 4000, fps: 24, maxEdge: 720, gifMaxEdge: 640 },
+  createMotionPlan: (canvas, { maxEdge }) => {
+    const scale = Math.min(1, maxEdge / Math.max(canvas.width, canvas.height));
+    return { width: Math.round(canvas.width * scale), height: Math.round(canvas.height * scale) };
+  },
   renderMotion: (...args) => renderMotion(...args),
 }));
 
@@ -74,5 +78,14 @@ describe("ExportDialog export lifecycle", () => {
     await user.click(screen.getByRole("button", { name: "导出视频" }));
     await user.click(screen.getByRole("button", { name: "取消导出" }));
     expect(capturedSignal?.aborted).toBe(true);
+  });
+
+  test("shows the capped motion dimensions instead of the static image scale", async () => {
+    const user = userEvent.setup();
+    render(<ExportDialog project={{ name: "wide", canvas: { width: 2400, height: 1200 }, motion: { durationMs: 4000 }, filters: {}, layers: [], image: {} }} />);
+    await user.click(screen.getByLabelText("动画视频"));
+    expect(screen.getByText("720 × 360px")).toBeVisible();
+    await user.click(screen.getByLabelText("GIF"));
+    expect(screen.getByText("640 × 320px")).toBeVisible();
   });
 });

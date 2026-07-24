@@ -182,17 +182,15 @@ async function renderMp4({ plan, project, sourceBitmap, signal, onProgress, rend
   const target = new ArrayBufferTarget();
   const muxer = new Muxer({ target, fastStart: "in-memory", video: { codec: "avc", width: plan.width, height: plan.height, frameRate: plan.fps } });
   let encoder;
-  const flushed = new Promise((resolve, reject) => {
+  let encoderError;
+  try {
     encoder = new environment.VideoEncoder({
       output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-      error: reject,
+      error: (error) => { encoderError = error; },
     });
     encoder.configure({ codec: "avc1.42001f", width: plan.width, height: plan.height, bitrate: 2_500_000, framerate: plan.fps, avc: { format: "avc" } });
-    resolve();
-  });
-  await flushed;
-  try {
     for (let frameIndex = 0; frameIndex < plan.frameCount; frameIndex += 1) {
+      if (encoderError) throw encoderError;
       throwIfAborted(signal);
       const frame = await renderFrame({ project, sourceBitmap, frameIndex, timeMs: frameIndex * plan.frameDurationMs, plan, format: "png" });
       throwIfAborted(signal);
@@ -204,12 +202,12 @@ async function renderMp4({ plan, project, sourceBitmap, signal, onProgress, rend
       onProgress?.(frameIndex + 1, plan.frameCount);
     }
     await encoder.flush();
+    if (encoderError) throw encoderError;
     throwIfAborted(signal);
     muxer.finalize();
     return { blob: new Blob([target.buffer], { type: "video/mp4" }), ...capability, plan };
-  } catch (error) {
+  } finally {
     encoder?.close?.();
-    throw error;
   }
 }
 

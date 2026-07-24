@@ -7,7 +7,7 @@ import {
   renderProjectToBlob,
 } from "./exportImage.js";
 import { hasActivePixelFilters } from "../filters/filterPipeline.js";
-import { MOTION_PRESET, renderMotion } from "../motion/motionRenderer.js";
+import { MOTION_PRESET, createMotionPlan, renderMotion } from "../motion/motionRenderer.js";
 
 const SCALE_OPTIONS = [1, 2, 4];
 
@@ -62,8 +62,20 @@ export function ExportDialog({ project, onClose, onExported, onBusyChange, close
     () => createExportPlan(project?.canvas, scale, transparentOverlay),
     [project?.canvas, scale, transparentOverlay],
   );
-  const filterHeavy = plan.includeBackground && hasActivePixelFilters(project?.filters);
-  const safe = isSafeExport(plan, undefined, filterHeavy);
+  const motionPlan = useMemo(() => outputType === "image" ? null : createMotionPlan(project?.canvas, {
+    durationMs: project?.motion?.durationMs,
+    maxEdge: outputType === "gif" ? MOTION_PRESET.gifMaxEdge : MOTION_PRESET.maxEdge,
+  }), [outputType, project?.canvas, project?.motion?.durationMs]);
+  const activePlan = outputType === "image"
+    ? plan
+    : {
+        width: motionPlan.width,
+        height: motionPlan.height,
+        includeBackground: true,
+        estimatedBytes: motionPlan.width * motionPlan.height * 4,
+      };
+  const filterHeavy = activePlan.includeBackground && hasActivePixelFilters(project?.filters);
+  const safe = isSafeExport(activePlan, undefined, filterHeavy);
   const scaleAvailability = useMemo(
     () => Object.fromEntries(
       SCALE_OPTIONS.map((value) => [
@@ -200,9 +212,9 @@ export function ExportDialog({ project, onClose, onExported, onBusyChange, close
         </section>}
 
         <div className="export-dimensions" aria-live="polite">
-          <span>输出尺寸</span><strong>{plan.width} × {plan.height}px</strong><small>预计占用 {formatBytes(plan.estimatedBytes)}</small>
+          <span>输出尺寸</span><strong>{activePlan.width} × {activePlan.height}px</strong><small>预计占用 {formatBytes(activePlan.estimatedBytes)}</small>
         </div>
-        {!safe ? <p className="export-warning" role="alert">当前设备内存不足，建议选择较低倍率。</p> : scaleAvailability[4] === false ? <p className="export-warning" role="status">4× 超出建议内存上限，已自动保护。</p> : null}
+        {!safe ? <p className="export-warning" role="alert">当前设备内存不足，建议选择较低倍率或缩短时长。</p> : outputType === "image" && scaleAvailability[4] === false ? <p className="export-warning" role="status">4× 超出建议内存上限，已自动保护。</p> : null}
         {isExporting ? <p className="export-feedback" role="status">正在生成{outputType === "image" ? "高清图片" : "动态作品"}…{typeof status === "object" ? ` ${status.complete}/${status.total}` : ""}</p> : null}
         {status === "success" ? <p className="export-feedback success" role="status">导出完成，文件已保存。</p> : null}
         {error ? <p className="export-feedback error" role="alert">{error}</p> : null}
