@@ -175,6 +175,18 @@ describe("editor history", () => {
     expect(applied.present.filters.contrast).toBe(1.1);
     expect(applied.present.layers[0].points[0].x).toBe(0.1);
   });
+
+  test("treats a null filter override as absent", () => {
+    const layer = createAnnotation("path", [{ x: 0.1, y: 0.2 }], { id: "null-filter" });
+    const applied = editorReducer(createEditorState(), {
+      type: "style/apply",
+      recommendation: { filters: { contrast: 1.1 }, layers: [layer] },
+      filters: null,
+    });
+
+    expect(applied.present.filters).toEqual({ contrast: 1.1 });
+    expect(applied.present.layers[0].source).toBe("ai-style");
+  });
 });
 
 describe("layer actions", () => {

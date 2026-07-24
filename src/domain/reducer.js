@@ -213,7 +213,7 @@ export function editorReducer(state, action) {
         );
     if (!generatedPatch) return state;
     let appliedFilters = generatedPatch.filters;
-    if (action.filters !== undefined) {
+    if (action.filters !== undefined && action.filters !== null) {
       const filterPatch = sanitizeEditorPatch({ filters: action.filters, layers: [] });
       if (!filterPatch) return state;
       appliedFilters = filterPatch.filters;
