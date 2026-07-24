@@ -114,3 +114,11 @@ test("keeps layer visibility, lock, ordering, duplication, and delete operations
   await user.click(within(first).getByRole("button", { name: /隐藏/ }));
   expect(within(first).getByRole("button", { name: /显示/ })).toBeInTheDocument();
 });
+
+test("keeps motion export choices available alongside the competitor editing tools", async () => {
+  const user = userEvent.setup();
+  render(<App initialDemoProject />);
+  await user.click(await screen.findByRole("button", { name: "导出图片" }));
+  await user.click(screen.getByLabelText("动画视频"));
+  expect(screen.getByRole("button", { name: "导出视频" })).toBeEnabled();
+});

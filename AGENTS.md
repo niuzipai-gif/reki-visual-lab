@@ -14,4 +14,4 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 - Visual direction: silver-mist glass with restrained yolk-yellow states.
 - Layout: hybrid workbench; desktop uses a tool rail and floating inspector, mobile uses a bottom dock and bottom sheet.
 - Privacy: images and AI inference remain in the browser.
-- Scope: static images only; competitor annotation capabilities are the minimum feature line.
+- Scope: static images and short local motion exports; competitor annotation capabilities are the minimum feature line. Video/GIF/materials exports must render locally and never claim native iPhone Live Photo support.

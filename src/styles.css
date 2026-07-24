@@ -254,6 +254,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .export-dialog fieldset { min-width: 0; margin: 18px 0 0; padding: 0; border: 0; }
 .export-dialog legend { width: 100%; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--reki-edge); color: var(--reki-muted); font-size: .58rem; font-weight: 800; letter-spacing: .12em; }
 .export-option-grid, .export-scale-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.export-output-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.export-output-grid .export-option { min-height: 48px; justify-content: center; padding: 8px 6px; font-size: .62rem; text-align: center; }
 .export-option, .export-scale-option { display: flex; min-height: 42px; align-items: center; gap: 8px; padding: 9px 10px; border: 1px solid var(--reki-edge); border-radius: 11px; background: rgba(255,255,255,.36); font-size: .7rem; font-weight: 760; }
 .export-option:has(input:checked), .export-scale-option:has(input:checked) { border-color: rgba(199,144,8,.5); background: rgba(176,47,62,.18); }
 .export-option small { margin-left: auto; color: var(--reki-muted); font-size: .52rem; font-weight: 600; }
@@ -262,6 +264,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .export-scale-grid { grid-template-columns: repeat(3, 1fr); }
 .export-scale-option { justify-content: center; }
 .export-scale-option:has(input:disabled) { opacity: .45; }
+.motion-export-info { display: grid; gap: 7px; margin-top: 18px; padding: 12px; border: 1px solid rgba(176,47,62,.24); border-radius: 12px; background: rgba(176,47,62,.07); color: var(--reki-ink); }
+.motion-export-info strong { font-size: .69rem; }
+.motion-export-info small { color: var(--reki-muted); font-size: .58rem; line-height: 1.5; }
 .export-dimensions { display: flex; align-items: baseline; gap: 8px; margin-top: 18px; padding: 12px; border: 1px solid var(--reki-edge); border-radius: 12px; background: rgba(255,255,255,.3); color: var(--reki-muted); font-size: .62rem; }
 .export-dimensions strong { color: var(--reki-ink); font-size: .76rem; font-variant-numeric: tabular-nums; }
 .export-dimensions small { margin-left: auto; font-size: .56rem; }
@@ -319,6 +324,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
   .pending-copy { margin: 6px 0 12px; color: var(--reki-muted); font-size: .72rem; line-height: 1.7; }
   .export-dialog-backdrop { align-items: end; padding: 10px; }
   .export-dialog { width: 100%; max-height: min(700px, calc(100dvh - 20px)); border-radius: 22px; padding: 18px; }
+  .export-output-grid { grid-template-columns: 1fr 1fr; }
   .inspector-form { padding: 2px; }
 }
 
