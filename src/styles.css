@@ -262,7 +262,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 }
 
 @media (min-width: 760px) and (max-width: 900px) {
-  .canvas-workspace { --reki-panel-width: min(var(--reki-panel-preference, 320px), calc(100vw - 360px)); }
+  /* 78px rail + 18px inset + 30px panel gutter + 360px stage. */
+  .canvas-workspace { --reki-panel-width: min(var(--reki-panel-preference, 320px), calc(100vw - 486px)); }
 }
 
 @media (max-width: 759px) {
