@@ -3,6 +3,7 @@ import {
   DEFAULT_ANIMATION,
   DEFAULT_ANIMATION_FRAME,
   resolveAnimation,
+  resolveDrawClip,
   sanitizeAnimation,
 } from "./animationRuntime.js";
 
@@ -50,6 +51,16 @@ describe("animation runtime", () => {
       flash: 0,
     });
     expect(resolveAnimation({ type: "fade", delayMs: 300 }, 800).opacity).toBeGreaterThan(0);
+  });
+
+  test("uses the preview draw-clip geometry for a partial reveal", () => {
+    expect(resolveDrawClip({ x: 10, y: 20, width: 80, height: 0 }, 0.5)).toEqual({
+      x: 10,
+      y: 16,
+      width: 48,
+      height: 8,
+    });
+    expect(resolveDrawClip({ x: 10, y: 20, width: 80, height: 12 }, 1)).toBeNull();
   });
 
   test("clamps non-looping animations at their final frame", () => {

@@ -148,6 +148,26 @@ function animationFrameFor(config, progress) {
 }
 
 /**
+ * Returns the local drawing clip used for progressive line reveal. The values
+ * mirror the Konva group clip in AnnotationNode so an exported frame reveals
+ * the same left-to-right section as the live editor preview.
+ */
+export function resolveDrawClip(bounds, drawProgress) {
+  const progress = clamp(toFiniteNumber(drawProgress) ?? 1, 0, 1);
+  if (progress >= 1) return null;
+  const x = toFiniteNumber(bounds?.x) ?? 0;
+  const y = toFiniteNumber(bounds?.y) ?? 0;
+  const width = Math.max(0, toFiniteNumber(bounds?.width) ?? 0);
+  const height = Math.max(0, toFiniteNumber(bounds?.height) ?? 0);
+  return {
+    x,
+    y: y - 4,
+    width: Math.max(0, width * progress + 8),
+    height: height + 8,
+  };
+}
+
+/**
  * Resolves a serializable animation plus absolute timeline time into a pure,
  * normalized frame. translate values are fractions of the drawing viewport.
  */

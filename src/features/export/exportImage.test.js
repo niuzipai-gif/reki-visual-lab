@@ -3,6 +3,7 @@ import {
   createExportPlan,
   decodeOriginalSource,
   isSafeExport,
+  renderProjectFrameToBlob,
   renderProjectToBlob,
 } from "./exportImage.js";
 import { applyEffectStack } from "../filters/effectStack.js";
@@ -165,5 +166,96 @@ describe("composition export", () => {
         format: "png",
       }),
     ).rejects.toMatchObject({ code: "EXPORT_MEMORY" });
+  });
+
+  test("renders a supplied animation frame with the preview transform and clip", async () => {
+    const context = {
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      save: vi.fn(),
+      restore: vi.fn(),
+      beginPath: vi.fn(),
+      rect: vi.fn(),
+      clip: vi.fn(),
+      translate: vi.fn(),
+      rotate: vi.fn(),
+      scale: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      stroke: vi.fn(),
+      setLineDash: vi.fn(),
+      fillText: vi.fn(),
+      canvas: { width: 100, height: 100 },
+    };
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: () => context,
+      toBlob: (callback, type) => callback(new Blob([type], { type })),
+    };
+    vi.stubGlobal("document", { createElement: () => canvas });
+
+    await renderProjectFrameToBlob({
+      project: {
+        canvas: { width: 100, height: 100 },
+        layers: [{
+          id: "animated-path",
+          type: "path",
+          points: [{ x: 0.1, y: 0.2 }, { x: 0.9, y: 0.2 }],
+          style: { lineColor: "#e5484d", textColor: "#fff", anchorColor: "#f66", lineWidth: 2, opacity: 1 },
+          animation: { type: "draw", durationMs: 1000, delayMs: 0, loop: false, amplitude: 0.5 },
+        }],
+      },
+      sourceBitmap: { width: 100, height: 100 },
+      timeMs: 500,
+      format: "png",
+    });
+
+    expect(context.clip).toHaveBeenCalledTimes(1);
+    expect(context.rect).toHaveBeenCalledWith(10, 16, 48, 9);
+    expect(context.moveTo).toHaveBeenCalledWith(10, 20);
+    expect(context.lineTo).toHaveBeenCalledWith(90, 20);
+    vi.unstubAllGlobals();
+  });
+
+  test("keeps static export as the zero-time animation frame", async () => {
+    const makeContext = () => ({
+      clearRect: vi.fn(), drawImage: vi.fn(), save: vi.fn(), restore: vi.fn(),
+      beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), translate: vi.fn(), rotate: vi.fn(), scale: vi.fn(),
+      moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(), setLineDash: vi.fn(),
+      fillText: vi.fn(),
+      canvas: { width: 100, height: 100 },
+    });
+    const contexts = [];
+    vi.stubGlobal("document", {
+      createElement: () => {
+        const context = makeContext();
+        contexts.push(context);
+        return {
+          width: 0,
+          height: 0,
+          getContext: () => context,
+          toBlob: (callback, type) => callback(new Blob([type], { type })),
+        };
+      },
+    });
+    const project = {
+      canvas: { width: 100, height: 100 },
+      layers: [{
+        id: "fade-path", type: "path",
+        points: [{ x: 0.1, y: 0.2 }, { x: 0.9, y: 0.2 }],
+        style: { lineColor: "#e5484d", textColor: "#fff", anchorColor: "#f66", lineWidth: 2, opacity: 1 },
+        animation: { type: "fade", durationMs: 1000, delayMs: 0, loop: false, amplitude: 0.5 },
+      }],
+    };
+    const sourceBitmap = { width: 100, height: 100 };
+    await renderProjectToBlob({ project, sourceBitmap, format: "png" });
+    await renderProjectFrameToBlob({ project, sourceBitmap, timeMs: 0, format: "png" });
+
+    expect(contexts).toHaveLength(2);
+    expect(contexts[0].moveTo.mock.calls).toEqual(contexts[1].moveTo.mock.calls);
+    expect(contexts[0].lineTo.mock.calls).toEqual(contexts[1].lineTo.mock.calls);
+    expect(contexts[0].clip.mock.calls).toEqual(contexts[1].clip.mock.calls);
+    vi.unstubAllGlobals();
   });
 });

@@ -5,6 +5,11 @@ import {
   applyEffectStack,
   legacyFiltersToEffectStack,
 } from "../filters/effectStack.js";
+import {
+  resolveAnimation,
+  resolveDrawClip,
+  sanitizeAnimation,
+} from "../motion/animationRuntime.js";
 
 const MAX_SCALE = 4;
 const DEFAULT_DEVICE_MEMORY = 4;
@@ -141,6 +146,12 @@ function drawLabel(context, text, x, y, style, scale) {
   context.fillText(String(text ?? ""), x, y);
 }
 
+function clampOpacity(value, fallback = DEFAULT_STYLE.opacity) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(0, Math.min(1, numeric));
+}
+
 /** Draw one normalized project annotation with the same geometry contract as Konva. */
 export function drawAnnotationToContext(context, layer, canvasSize, scale = 1) {
   if (!layer || layer.visible === false) return;
@@ -236,6 +247,131 @@ export function drawAnnotationToContext(context, layer, canvasSize, scale = 1) {
   context.restore();
 }
 
+function animationBounds(layer, points, style, scale) {
+  const bounds = pointBounds(points);
+  if (layer.type === "stackBox") {
+    const offset = 12 * scale;
+    return {
+      x: bounds.x,
+      y: bounds.y - offset,
+      width: bounds.width + offset,
+      height: bounds.height + offset,
+    };
+  }
+  if (layer.type === "orbit" && points.length) {
+    const center = points[0];
+    const edge = points[1] ?? {
+      x: center.x + (Number(style.anchorSize) || 1) * 6 * scale,
+      y: center.y,
+    };
+    const radius = Math.hypot(edge.x - center.x, edge.y - center.y);
+    return {
+      x: center.x - radius,
+      y: center.y - radius,
+      width: radius * 2,
+      height: radius * 2,
+    };
+  }
+  if (layer.type === "label" && points.length) {
+    const fontSize = Math.max(1, Number(style.fontSize) || 1) * scale;
+    return {
+      x: points[0].x,
+      y: points[0].y,
+      width: Math.max(fontSize, String(layer.label ?? "").length * fontSize * 0.6),
+      height: fontSize,
+    };
+  }
+  return bounds;
+}
+
+function scaledLayerPoints(layer, canvasSize, scale) {
+  return (layer.points ?? []).map((point) => {
+    const denormalized = denormalizePoint(point, canvasSize);
+    return { x: denormalized.x * scale, y: denormalized.y * scale };
+  });
+}
+
+function drawMotionGeometry(context, layer, canvasSize, scale, bounds, motion, style, xOffset = 0) {
+  const originX = bounds.x + bounds.width / 2;
+  const originY = bounds.y + bounds.height / 2;
+  context.save();
+  context.translate(
+    originX + motion.translateX * canvasSize.width * scale + xOffset * scale,
+    originY + motion.translateY * canvasSize.height * scale,
+  );
+  context.rotate((motion.rotation * Math.PI) / 180);
+  context.scale(motion.scale, motion.scale);
+  context.translate(-originX, -originY);
+
+  const clip = resolveDrawClip(bounds, motion.drawProgress);
+  if (clip) {
+    context.beginPath();
+    context.rect(clip.x, clip.y, clip.width, clip.height);
+    context.clip();
+  }
+
+  drawAnnotationToContext(
+    context,
+    { ...layer, style },
+    canvasSize,
+    scale,
+  );
+  context.restore();
+}
+
+/**
+ * Canvas equivalent of AnnotationNode's animated Konva groups. It keeps the
+ * preview and exporter on the same animation frame contract while retaining
+ * the existing static geometry painter for each annotation type.
+ */
+export function drawAnimatedAnnotationToContext(
+  context,
+  layer,
+  canvasSize,
+  scale = 1,
+  timeMs = 0,
+) {
+  if (!layer || layer.visible === false) return;
+  const animation = sanitizeAnimation(layer.animation);
+  if (animation.type === "none") {
+    drawAnnotationToContext(context, layer, canvasSize, scale);
+    return;
+  }
+
+  const style = { ...DEFAULT_STYLE, ...(layer.style ?? {}) };
+  const points = scaledLayerPoints(layer, canvasSize, scale);
+  if (!points.length && layer.type !== "label") return;
+  const bounds = animationBounds(layer, points, style, scale);
+  const motion = resolveAnimation(animation, timeMs);
+  const baseOpacity = clampOpacity(style.opacity);
+  const primaryStyle = { ...style, opacity: baseOpacity * motion.opacity };
+
+  if (animation.type === "glitch") {
+    const ghostOpacity = baseOpacity * 0.52 * motion.opacity * motion.flash;
+    drawMotionGeometry(
+      context,
+      layer,
+      canvasSize,
+      scale,
+      bounds,
+      motion,
+      { ...style, lineColor: "#e5484d", textColor: "#e5484d", anchorColor: "#e5484d", opacity: ghostOpacity },
+      -4,
+    );
+    drawMotionGeometry(
+      context,
+      layer,
+      canvasSize,
+      scale,
+      bounds,
+      motion,
+      { ...style, lineColor: "#3177ff", textColor: "#3177ff", anchorColor: "#3177ff", opacity: ghostOpacity },
+      4,
+    );
+  }
+  drawMotionGeometry(context, layer, canvasSize, scale, bounds, motion, primaryStyle);
+}
+
 function drawSource(context, source, width, height) {
   const drawable = sourceDrawable(source);
   if (!drawable) throw exportError("EXPORT_SOURCE", "完整图片导出需要原始照片");
@@ -280,13 +416,14 @@ async function canvasBlob(canvas, format, quality) {
   });
 }
 
-export async function renderProjectToBlob({
+export async function renderProjectFrameToBlob({
   project,
   sourceBitmap,
   scale = 1,
   format = "png",
   quality = 0.92,
   transparentOverlay = false,
+  timeMs = 0,
 }) {
   const plan = createExportPlan(project?.canvas, scale, transparentOverlay);
   const effectStack = Array.isArray(project?.effectStack)
@@ -306,7 +443,13 @@ export async function renderProjectToBlob({
         applyEffectsToCanvas(context, plan.width, plan.height, effectStack);
       }
       for (const layer of project.layers ?? []) {
-        drawAnnotationToContext(context, layer, project.canvas, scale);
+        drawAnimatedAnnotationToContext(
+          context,
+          layer,
+          project.canvas,
+          scale,
+          timeMs,
+        );
       }
     } catch (error) {
       if (error?.code?.startsWith?.("EXPORT_")) throw error;
@@ -322,6 +465,11 @@ export async function renderProjectToBlob({
       // Some test doubles and old browsers expose read-only OffscreenCanvas sizes.
     }
   }
+}
+
+/** Static export is the deterministic first frame of the shared renderer. */
+export function renderProjectToBlob(options) {
+  return renderProjectFrameToBlob({ ...options, timeMs: 0 });
 }
 
 /** Decode the original file only for an export, leaving the working preview untouched. */
