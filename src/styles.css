@@ -273,3 +273,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
   .export-button svg { width: 18px; height: 18px; }
   .bottom-dock button { min-width: 38px; }
 }
+
+@media (max-width: 720px) {
+  .canvas-brand-mark { opacity: .025; }
+}
