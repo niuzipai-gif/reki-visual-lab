@@ -34,6 +34,73 @@ function addEffects(stack, effects) {
   return additions;
 }
 
+const LEGACY_EFFECT_TYPE_BY_FILTER_KEY = Object.freeze({
+  brightness: "brightness",
+  contrast: "contrast",
+  saturation: "saturation",
+  sharpness: "sharpness",
+  threshold: "threshold",
+  halftone: "halftone",
+  grain: "grain",
+  grainSeed: "grain",
+  rgbOffset: "rgbOffset",
+  chromaShift: "rgbOffset",
+  scanline: "scanline",
+  duotone: "duotone",
+});
+const LEGACY_EFFECT_TYPES = new Set(
+  Object.values(LEGACY_EFFECT_TYPE_BY_FILTER_KEY),
+);
+
+function isLegacyEffect(effect) {
+  return effect?.id === `legacy-${effect.type}`;
+}
+
+/**
+ * Compatibility actions from the retired flat-filter panel may only touch the
+ * cards they own. Custom/duplicate cards keep their identity, order, opacity,
+ * and visibility until the new effect panel edits them explicitly.
+ */
+function patchLegacyEffects(effectStack, patch, { reset = false } = {}) {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+    return effectStack;
+  }
+  const affectedTypes = reset
+    ? new Set(LEGACY_EFFECT_TYPES)
+    : new Set(
+    Object.keys(patch)
+      .map((key) => LEGACY_EFFECT_TYPE_BY_FILTER_KEY[key])
+      .filter(Boolean),
+    );
+  if (!affectedTypes.size) return effectStack;
+
+  const compatibilityEffects = effectStack.filter(isLegacyEffect);
+  const legacyFilters = reset
+    ? {}
+    : effectStackToLegacyFilters(compatibilityEffects);
+  const replacements = legacyFiltersToEffectStack({ ...legacyFilters, ...patch });
+  const byType = new Map(replacements.map((effect) => [effect.type, effect]));
+  const presentTypes = new Set();
+  const output = [];
+
+  for (const effect of effectStack) {
+    if (!isLegacyEffect(effect) || !affectedTypes.has(effect.type)) {
+      output.push(effect);
+      continue;
+    }
+    presentTypes.add(effect.type);
+    const replacement = byType.get(effect.type);
+    if (!replacement) continue;
+    output.push({ ...effect, settings: replacement.settings });
+  }
+  for (const effect of replacements) {
+    if (affectedTypes.has(effect.type) && !presentTypes.has(effect.type)) {
+      output.push(effect);
+    }
+  }
+  return output;
+}
+
 function hasLayer(project, id) {
   return project.layers.some((layer) => layer.id === id);
 }
@@ -399,8 +466,7 @@ export function editorReducer(state, action) {
 
   if (action.type === "filters/update") {
     const patch = action.patch ?? {};
-    const legacyFilters = effectStackToLegacyFilters(state.present.effectStack ?? []);
-    const effectStack = legacyFiltersToEffectStack({ ...legacyFilters, ...patch });
+    const effectStack = patchLegacyEffects(state.present.effectStack ?? [], patch);
     if (valuesEqual(effectStack, state.present.effectStack ?? [])) {
       return state;
     }
@@ -413,7 +479,11 @@ export function editorReducer(state, action) {
   }
 
   if (action.type === "filters/reset") {
-    const effectStack = legacyFiltersToEffectStack(action.filters ?? {});
+    const effectStack = patchLegacyEffects(
+      state.present.effectStack ?? [],
+      action.filters ?? {},
+      { reset: true },
+    );
     if (valuesEqual(effectStack, state.present.effectStack ?? [])) {
       return state;
     }

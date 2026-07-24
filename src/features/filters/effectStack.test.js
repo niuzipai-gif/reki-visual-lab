@@ -103,8 +103,21 @@ describe("effect stack", () => {
     expect(effects).toEqual([
       expect.objectContaining({ type: "brightness", settings: { amount: 1.08 } }),
       expect.objectContaining({ type: "contrast", settings: { amount: 1.2 } }),
+      expect.objectContaining({ type: "sharpness", settings: { amount: 0.3, legacyContrast: true } }),
       expect.objectContaining({ type: "saturation", settings: { amount: 0.8 } }),
-      expect.objectContaining({ type: "sharpness", settings: { amount: 0.3 } }),
     ]);
+  });
+
+  test("maps legacy sharpness to the former additive contrast formula", () => {
+    const output = applyEffectStack(image([100, 150, 200, 255]), legacyFiltersToEffectStack({
+      contrast: 1.2,
+      sharpness: 0.5,
+    }));
+    const legacyContrast = 1.2 + 0.5 * 0.15;
+    const expected = [100, 150, 200].map((value) =>
+      Math.round(Math.max(0, Math.min(255, 128 + (value - 128) * legacyContrast))),
+    );
+
+    expect(Array.from(output.data)).toEqual([...expected, 255]);
   });
 });

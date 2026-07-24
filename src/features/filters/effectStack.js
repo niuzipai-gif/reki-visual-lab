@@ -3,8 +3,8 @@ import { applyPixelFilters } from "./filterPipeline.js";
 export const EFFECT_TYPES = Object.freeze([
   "brightness",
   "contrast",
-  "saturation",
   "sharpness",
+  "saturation",
   "threshold",
   "halftone",
   "grain",
@@ -79,8 +79,9 @@ function settingsForLegacyType(type, filters) {
     case "brightness":
     case "contrast":
     case "saturation":
-    case "sharpness":
       return { amount: filters[type] };
+    case "sharpness":
+      return { amount: filters.sharpness, legacyContrast: true };
     case "threshold":
       return { value: filters.threshold };
     case "halftone":
@@ -208,8 +209,11 @@ function byte(value) {
   return Math.round(clamp(finite(value), 0, 255));
 }
 
-function applyColorEffect(data, width, height, effect) {
-  const amount = finite(effect.settings.amount, effect.type === "sharpness" ? 0 : 1);
+function applyColorEffect(data, width, height, effect, options = {}) {
+  const amount = finite(
+    options.amount ?? effect.settings.amount,
+    effect.type === "sharpness" ? 0 : 1,
+  );
   const output = new Uint8ClampedArray(data);
   if (effect.type === "brightness") {
     for (let index = 0; index < output.length; index += 4) {
@@ -234,17 +238,10 @@ function applyColorEffect(data, width, height, effect) {
     }
   }
   if (effect.type === "sharpness") {
-    const source = new Uint8ClampedArray(output);
-    const strength = clamp(amount, 0, 1);
-    const pixel = (x, y, channel) => source[(Math.max(0, Math.min(height - 1, y)) * width + Math.max(0, Math.min(width - 1, x))) * 4 + channel];
-    for (let y = 0; y < height; y += 1) {
-      for (let x = 0; x < width; x += 1) {
-        for (let channel = 0; channel < 3; channel += 1) {
-          const center = pixel(x, y, channel);
-          const average = (pixel(x - 1, y, channel) + pixel(x + 1, y, channel) + pixel(x, y - 1, channel) + pixel(x, y + 1, channel)) / 4;
-          output[(y * width + x) * 4 + channel] = byte(center + (center - average) * strength);
-        }
-      }
+    for (let index = 0; index < output.length; index += 4) {
+      output[index] = byte((output[index] - 128) * amount + 128);
+      output[index + 1] = byte((output[index + 1] - 128) * amount + 128);
+      output[index + 2] = byte((output[index + 2] - 128) * amount + 128);
     }
   }
   return new ImageData(output, width, height);
@@ -260,15 +257,54 @@ export function applyEffectStack(imageData, stack = []) {
   }
 
   let data = new Uint8ClampedArray(source);
-  for (const effect of normalizeEffectStack(stack)) {
+  let legacyContrastAmount = 1;
+  const effects = normalizeEffectStack(stack);
+  const combinedSharpness = new Set();
+  for (let index = 0; index < effects.length; index += 1) {
+    if (combinedSharpness.has(index)) continue;
+    const effect = effects[index];
     if (!effect.visible || effect.opacity <= 0 || !effectIsActive(effect.type, effect.settings)) continue;
+    const next = effects[index + 1];
+    const canCombineLegacySharpness =
+      effect.type === "contrast" &&
+      effect.opacity === 1 &&
+      next?.type === "sharpness" &&
+      next.visible &&
+      next.opacity === 1 &&
+      next.settings.legacyContrast !== false &&
+      effectIsActive(next.type, next.settings);
+    const contrastAmount = canCombineLegacySharpness
+      ? finite(effect.settings.amount, 1) + finite(next.settings.amount) * 0.15
+      : undefined;
     const processed = ["brightness", "contrast", "saturation", "sharpness"].includes(effect.type)
-      ? applyColorEffect(data, width, height, effect)
+      ? applyColorEffect(
+          data,
+          width,
+          height,
+          effect,
+          effect.type === "contrast" && contrastAmount !== undefined
+            ? { amount: contrastAmount }
+            : effect.type === "sharpness"
+            ? {
+                amount: effect.settings.legacyContrast === false
+                  ? 1 + finite(effect.settings.amount) * 0.15
+                  : (legacyContrastAmount + finite(effect.settings.amount) * 0.15) /
+                    legacyContrastAmount,
+              }
+            : {},
+        )
       : applyPixelFilters(
           new ImageData(new Uint8ClampedArray(data), width, height),
           effectToLegacySettings(effect),
         );
     data = blendPixels(data, processed.data, effect.opacity);
+    if (effect.type === "contrast") {
+      legacyContrastAmount = contrastAmount ?? finite(effect.settings.amount, 1);
+      if (canCombineLegacySharpness) combinedSharpness.add(index + 1);
+    }
+    if (effect.type === "sharpness" && effect.settings.legacyContrast !== false) {
+      legacyContrastAmount += finite(effect.settings.amount) * 0.15;
+    }
   }
   return new ImageData(data, width, height);
 }

@@ -617,6 +617,56 @@ describe("project-level actions", () => {
     ]);
   });
 
+  test("updates only legacy compatibility cards without rebuilding ordered duplicate effects", () => {
+    const state = createEditorState({
+      ...createProject(),
+      effectStack: [
+        {
+          id: "custom-grain",
+          type: "grain",
+          name: "自定义颗粒",
+          visible: true,
+          opacity: 1,
+          settings: { amount: 0.8, seed: 9 },
+        },
+        {
+          id: "legacy-grain",
+          type: "grain",
+          name: "兼容颗粒",
+          visible: false,
+          opacity: 0.35,
+          settings: { amount: 0.1, seed: 3 },
+        },
+        {
+          id: "custom-scanline",
+          type: "scanline",
+          name: "扫描线",
+          visible: false,
+          opacity: 0.6,
+          settings: { amount: 0.4 },
+        },
+      ],
+    });
+
+    const updated = editorReducer(state, {
+      type: "filters/update",
+      patch: { grain: 0.25 },
+    });
+
+    expect(updated.present.effectStack.map(({ id }) => id)).toEqual([
+      "custom-grain",
+      "legacy-grain",
+      "custom-scanline",
+    ]);
+    expect(updated.present.effectStack[0]).toEqual(state.present.effectStack[0]);
+    expect(updated.present.effectStack[1]).toMatchObject({
+      visible: false,
+      opacity: 0.35,
+      settings: { amount: 0.25, seed: 3 },
+    });
+    expect(updated.present.effectStack[2]).toEqual(state.present.effectStack[2]);
+  });
+
   test("merges canvas and filter patches without discarding existing values", () => {
     const start = createEditorState();
     const resized = editorReducer(start, {
