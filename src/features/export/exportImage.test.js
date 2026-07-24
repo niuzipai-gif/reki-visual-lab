@@ -104,7 +104,7 @@ describe("composition export", () => {
     vi.unstubAllGlobals();
   });
 
-  test("applies the same base filter string before drawing a complete image", async () => {
+  test("applies named effect-stack pixels after drawing a complete image", async () => {
     const context = {
       clearRect: vi.fn(),
       drawImage: vi.fn(),
@@ -119,8 +119,6 @@ describe("composition export", () => {
       canvas: { width: 2, height: 2 },
       setLineDash: vi.fn(),
     };
-    let drawnFilter;
-    context.drawImage.mockImplementation(() => { drawnFilter = context.filter; });
     const canvas = {
       width: 0,
       height: 0,
@@ -131,15 +129,18 @@ describe("composition export", () => {
     await renderProjectToBlob({
       project: {
         canvas: { width: 2, height: 2 },
-        filters: { brightness: 1.2, contrast: 1.1, saturation: 0.8, sharpness: 0.5 },
+        filters: {},
+        effectStack: [{
+          id: "brightness-1", type: "brightness", name: "亮度", visible: true,
+          opacity: 1, settings: { amount: 1.2 },
+        }],
         layers: [],
       },
       sourceBitmap: { width: 2, height: 2 },
       format: "png",
     });
-    expect(drawnFilter).toContain("brightness(1.2)");
-    expect(drawnFilter).toContain("contrast(1.175)");
-    expect(drawnFilter).toContain("saturate(0.8)");
+    expect(context.filter).toBe("none");
+    expect(context.putImageData).toHaveBeenCalledTimes(1);
     expect(canvas.width).toBe(0);
     expect(canvas.height).toBe(0);
     vi.unstubAllGlobals();

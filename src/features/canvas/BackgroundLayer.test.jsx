@@ -33,9 +33,7 @@ describe("BackgroundLayer", () => {
     expect(image.tagName).toBe("IMG");
     expect(image).toHaveAttribute("src", "blob:reki-preview");
     expect(canvas.tagName).toBe("CANVAS");
-    expect(background).toHaveStyle({
-      filter: "brightness(0.9) contrast(1.2) saturate(0.8)",
-    });
+    expect(background).not.toHaveStyle({ filter: "brightness(0.9) contrast(1.2) saturate(0.8)" });
   });
 
   test.each([
@@ -387,8 +385,8 @@ describe("BackgroundLayer", () => {
     expect(drawImage).not.toHaveBeenCalled();
   });
 
-  test("draws without pixel readback when no pixel effect is active", async () => {
-    const getImageData = vi.fn();
+  test("renders explicit color effects through the shared pixel stack", async () => {
+    const getImageData = vi.fn(() => new ImageData(800, 600));
     const putImageData = vi.fn();
     const drawImage = vi.fn();
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
@@ -408,8 +406,8 @@ describe("BackgroundLayer", () => {
     );
 
     await waitFor(() => expect(drawImage).toHaveBeenCalled());
-    expect(getImageData).not.toHaveBeenCalled();
-    expect(putImageData).not.toHaveBeenCalled();
+    expect(getImageData).toHaveBeenCalled();
+    expect(putImageData).toHaveBeenCalled();
     expect(
       screen.queryByText("无法应用像素效果，已保留原图"),
     ).not.toBeInTheDocument();

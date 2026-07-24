@@ -883,7 +883,7 @@ describe("EditorCanvas", () => {
 
     expect(surface.style.filter).toBe("");
     expect(background).toHaveClass("demo-canvas");
-    expect(background).toHaveStyle({
+    expect(background).not.toHaveStyle({
       filter: "brightness(0.92) contrast(1.18) saturate(0.76)",
     });
     expect(background.parentElement).toBe(surface);

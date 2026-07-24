@@ -15,7 +15,6 @@ import {
 import { EditorCanvas } from "./features/canvas/EditorCanvas.jsx";
 import { ExportDialog } from "./features/export/ExportDialog.jsx";
 import { FilterPanel } from "./features/filters/FilterPanel.jsx";
-import { DEFAULT_FILTER_SETTINGS } from "./features/filters/filterPipeline.js";
 import { Inspector } from "./features/tools/Inspector.jsx";
 import { LayersPanel } from "./features/tools/LayersPanel.jsx";
 import { PresetStrip } from "./features/tools/PresetStrip.jsx";
@@ -88,7 +87,6 @@ export function Workbench({
   const [grid, setGrid] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
-  const [filterPreview, setFilterPreview] = useState(null);
   const [aiImageSource, setAiImageSource] = useState(() =>
     drawableImageSource(initialProject?.image),
   );
@@ -219,38 +217,21 @@ export function Workbench({
       onDelete={() => selectedLayer && dispatch({ type: "layer/remove", id: selectedLayer.id })}
     />
   );
-  const visibleFilters = filterPreview ?? state.present.filters;
-  const previewFilters = (patch) => {
-    setFilterPreview((current) => ({
-      ...(current ?? state.present.filters),
-      ...patch,
-    }));
-  };
-  const commitFilters = (patch) => {
-    const filters = {
-      ...(filterPreview ?? state.present.filters),
-      ...patch,
-    };
-    setFilterPreview(null);
-    dispatch({ type: "filters/update", patch: filters });
+  const handleEffectAction = (action, id, patch) => {
+    if (action === "add") dispatch({ type: "effects/add", effect: id });
+    if (action === "update") dispatch({ type: "effects/update", id, patch });
+    if (action === "remove") dispatch({ type: "effects/remove", id });
+    if (action === "move") dispatch({ type: "effects/move", id, toIndex: patch });
+    if (action === "reset") dispatch({ type: "effects/reset", effects: [] });
   };
   const filterPanel = (
     <FilterPanel
-      settings={visibleFilters}
-      onPreview={previewFilters}
-      onCommit={commitFilters}
-      onReset={() => {
-        setFilterPreview(null);
-        dispatch({
-          type: "filters/reset",
-          filters: DEFAULT_FILTER_SETTINGS,
-        });
-      }}
+      effects={state.present.effectStack}
+      onAction={handleEffectAction}
     />
   );
 
   const applyPreset = (preset) => {
-    setFilterPreview(null);
     const layers = preset
       .createLayers({ seed: presetSeed.current++ })
       .map((layer) => ({ ...layer, presetId: preset.id }));
@@ -332,11 +313,9 @@ export function Workbench({
         canCompare={Boolean(state.present.image)}
         canvas={state.present.canvas}
         onUndo={() => {
-          setFilterPreview(null);
           dispatch({ type: "history/undo" });
         }}
         onRedo={() => {
-          setFilterPreview(null);
           dispatch({ type: "history/redo" });
         }}
         onToggleBackground={() => dispatch({ type: "canvas/update", patch: { backgroundVisible: !state.present.canvas.backgroundVisible } })}
@@ -367,7 +346,7 @@ export function Workbench({
           }`}
         >
           <EditorCanvas
-            project={{ ...state.present, filters: visibleFilters }}
+            project={state.present}
             selectedLayerId={state.selectedLayerId}
             activeTool={activeTool}
             zoom={zoom}

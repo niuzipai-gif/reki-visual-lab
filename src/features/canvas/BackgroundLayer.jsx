@@ -1,25 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { previewSize } from "../import/decodeImage.js";
 import {
-  applyPixelFilters,
-  hasActivePixelFilters,
-} from "../filters/filterPipeline.js";
-
-function previewFilter(filters = {}) {
-  const values = [];
-  if (filters.brightness !== undefined) {
-    values.push(`brightness(${filters.brightness})`);
-  }
-  if (filters.contrast !== undefined || filters.sharpness !== undefined) {
-    values.push(
-      `contrast(${(filters.contrast ?? 1) + (filters.sharpness ?? 0) * 0.15})`,
-    );
-  }
-  if (filters.saturation !== undefined) {
-    values.push(`saturate(${filters.saturation})`);
-  }
-  return values.join(" ");
-}
+  applyEffectStack,
+  legacyFiltersToEffectStack,
+} from "../filters/effectStack.js";
 
 function imageResource(image) {
   // The renderer only borrows decoded resources; import/project code owns disposal.
@@ -132,6 +116,7 @@ export function BackgroundLayer({
   image,
   canvasSize,
   filters,
+  effectStack,
   showOriginal = false,
   onImageSourceReady,
 }) {
@@ -147,6 +132,10 @@ export function BackgroundLayer({
   const [renderError, setRenderError] = useState(null);
   const [canvasReady, setCanvasReady] = useState(false);
   const dimensions = previewSize(canvasSize.width, canvasSize.height);
+  const effectiveStack = useMemo(
+    () => (Array.isArray(effectStack) ? effectStack : legacyFiltersToEffectStack(filters)),
+    [effectStack, filters],
+  );
   const activeResource = showOriginal ? originalResource : resource;
   const displayResource = activeResource ?? resource;
 
@@ -267,8 +256,8 @@ export function BackgroundLayer({
           willReadFrequently: true,
         });
         if (!context) return;
-        const activeFilters = showOriginal ? {} : filters;
-        const active = hasActivePixelFilters(activeFilters);
+        const activeStack = showOriginal ? [] : effectiveStack;
+        const active = activeStack.length > 0;
         const cached = sourceCacheRef.current;
         if (
           active &&
@@ -279,7 +268,7 @@ export function BackgroundLayer({
           cached.pixels
         ) {
           context.putImageData(
-            applyPixelFilters(cached.pixels, activeFilters),
+            applyEffectStack(cached.pixels, activeStack),
             0,
             0,
           );
@@ -334,7 +323,7 @@ export function BackgroundLayer({
             dimensions.height,
           );
           sourceCacheRef.current.pixels = pixels;
-          context.putImageData(applyPixelFilters(pixels, activeFilters), 0, 0);
+          context.putImageData(applyEffectStack(pixels, activeStack), 0, 0);
           setRenderError(null);
         } catch {
           // Drawing succeeded, so the canvas remains a safe unfiltered fallback.
@@ -362,7 +351,7 @@ export function BackgroundLayer({
   }, [
     dimensions.height,
     dimensions.width,
-    filters,
+    effectiveStack,
     showOriginal,
     activeResource,
     urlSource,
@@ -376,7 +365,7 @@ export function BackgroundLayer({
       data-testid="canvas-background"
       className={`canvas-background${isDemo && !showOriginal ? " demo-canvas" : ""}`}
       data-original={String(showOriginal)}
-      style={{ filter: showOriginal ? "" : previewFilter(filters) }}
+      style={{}}
     >
       {displayResource?.kind === "url" ? (
         <img

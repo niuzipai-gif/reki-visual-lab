@@ -127,6 +127,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .filter-panel .color-grid { grid-template-columns: 1fr 1fr; }
 .filter-reset { width: 100%; margin-top: 8px; padding: 8px; border: 1px solid var(--reki-edge); border-radius: 9px; background: rgba(255,255,255,.5); font-size: .62rem; font-weight: 720; }
 .filter-reset:hover { background: rgba(255,255,255,.72); }
+.effect-palette { display: flex; flex-wrap: wrap; gap: 6px; }
+.effect-palette button, .effect-card button { border: 1px solid var(--reki-edge); border-radius: 7px; background: rgba(255,255,255,.55); color: var(--reki-ink); font: inherit; font-size: .57rem; padding: 5px 7px; }
+.effect-palette button:hover, .effect-card button:hover { background: rgba(255,255,255,.88); }
+.effect-stack { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.effect-stack-empty, .effect-settings-note { margin: 0; color: var(--reki-muted); font-size: .61rem; line-height: 1.55; }
+.effect-card { padding: 8px; border: 1px solid var(--reki-edge); border-radius: 10px; background: rgba(255,255,255,.36); }
+.effect-card-row { display: flex; align-items: center; gap: 6px; }
+.effect-card-row strong { flex: 1; font-size: .65rem; }
+.effect-eye { min-width: 28px; color: var(--reki-yolk) !important; }
+.effect-opacity { margin: 7px 0 0; }
+.effect-settings { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--reki-edge); }
+.effect-card-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.effect-card-actions button[disabled] { opacity: .38; cursor: not-allowed; }
 .ai-scan-panel header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .ai-scan-panel header small { color: var(--reki-muted); font-size: .5rem; font-weight: 800; letter-spacing: .13em; }
 .ai-scan-panel h2 { margin: 3px 0 0; font-size: .78rem; }

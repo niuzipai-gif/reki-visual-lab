@@ -2,9 +2,9 @@ import { denormalizePoint, makeCurvePoints } from "../../domain/geometry.js";
 import { DEFAULT_STYLE } from "../../domain/project.js";
 import { MAX_DECODED_PIXELS } from "../import/decodeImage.js";
 import {
-  applyPixelFilters,
-  hasActivePixelFilters,
-} from "../filters/filterPipeline.js";
+  applyEffectStack,
+  legacyFiltersToEffectStack,
+} from "../filters/effectStack.js";
 
 const MAX_SCALE = 4;
 const DEFAULT_DEVICE_MEMORY = 4;
@@ -57,16 +57,6 @@ export function isSafeExport(plan, deviceMemory, filterHeavy = false) {
     finitePositive(plan?.estimatedBytes) &&
     plan.estimatedBytes * peakMultiplier < allowance
   );
-}
-
-function baseFilterString(filters = {}) {
-  const values = [];
-  if (Number.isFinite(Number(filters.brightness))) values.push(`brightness(${filters.brightness})`);
-  if (Number.isFinite(Number(filters.contrast)) || Number.isFinite(Number(filters.sharpness))) {
-    values.push(`contrast(${(Number(filters.contrast) || 1) + (Number(filters.sharpness) || 0) * 0.15})`);
-  }
-  if (Number.isFinite(Number(filters.saturation))) values.push(`saturate(${filters.saturation})`);
-  return values.join(" ");
 }
 
 function sourceDrawable(source) {
@@ -256,11 +246,11 @@ function drawSource(context, source, width, height) {
   }
 }
 
-function applyFiltersToCanvas(context, width, height, filters) {
-  if (!hasActivePixelFilters(filters)) return;
+function applyEffectsToCanvas(context, width, height, effectStack) {
+  if (!effectStack.length) return;
   try {
     const pixels = context.getImageData(0, 0, width, height);
-    context.putImageData(applyPixelFilters(pixels, filters), 0, 0);
+    context.putImageData(applyEffectStack(pixels, effectStack), 0, 0);
   } catch (error) {
     throw exportError("EXPORT_CANVAS", "这张照片不允许读取像素，无法应用效果", error);
   }
@@ -299,7 +289,10 @@ export async function renderProjectToBlob({
   transparentOverlay = false,
 }) {
   const plan = createExportPlan(project?.canvas, scale, transparentOverlay);
-  if (!isSafeExport(plan, undefined, plan.includeBackground && hasActivePixelFilters(project?.filters))) {
+  const effectStack = Array.isArray(project?.effectStack)
+    ? project.effectStack
+    : legacyFiltersToEffectStack(project?.filters);
+  if (!isSafeExport(plan, undefined, plan.includeBackground && effectStack.length > 0)) {
     throw exportError("EXPORT_MEMORY", "导出尺寸过大，请降低倍率或缩小画布");
   }
   const canvas = createCanvas(plan.width, plan.height);
@@ -308,10 +301,9 @@ export async function renderProjectToBlob({
     try {
       context.clearRect(0, 0, plan.width, plan.height);
       if (plan.includeBackground) {
-        context.filter = baseFilterString(project.filters);
         drawSource(context, sourceBitmap, plan.width, plan.height);
         context.filter = "none";
-        applyFiltersToCanvas(context, plan.width, plan.height, project.filters);
+        applyEffectsToCanvas(context, plan.width, plan.height, effectStack);
       }
       for (const layer of project.layers ?? []) {
         drawAnnotationToContext(context, layer, project.canvas, scale);
