@@ -83,4 +83,21 @@ describe("animation runtime", () => {
       amplitude: 1,
     });
   });
+
+  test("safely falls back when numeric values cannot be coerced", () => {
+    const throwingNumber = { valueOf: () => { throw new Error("nope"); } };
+
+    expect(() => sanitizeAnimation({
+      durationMs: Symbol("duration"),
+      delayMs: throwingNumber,
+      amplitude: Symbol("amplitude"),
+    })).not.toThrow();
+    expect(sanitizeAnimation({
+      durationMs: Symbol("duration"),
+      delayMs: throwingNumber,
+      amplitude: Symbol("amplitude"),
+    })).toEqual(DEFAULT_ANIMATION);
+    expect(() => resolveAnimation({ type: "fade" }, Symbol("time"))).not.toThrow();
+    expect(() => resolveAnimation({ type: "fade" }, throwingNumber)).not.toThrow();
+  });
 });

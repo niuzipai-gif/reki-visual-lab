@@ -39,10 +39,19 @@ function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
+function toFiniteNumber(value) {
+  try {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  } catch {
+    return null;
+  }
+}
+
 function boundedNumber(value, fallback, minimum, maximum) {
   if (value === null || value === undefined || value === "") return fallback;
-  const number = Number(value);
-  return Number.isFinite(number) ? clamp(number, minimum, maximum) : fallback;
+  const number = toFiniteNumber(value);
+  return number === null ? fallback : clamp(number, minimum, maximum);
 }
 
 /**
@@ -73,8 +82,8 @@ function frame(overrides = {}) {
 }
 
 function timelineProgress(config, timeMs) {
-  const numericTime = Number(timeMs);
-  const safeTime = Math.max(0, Number.isFinite(numericTime) ? numericTime : 0);
+  const numericTime = toFiniteNumber(timeMs);
+  const safeTime = Math.max(0, numericTime ?? 0);
   if (safeTime < config.delayMs) return { waiting: true, progress: 0, cycle: 0 };
 
   const elapsed = safeTime - config.delayMs;
