@@ -134,7 +134,8 @@ describe("device-local project store", () => {
     });
     expect(raw.layers[0].style).not.toHaveProperty("callback");
     expect(raw.layers[0].style).not.toHaveProperty("element");
-    expect(raw.filters).toEqual({ contrast: 1.2 });
+    expect(raw.filters).toEqual({});
+    expect(raw.effectStack).toEqual([]);
     expect(JSON.stringify(raw)).not.toContain("blob:unsafe");
     expect(() => structuredClone(raw)).not.toThrow();
   });
@@ -302,7 +303,7 @@ describe("device-local project store", () => {
 
     const loaded = await loadProject("legacy-zero");
     expect(loaded.project).toMatchObject({
-      version: 1,
+      version: 2,
       canvas: { width: 320, height: 240, backgroundVisible: true },
       layers: [],
       filters: {},
@@ -368,7 +369,8 @@ describe("device-local project store", () => {
       { expectedRevision: 0 },
     );
     const raw = await get("project:safe-project", rawStore);
-    expect(raw.filters).toEqual({ safe: 1 });
+    expect(raw.filters).toEqual({});
+    expect(raw.effectStack).toEqual([]);
     expect({}.polluted).toBeUndefined();
 
     await set(
@@ -449,6 +451,7 @@ describe("device-local project store", () => {
         version: 1,
         name: "Legacy",
         canvas: { width: 640, height: 480 },
+        filters: { grain: 0.2, rgbOffset: 2 },
         layers: [
           {
             id: "legacy-layer",
@@ -478,9 +481,13 @@ describe("device-local project store", () => {
 
     const migrated = await loadProject("legacy");
     expect(migrated.project).toMatchObject({
-      version: 1,
+      version: 2,
       updatedAt: 0,
       filters: {},
+      effectStack: [
+        expect.objectContaining({ type: "grain", settings: { amount: 0.2, seed: 1 } }),
+        expect.objectContaining({ type: "rgbOffset", settings: { offset: 2 } }),
+      ],
       sourceStatus: "missing",
       canvas: { width: 640, height: 480, backgroundVisible: true },
     });
@@ -530,7 +537,20 @@ describe("device-local project store", () => {
       code: "INVALID_PROJECT_ID",
     });
     await expect(
-      saveProject(storedProject({ filters: { huge: "x".repeat(9_000_000) } })),
+      saveProject(
+        storedProject({
+          effectStack: [
+            {
+              id: "huge-effect",
+              type: "grain",
+              name: "颗粒",
+              visible: true,
+              opacity: 1,
+              settings: { payload: "x".repeat(9_000_000) },
+            },
+          ],
+        }),
+      ),
     ).rejects.toMatchObject({ code: "PROJECT_TOO_LARGE" });
   });
 

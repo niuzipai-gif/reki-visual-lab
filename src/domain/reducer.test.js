@@ -76,10 +76,10 @@ describe("editor history", () => {
     const redone = editorReducer(undone, { type: "history/redo" });
 
     expect(applied.present.layers).toEqual([first, second]);
-    expect(applied.present.filters).toEqual({
-      contrast: 1.18,
-      grain: 0.12,
-    });
+    expect(applied.present.filters).toEqual({});
+    expect(applied.present.effectStack).toEqual([
+      expect.objectContaining({ type: "grain", settings: { amount: 0.12, seed: 1 } }),
+    ]);
     expect(applied.selectedLayerId).toBe(first.id);
     expect(applied.past).toHaveLength(1);
     expect(undone.present.layers).toEqual([]);
@@ -106,7 +106,10 @@ describe("editor history", () => {
     });
     const undone = editorReducer(applied, { type: "history/undo" });
 
-    expect(applied.present.filters).toEqual(recommendation.filters);
+    expect(applied.present.filters).toEqual({});
+    expect(applied.present.effectStack).toEqual([
+      expect.objectContaining({ type: "grain", settings: { amount: 0.12, seed: 1 } }),
+    ]);
     expect(applied.present.layers).toHaveLength(2);
     expect(applied.present.layers.every(({ source }) => source === "ai-style")).toBe(true);
     expect(applied.selectedLayerId).toBe("style-path");
@@ -150,29 +153,29 @@ describe("editor history", () => {
 
   test("clones accepted style patches before committing them", () => {
     const layer = createAnnotation("path", [{ x: 0.1, y: 0.2 }], { id: "safe" });
-    const patch = { filters: { contrast: 1.1 }, layers: [layer] };
+    const patch = { filters: { grain: 0.1 }, layers: [layer] };
     const applied = editorReducer(createEditorState(), {
       type: "style/apply",
       patch,
     });
 
-    patch.filters.contrast = 1.8;
+    patch.filters.grain = 0.8;
     patch.layers[0].points[0].x = 0.9;
-    expect(applied.present.filters.contrast).toBe(1.1);
+    expect(applied.present.effectStack[0].settings.amount).toBe(0.1);
     expect(applied.present.layers[0].points[0].x).toBe(0.1);
   });
 
   test("clones supplied recommendation layers before committing them", () => {
     const layer = createAnnotation("path", [{ x: 0.1, y: 0.2 }], { id: "recommendation-layer" });
-    const recommendation = { filters: { contrast: 1.1 }, layers: [layer] };
+    const recommendation = { filters: { grain: 0.1 }, layers: [layer] };
     const applied = editorReducer(createEditorState(), {
       type: "style/apply",
       recommendation,
     });
 
-    recommendation.filters.contrast = 1.8;
+    recommendation.filters.grain = 0.8;
     recommendation.layers[0].points[0].x = 0.9;
-    expect(applied.present.filters.contrast).toBe(1.1);
+    expect(applied.present.effectStack[0].settings.amount).toBe(0.1);
     expect(applied.present.layers[0].points[0].x).toBe(0.1);
   });
 
@@ -180,11 +183,14 @@ describe("editor history", () => {
     const layer = createAnnotation("path", [{ x: 0.1, y: 0.2 }], { id: "null-filter" });
     const applied = editorReducer(createEditorState(), {
       type: "style/apply",
-      recommendation: { filters: { contrast: 1.1 }, layers: [layer] },
+      recommendation: { filters: { grain: 0.1 }, layers: [layer] },
       filters: null,
     });
 
-    expect(applied.present.filters).toEqual({ contrast: 1.1 });
+    expect(applied.present.filters).toEqual({});
+    expect(applied.present.effectStack).toEqual([
+      expect.objectContaining({ type: "grain", settings: { amount: 0.1, seed: 1 } }),
+    ]);
     expect(applied.present.layers[0].source).toBe("ai-style");
   });
 });
@@ -487,6 +493,75 @@ describe("layer actions", () => {
 });
 
 describe("project-level actions", () => {
+  test("adds, updates, moves, removes, and resets effect cards as undoable commits", () => {
+    const start = createEditorState();
+    const added = editorReducer(start, {
+      type: "effects/add",
+      effect: {
+        id: "grain-card",
+        type: "grain",
+        name: "颗粒",
+        visible: true,
+        opacity: 1,
+        settings: { amount: 0.2, seed: 3 },
+      },
+    });
+    const updated = editorReducer(added, {
+      type: "effects/update",
+      id: "grain-card",
+      patch: { visible: false, opacity: 0.35 },
+    });
+    const moved = editorReducer(updated, {
+      type: "effects/move",
+      id: "grain-card",
+      toIndex: 0,
+    });
+    const removed = editorReducer(moved, {
+      type: "effects/remove",
+      id: "grain-card",
+    });
+    const reset = editorReducer(added, { type: "effects/reset" });
+
+    expect(added.present.effectStack).toHaveLength(1);
+    expect(updated.present.effectStack[0]).toMatchObject({
+      visible: false,
+      opacity: 0.35,
+    });
+    expect(moved).toBe(updated);
+    expect(removed.present.effectStack).toEqual([]);
+    expect(reset.present.effectStack).toEqual([]);
+    expect(updated.past).toHaveLength(2);
+    expect(editorReducer(updated, {
+      type: "effects/update",
+      id: "grain-card",
+      patch: { opacity: 0.35 },
+    })).toBe(updated);
+  });
+
+  test("converts preset and AI legacy pixel filters into explicit effect cards", () => {
+    const preset = editorReducer(createEditorState(), {
+      type: "preset/apply",
+      filters: { grain: 0.18, rgbOffset: 2 },
+    });
+    const styled = editorReducer(createEditorState(), {
+      type: "style/apply",
+      recommendation: {
+        filters: { grain: 0.22 },
+        layers: [],
+      },
+    });
+
+    expect(preset.present.filters).toEqual({});
+    expect(preset.present.effectStack.map(({ type }) => type)).toEqual([
+      "grain",
+      "rgbOffset",
+    ]);
+    expect(styled.present.filters).toEqual({});
+    expect(styled.present.effectStack).toEqual([
+      expect.objectContaining({ type: "grain", settings: { amount: 0.22, seed: 1 } }),
+    ]);
+  });
+
   test("merges canvas and filter patches without discarding existing values", () => {
     const start = createEditorState();
     const resized = editorReducer(start, {
@@ -533,6 +608,24 @@ describe("project-level actions", () => {
       future: [],
       selectedLayerId: null,
     });
+  });
+
+  test("normalizes old flat filters when loading a saved project", () => {
+    const loaded = editorReducer(createEditorState(), {
+      type: "project/load",
+      project: {
+        ...createProject(),
+        version: 1,
+        filters: { threshold: 120 },
+        effectStack: undefined,
+      },
+    });
+
+    expect(loaded.present.version).toBe(2);
+    expect(loaded.present.filters).toEqual({});
+    expect(loaded.present.effectStack).toEqual([
+      expect.objectContaining({ type: "threshold", settings: { value: 120 } }),
+    ]);
   });
 
   test("changes valid selection without creating history or clearing redo", () => {

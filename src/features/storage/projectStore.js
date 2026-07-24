@@ -1,4 +1,8 @@
 import { DEFAULT_STYLE } from "../../domain/project.js";
+import {
+  legacyFiltersToEffectStack,
+  normalizeEffectStack,
+} from "../filters/effectStack.js";
 
 const DATABASE_NAME = "reki-projects";
 const STORE_NAME = "reki-projects";
@@ -8,7 +12,7 @@ const PROJECT_PREFIX = "project:";
 const SOURCE_PREFIX = "source:";
 const TOMBSTONE_PREFIX = "tombstone:";
 const THUMBNAIL_PREFIX = "thumbnail:";
-const CURRENT_VERSION = 1;
+const CURRENT_VERSION = 2;
 const MAX_INDEX_ENTRIES = 100;
 const MAX_PROJECT_JSON_BYTES = 8 * 1024 * 1024;
 const MAX_SOURCE_BYTES = 40 * 1024 * 1024;
@@ -194,6 +198,16 @@ function migrateProject(rawProject) {
       version = 1;
       continue;
     }
+    if (version === 1) {
+      project = {
+        ...project,
+        version: 2,
+        filters: {},
+        effectStack: legacyFiltersToEffectStack(project.filters ?? {}),
+      };
+      version = 2;
+      continue;
+    }
     throw typedError("CORRUPT_PROJECT", "项目版本信息无效");
   }
   return project;
@@ -207,7 +221,9 @@ function normalizeProject(rawProject, sourceStatus, revision, sourceToken) {
   if (!width || !height || !Array.isArray(project.layers ?? [])) {
     throw typedError("CORRUPT_PROJECT", "项目数据已损坏，无法打开");
   }
-  const filters = sanitizeValue(project.filters) ?? Object.create(null);
+  const effectStack = normalizeEffectStack(
+    sanitizeValue(project.effectStack) ?? [],
+  );
   const normalized = {
     id: project.id,
     version: CURRENT_VERSION,
@@ -225,7 +241,8 @@ function normalizeProject(rawProject, sourceStatus, revision, sourceToken) {
       backgroundVisible: project.canvas.backgroundVisible !== false,
     },
     image: imageMetadata(project.image),
-    filters: plainObject(filters) ? filters : {},
+    filters: {},
+    effectStack,
     layers: sanitizeLayers(project.layers),
     sourceStatus: sourceStatus === "available" ? "available" : "missing",
     sourceToken:

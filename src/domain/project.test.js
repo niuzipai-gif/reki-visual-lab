@@ -1,22 +1,47 @@
 import { describe, expect, test } from "vitest";
-import { DEFAULT_STYLE, createAnnotation, createProject } from "./project.js";
+import {
+  DEFAULT_STYLE,
+  createAnnotation,
+  createProject,
+  normalizeProject,
+} from "./project.js";
 
 describe("project factories", () => {
   test("creates a versioned local project with the requested canvas size", () => {
     const project = createProject({ width: 1080, height: 1350 });
 
     expect(project).toMatchObject({
-      version: 1,
+      version: 2,
       name: "未命名项目",
       canvas: { width: 1080, height: 1350, backgroundVisible: true },
       image: null,
       filters: {},
+      effectStack: [],
       layers: [],
     });
     expect(project.id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
     expect(project.updatedAt).toEqual(expect.any(Number));
+  });
+
+  test("migrates flat legacy filters into effect cards without mutating the saved project", () => {
+    const legacy = {
+      ...createProject(),
+      version: 1,
+      filters: { grain: 0.2, rgbOffset: 2 },
+      effectStack: undefined,
+    };
+
+    const normalized = normalizeProject(legacy);
+
+    expect(normalized.version).toBe(2);
+    expect(normalized.filters).toEqual({});
+    expect(normalized.effectStack).toEqual([
+      expect.objectContaining({ type: "grain", settings: { amount: 0.2, seed: 1 } }),
+      expect.objectContaining({ type: "rgbOffset", settings: { offset: 2 } }),
+    ]);
+    expect(legacy.filters).toEqual({ grain: 0.2, rgbOffset: 2 });
   });
 
   test("uses the editor canvas defaults when dimensions are omitted", () => {

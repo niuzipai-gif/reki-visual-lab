@@ -1,18 +1,35 @@
-import { createProject } from "./project.js";
+import { createProject, normalizeProject } from "./project.js";
 import {
   sanitizeEditorPatch,
   styleToEditorPatch,
 } from "../features/ai/styleAdvisor.js";
+import {
+  createEffect,
+  legacyFilterPatchToEffects,
+  normalizeEffectStack,
+} from "../features/filters/effectStack.js";
 
 export const MAX_HISTORY_ENTRIES = 100;
 
 export function createEditorState(project = createProject()) {
   return {
     past: [],
-    present: project,
+    present: normalizeProject(project),
     future: [],
     selectedLayerId: null,
   };
+}
+
+function addEffects(stack, effects) {
+  const ids = new Set(stack.map(({ id }) => id));
+  const additions = [];
+  for (const source of effects ?? []) {
+    const effect = createEffect(source?.type, source);
+    if (!effect || ids.has(effect.id)) continue;
+    ids.add(effect.id);
+    additions.push(effect);
+  }
+  return additions;
 }
 
 function hasLayer(project, id) {
@@ -188,13 +205,13 @@ export function editorReducer(state, action) {
     const layersToAdd = (action.layers ?? []).filter(
       ({ id }) => !existingIds.has(id),
     );
-    const filters = {
-      ...state.present.filters,
-      ...(action.filters ?? {}),
-    };
+    const effectsToAdd = addEffects(
+      state.present.effectStack ?? [],
+      legacyFilterPatchToEffects(action.filters),
+    );
     if (
       !layersToAdd.length &&
-      valuesEqual(filters, state.present.filters)
+      !effectsToAdd.length
     ) {
       return state;
     }
@@ -202,7 +219,7 @@ export function editorReducer(state, action) {
     const nextPresent = {
       ...state.present,
       layers: [...state.present.layers, ...layersToAdd],
-      filters,
+      effectStack: [...(state.present.effectStack ?? []), ...effectsToAdd],
     };
     return commit(state, nextPresent, action.selectedLayerId ?? null);
   }
@@ -237,17 +254,17 @@ export function editorReducer(state, action) {
       existingIds.add(id);
       return true;
     });
-    const filters = {
-      ...state.present.filters,
-      ...appliedFilters,
-    };
-    if (!layersToAdd.length && valuesEqual(filters, state.present.filters)) {
+    const effectsToAdd = addEffects(
+      state.present.effectStack ?? [],
+      legacyFilterPatchToEffects(appliedFilters),
+    );
+    if (!layersToAdd.length && !effectsToAdd.length) {
       return state;
     }
     const nextPresent = {
       ...state.present,
       layers: [...state.present.layers, ...layersToAdd],
-      filters,
+      effectStack: [...(state.present.effectStack ?? []), ...effectsToAdd],
     };
     return commit(
       state,
@@ -326,6 +343,58 @@ export function editorReducer(state, action) {
     });
   }
 
+  if (action.type === "effects/add") {
+    const effectsToAdd = addEffects(state.present.effectStack ?? [], [action.effect]);
+    if (!effectsToAdd.length) return state;
+    return commit(state, {
+      ...state.present,
+      effectStack: [...(state.present.effectStack ?? []), ...effectsToAdd],
+    });
+  }
+
+  if (action.type === "effects/update") {
+    const current = (state.present.effectStack ?? []).find(
+      (effect) => effect.id === action.id,
+    );
+    if (!current) return state;
+    const { id: _ignoredId, type: _ignoredType, ...patch } = action.patch ?? {};
+    const next = createEffect(current.type, { ...current, ...patch, id: current.id });
+    if (!next || valuesEqual(next, current)) return state;
+    return commit(state, {
+      ...state.present,
+      effectStack: state.present.effectStack.map((effect) =>
+        effect.id === action.id ? next : effect,
+      ),
+    });
+  }
+
+  if (action.type === "effects/remove") {
+    const effectStack = (state.present.effectStack ?? []).filter(
+      (effect) => effect.id !== action.id,
+    );
+    if (effectStack.length === (state.present.effectStack ?? []).length) return state;
+    return commit(state, { ...state.present, effectStack });
+  }
+
+  if (action.type === "effects/move") {
+    const effectStack = [...(state.present.effectStack ?? [])];
+    const from = effectStack.findIndex((effect) => effect.id === action.id);
+    if (from < 0) return state;
+    const [effect] = effectStack.splice(from, 1);
+    const to = Math.max(0, Math.min(Number(action.toIndex) || 0, effectStack.length));
+    effectStack.splice(to, 0, effect);
+    if (effectStack.every((item, index) => item === state.present.effectStack[index])) {
+      return state;
+    }
+    return commit(state, { ...state.present, effectStack });
+  }
+
+  if (action.type === "effects/reset") {
+    const effectStack = normalizeEffectStack(action.effects ?? []);
+    if (valuesEqual(effectStack, state.present.effectStack ?? [])) return state;
+    return commit(state, { ...state.present, effectStack });
+  }
+
   if (action.type === "filters/update") {
     const patch = action.patch ?? {};
     if (!hasEffectivePatch(state.present.filters, patch)) {
@@ -351,7 +420,7 @@ export function editorReducer(state, action) {
   }
 
   if (action.type === "project/load") {
-    return createEditorState(action.project);
+    return createEditorState(normalizeProject(action.project));
   }
 
   if (action.type === "selection/set") {
