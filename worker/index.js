@@ -112,7 +112,12 @@ async function styleAdvice(request, env) {
       return json({ error: { code: "UPSTREAM_AUTH_FAILED", message: "AI provider authentication failed" } }, 502);
     }
     if (!upstream.ok) {
-      return json({ error: { code: "UPSTREAM_UNAVAILABLE", message: "AI provider is unavailable" } }, 502);
+      const code = upstream.status === 429
+        ? "UPSTREAM_RATE_LIMITED"
+        : upstream.status >= 500
+          ? "UPSTREAM_UNAVAILABLE"
+          : "UPSTREAM_ERROR";
+      return json({ error: { code, message: "AI provider request failed" } }, 502);
     }
     let payload;
     try {

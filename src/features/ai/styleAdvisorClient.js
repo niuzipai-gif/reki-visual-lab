@@ -76,10 +76,17 @@ export async function requestStyleAdvice(features, options = {}) {
       body: JSON.stringify({ features: sanitizeFeatureSummary(features) }),
       signal: controller.signal,
     });
-    if (!response?.ok) {
-      return errorResult({ code: `HTTP_${response?.status ?? 0}` });
+    let payload;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
     }
-    const payload = await response.json();
+    if (!response?.ok) {
+      return errorResult({
+        code: payload?.error?.code || `HTTP_${response?.status ?? 0}`,
+      });
+    }
     const advice = payload?.advice ?? payload;
     return validateStyleAdvice(advice);
   } catch (error) {
@@ -105,3 +112,6 @@ export async function getStyleAdvice(features, options = {}) {
 
 export { analyzeImageFeatures };
 export const fetchStyleAdvice = requestStyleAdvice;
+export const requestRemoteStyleAdvice = requestStyleAdvice;
+export const normalizeStyleAdvice = validateStyleAdvice;
+export const getAiStyleAdvice = getStyleAdvice;
