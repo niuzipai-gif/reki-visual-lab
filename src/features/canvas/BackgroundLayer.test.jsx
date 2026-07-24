@@ -12,6 +12,7 @@ const filters = {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("BackgroundLayer", () => {
@@ -545,5 +546,148 @@ describe("BackgroundLayer", () => {
         1,
       ),
     );
+  });
+
+  test("reports original decode failure after ImageBitmap and object-URL fallback fail", async () => {
+    const originalFile = new Blob(["invalid"], { type: "image/png" });
+    const createImageBitmap = vi.fn().mockRejectedValue(new Error("decode failed"));
+    const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue(
+      "blob:original-fallback",
+    );
+    const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const fallbackImage = { onload: null, onerror: null };
+    Object.defineProperty(fallbackImage, "src", {
+      configurable: true,
+      set() {
+        queueMicrotask(() => fallbackImage.onerror?.());
+      },
+    });
+    vi.stubGlobal("createImageBitmap", createImageBitmap);
+    vi.stubGlobal("Image", vi.fn(() => fallbackImage));
+
+    render(
+      <BackgroundLayer
+        image={{ source: { width: 1, height: 1 }, originalFile }}
+        canvasSize={{ width: 1, height: 1 }}
+        filters={{}}
+        showOriginal
+      />,
+    );
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "原图不可用，请重新导入",
+    );
+    expect(createImageBitmap).toHaveBeenCalledWith(originalFile, {
+      imageOrientation: "from-image",
+    });
+    expect(createObjectURL).toHaveBeenCalledWith(originalFile);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:original-fallback");
+  });
+
+  test("ignores a stale original decode when a newer source generation wins", async () => {
+    const firstFile = new Blob(["first"], { type: "image/png" });
+    const secondFile = new Blob(["second"], { type: "image/png" });
+    const firstOriginal = { width: 8, height: 4, name: "first-original" };
+    const secondOriginal = { width: 16, height: 8, name: "second-original" };
+    const decodeResolvers = [];
+    const drawImage = vi.fn();
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            decodeResolvers.push(resolve);
+          }),
+      ),
+    );
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      clearRect: vi.fn(),
+      drawImage,
+    });
+    vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+
+    const firstImage = {
+      source: { width: 1, height: 1, name: "working-first" },
+      originalFile: firstFile,
+    };
+    const secondImage = {
+      source: { width: 1, height: 1, name: "working-second" },
+      originalFile: secondFile,
+    };
+    const { rerender } = render(
+      <BackgroundLayer
+        image={firstImage}
+        canvasSize={{ width: 1, height: 1 }}
+        filters={{}}
+        showOriginal
+      />,
+    );
+    await waitFor(() => expect(decodeResolvers).toHaveLength(1));
+
+    rerender(
+      <BackgroundLayer
+        image={secondImage}
+        canvasSize={{ width: 1, height: 1 }}
+        filters={{}}
+        showOriginal
+      />,
+    );
+    await waitFor(() => expect(decodeResolvers).toHaveLength(2));
+
+    decodeResolvers[0](firstOriginal);
+    await Promise.resolve();
+    expect(drawImage).not.toHaveBeenCalledWith(firstOriginal, 0, 0, 1, 1);
+
+    decodeResolvers[1](secondOriginal);
+    await waitFor(() =>
+      expect(drawImage).toHaveBeenCalledWith(secondOriginal, 0, 0, 1, 1),
+    );
+  });
+
+  test("cancels a queued frame when comparison mode changes", async () => {
+    const frames = [];
+    const cancelAnimationFrame = vi.fn();
+    const workingSource = { width: 1, height: 1, name: "working" };
+    const originalSource = { width: 1, height: 1, name: "original" };
+    const drawImage = vi.fn();
+    vi.stubGlobal("requestAnimationFrame", (callback) => {
+      const handle = frames.length + 1;
+      frames.push({ handle, callback });
+      return handle;
+    });
+    vi.stubGlobal("cancelAnimationFrame", cancelAnimationFrame);
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      clearRect: vi.fn(),
+      drawImage,
+    });
+
+    const image = { source: workingSource, originalFile: originalSource };
+    const { rerender } = render(
+      <BackgroundLayer
+        image={image}
+        canvasSize={{ width: 1, height: 1 }}
+        filters={{}}
+      />,
+    );
+    await waitFor(() => expect(frames).toHaveLength(1));
+
+    rerender(
+      <BackgroundLayer
+        image={image}
+        canvasSize={{ width: 1, height: 1 }}
+        filters={{}}
+        showOriginal
+      />,
+    );
+    await waitFor(() => expect(frames).toHaveLength(2));
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(1);
+
+    frames[0].callback(0);
+    expect(drawImage).not.toHaveBeenCalled();
+    frames[1].callback(0);
+    expect(drawImage).toHaveBeenCalledWith(originalSource, 0, 0, 1, 1);
   });
 });
