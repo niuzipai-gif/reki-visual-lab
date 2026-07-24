@@ -113,6 +113,68 @@ describe("editor history", () => {
     expect(applied.past).toHaveLength(1);
     expect(undone.present).toEqual(start.present);
   });
+
+  test("rejects an unvalidated style patch without changing editor state", () => {
+    const start = createEditorState();
+    const action = {
+      type: "style/apply",
+      patch: {
+        filters: { contrast: 99, executable: "alert(1)" },
+        layers: [
+          {
+            id: "unsafe",
+            type: "script",
+            points: [{ x: 0.2, y: 0.3 }],
+            style: { lineColor: "javascript:alert(1)" },
+          },
+        ],
+      },
+    };
+
+    expect(editorReducer(start, action)).toBe(start);
+    expect(
+      editorReducer(start, {
+        type: "style/apply",
+        recommendation: {
+          id: "safe-rec",
+          name: "Safe",
+          filters: { contrast: 1.1 },
+          annotationType: "path",
+          density: 60,
+          labelMode: "single",
+        },
+        filters: { contrast: 99, hacked: true },
+      }),
+    ).toBe(start);
+  });
+
+  test("clones accepted style patches before committing them", () => {
+    const layer = createAnnotation("path", [{ x: 0.1, y: 0.2 }], { id: "safe" });
+    const patch = { filters: { contrast: 1.1 }, layers: [layer] };
+    const applied = editorReducer(createEditorState(), {
+      type: "style/apply",
+      patch,
+    });
+
+    patch.filters.contrast = 1.8;
+    patch.layers[0].points[0].x = 0.9;
+    expect(applied.present.filters.contrast).toBe(1.1);
+    expect(applied.present.layers[0].points[0].x).toBe(0.1);
+  });
+
+  test("clones supplied recommendation layers before committing them", () => {
+    const layer = createAnnotation("path", [{ x: 0.1, y: 0.2 }], { id: "recommendation-layer" });
+    const recommendation = { filters: { contrast: 1.1 }, layers: [layer] };
+    const applied = editorReducer(createEditorState(), {
+      type: "style/apply",
+      recommendation,
+    });
+
+    recommendation.filters.contrast = 1.8;
+    recommendation.layers[0].points[0].x = 0.9;
+    expect(applied.present.filters.contrast).toBe(1.1);
+    expect(applied.present.layers[0].points[0].x).toBe(0.1);
+  });
 });
 
 describe("layer actions", () => {

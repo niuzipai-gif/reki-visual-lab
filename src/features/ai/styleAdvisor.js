@@ -16,8 +16,21 @@ const FILTER_RANGES = Object.freeze({
 });
 
 function finite(value, fallback = 0) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
+  try {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function numberValue(value) {
+  try {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  } catch {
+    return null;
+  }
 }
 
 function clamp(value, minimum, maximum) {
@@ -46,7 +59,15 @@ function subjectHints(input, options = {}) {
   return [
     ...new Set(
       values
-        .map((item) => (typeof item === "string" ? item.trim() : item?.type))
+        .map((item) =>
+          typeof item === "string"
+            ? item
+            : item && typeof item === "object" && typeof item.type === "string"
+              ? item.type
+              : null,
+        )
+        .filter((item) => typeof item === "string")
+        .map((item) => item.trim().slice(0, 40))
         .filter(Boolean)
         .slice(0, 8),
     ),
@@ -119,12 +140,104 @@ function validFilterPatch(filters) {
   const output = {};
   for (const [key, value] of Object.entries(filters)) {
     const range = FILTER_RANGES[key];
-    if (!range || !Number.isFinite(Number(value))) return null;
-    const number = Number(value);
+    const number = numberValue(value);
+    if (!range || number === null) return null;
     if (number < range[0] || number > range[1]) return null;
     output[key] = number;
   }
   return Object.keys(output).length ? output : null;
+}
+
+const SAFE_STYLE_KEYS = Object.freeze({
+  lineColor: "color",
+  textColor: "color",
+  anchorColor: "color",
+  lineWidth: [0, 20],
+  fontSize: [6, 120],
+  anchorSize: [0, 50],
+  opacity: [0, 1],
+  curveTension: [-1, 1],
+  dash: [0, 100],
+});
+
+function safeColor(value) {
+  return typeof value === "string" && /^(#[\da-f]{3,8}|rgba?\([\d\s.,%()-]+\))$/i.test(value)
+    ? value
+    : null;
+}
+
+function sanitizeLayerStyle(style) {
+  if (style === undefined) return undefined;
+  if (!style || typeof style !== "object" || Array.isArray(style)) return null;
+  const output = {};
+  for (const [key, value] of Object.entries(style)) {
+    const rule = SAFE_STYLE_KEYS[key];
+    if (!rule) continue;
+    if (rule === "color") {
+      const color = safeColor(value);
+      if (!color) return null;
+      output[key] = color;
+      continue;
+    }
+    if (key === "dash") {
+      if (!Array.isArray(value) || value.length > 16 || value.some((item) => numberValue(item) === null || numberValue(item) < 0 || numberValue(item) > 100)) return null;
+      output[key] = value.map(numberValue);
+      continue;
+    }
+    const number = numberValue(value);
+    if (number === null || number < rule[0] || number > rule[1]) return null;
+    output[key] = number;
+  }
+  return output;
+}
+
+function sanitizeStyleLayers(layers) {
+  if (!Array.isArray(layers) || layers.length > 32) return null;
+  const ids = new Set();
+  const output = [];
+  for (const layer of layers) {
+    if (!layer || typeof layer !== "object" || Array.isArray(layer)) return null;
+    const id = safeText(layer.id, "", 80);
+    const type = layer.type;
+    if (!id || ids.has(id) || !ALLOWED_ANNOTATION_TYPES.includes(type)) return null;
+    if (!Array.isArray(layer.points) || layer.points.length > 500) return null;
+    const points = layer.points.map((point) => {
+      const x = numberValue(point?.x);
+      const y = numberValue(point?.y);
+      if (!point || typeof point !== "object" || x === null || y === null || x < 0 || x > 1 || y < 0 || y > 1) return null;
+      const outputPoint = { x, y };
+      const confidence = numberValue(point.confidence);
+      if (point.confidence !== undefined && confidence !== null) outputPoint.confidence = clamp(confidence, 0, 1);
+      return outputPoint;
+    });
+    if (points.some((point) => point === null)) return null;
+    const style = sanitizeLayerStyle(layer.style);
+    if (style === null) return null;
+    ids.add(id);
+    output.push({
+      id,
+      type,
+      name: safeText(layer.name, type, 100),
+      label: safeText(layer.label, "label_01", 100),
+      value:
+        layer.value === null || layer.value === undefined
+          ? null
+          : numberValue(layer.value),
+      points,
+      visible: layer.visible !== false,
+      locked: layer.locked === true,
+      ...(style ? { style } : {}),
+    });
+  }
+  return output;
+}
+
+export function sanitizeEditorPatch(patch) {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) return null;
+  const filters = validFilterPatch(patch.filters);
+  const layers = sanitizeStyleLayers(patch.layers);
+  if (!filters || !layers) return null;
+  return { filters, layers };
 }
 
 function safeText(value, fallback, maximum) {
@@ -229,11 +342,12 @@ export function styleToEditorPatch(recommendation, options = {}) {
   const safe = validated.value;
   const preset = findStylePreset(safe.id) ?? safe;
   const layers = Array.isArray(candidate.layers)
-    ? structuredClone(candidate.layers)
+    ? sanitizeStyleLayers(candidate.layers)
     : createStyleLayers(preset, {
         seed,
         landmarks: features.landmarks ?? context.landmarks ?? [],
       });
+  if (!layers) return { filters: {}, layers: [] };
   return {
     filters: structuredClone(safe.filters),
     layers: structuredClone(layers),

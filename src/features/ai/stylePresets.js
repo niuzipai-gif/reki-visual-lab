@@ -41,12 +41,9 @@ function layerId(presetId, seed, index) {
   return `ai-style-${presetId}-${Number(seed) >>> 0}-${index}`;
 }
 
-function createLayerFactory(preset, seed, landmarks) {
+function createLayerFactory(preset, seed) {
   const random = seeded(seed);
   let index = 0;
-  const sourcePoints = normalizeLandmarks(landmarks);
-  const choose = (fallbackX, fallbackY, offset = 0) =>
-    sourcePoints[offset % sourcePoints.length] ?? point(random, fallbackX, fallbackY);
 
   return (type, points, overrides = {}) => {
     index += 1;
@@ -60,23 +57,21 @@ function createLayerFactory(preset, seed, landmarks) {
 }
 
 function createPresetLayers(preset, { seed = 1, landmarks = [] } = {}) {
-  const create = createLayerFactory(preset, seed, landmarks);
+  const create = createLayerFactory(preset, seed);
   const random = seeded(seed);
-  const choose = (fallbackX, fallbackY, offset = 0) => {
-    const source = normalizeLandmarks(landmarks);
-    return source[offset % source.length] ?? point(random, fallbackX, fallbackY);
-  };
+  const source = normalizeLandmarks(landmarks);
+  const choose = (fallbackX, fallbackY, offset = 0) =>
+    source[offset % source.length] ?? point(random, fallbackX, fallbackY);
   const type = ALLOWED_ANNOTATION_TYPES.includes(preset.annotationType)
     ? preset.annotationType
     : "path";
   let layers;
 
-  if (preset.id === "silver-mist-portrait" || type === "orbit") {
+  if (preset.id === "silver-mist-portrait") {
     layers = [
       create("orbit", [choose(0.5, 0.46, 0), choose(0.78, 0.46, 1)]),
-      create("label", [choose(0.68, 0.32, 2)], { label: "SILVER_MIST" }),
     ];
-  } else if (preset.id === "mechanical-nodes" || type === "nodeCloud") {
+  } else if (preset.id === "mechanical-nodes") {
     layers = [
       create("nodeCloud", [
         choose(0.22, 0.28, 0),
@@ -84,23 +79,34 @@ function createPresetLayers(preset, { seed = 1, landmarks = [] } = {}) {
         choose(0.78, 0.68, 2),
       ]),
       create("box", [choose(0.2, 0.2, 1), choose(0.78, 0.8, 2)]),
-      create("label", [choose(0.72, 0.78, 0)], { label: "MECH_NODE" }),
     ];
+  } else if (type === "label") {
+    layers = [create("label", [choose(0.52, 0.42, 0)], { label: preset.name ?? "STYLE" })];
   } else {
-    layers = [
-      create("path", [
-        choose(0.14, 0.68, 0),
-        choose(0.5, 0.34, 1),
-        choose(0.84, 0.62, 2),
-      ]),
-      create("label", [choose(0.74, 0.28, 1)], { label: "REDLINE_01" }),
-    ];
+    const geometry = {
+      box: [choose(0.2, 0.2, 0), choose(0.78, 0.8, 1)],
+      leader: [choose(0.2, 0.7, 0), choose(0.8, 0.3, 1)],
+      randomNodes: [choose(0.2, 0.25, 0), choose(0.5, 0.5, 1), choose(0.8, 0.7, 2)],
+      stackBox: [choose(0.16, 0.2, 0), choose(0.7, 0.76, 1)],
+      orbit: [choose(0.5, 0.46, 0), choose(0.78, 0.46, 1)],
+      nodeCloud: [choose(0.22, 0.28, 0), choose(0.5, 0.52, 1), choose(0.78, 0.68, 2)],
+      path: [choose(0.14, 0.68, 0), choose(0.5, 0.34, 1), choose(0.84, 0.62, 2)],
+    };
+    layers = [create(type, geometry[type] ?? geometry.path)];
+    if (type === "nodeCloud") {
+      layers.push(create("box", [choose(0.2, 0.2, 1), choose(0.78, 0.8, 2)]));
+    }
   }
 
-  if (preset.labelMode === "none") {
-    return layers.filter(({ type: layerType }) => layerType !== "label");
-  }
-  return layers;
+  if (type === "label") return layers;
+  const labels = layers.map((layer, index) =>
+    create("label", [layer.points[0] ?? choose(0.5, 0.5, index)], {
+      label: `${String(preset.name ?? "STYLE").slice(0, 28)}_${String(index + 1).padStart(2, "0")}`,
+    }),
+  );
+  if (preset.labelMode === "none") return layers;
+  if (preset.labelMode === "per-layer") return layers.flatMap((layer, index) => [layer, labels[index]]);
+  return [...layers, labels[0]];
 }
 
 export const STYLE_PRESETS = Object.freeze([

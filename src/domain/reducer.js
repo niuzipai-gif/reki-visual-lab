@@ -1,5 +1,8 @@
 import { createProject } from "./project.js";
-import { styleToEditorPatch } from "../features/ai/styleAdvisor.js";
+import {
+  sanitizeEditorPatch,
+  styleToEditorPatch,
+} from "../features/ai/styleAdvisor.js";
 
 export const MAX_HISTORY_ENTRIES = 100;
 
@@ -198,14 +201,23 @@ export function editorReducer(state, action) {
   if (action.type === "style/apply") {
     const recommendation = action.recommendation ?? action.patch ?? {};
     const generatedPatch = Array.isArray(recommendation.layers)
-      ? {
-          filters: recommendation.filters ?? {},
-          layers: structuredClone(recommendation.layers),
-        }
-      : styleToEditorPatch(recommendation, {
-          features: action.features,
-          seed: action.seed,
-        });
+      ? sanitizeEditorPatch({
+          filters: recommendation.filters,
+          layers: recommendation.layers,
+        })
+      : sanitizeEditorPatch(
+          styleToEditorPatch(recommendation, {
+            features: action.features,
+            seed: action.seed,
+          }),
+        );
+    if (!generatedPatch) return state;
+    let appliedFilters = generatedPatch.filters;
+    if (action.filters !== undefined) {
+      const filterPatch = sanitizeEditorPatch({ filters: action.filters, layers: [] });
+      if (!filterPatch) return state;
+      appliedFilters = filterPatch.filters;
+    }
     const generatedLayers = (generatedPatch.layers ?? []).map((layer) => ({
       ...structuredClone(layer),
       source: "ai-style",
@@ -218,7 +230,7 @@ export function editorReducer(state, action) {
     });
     const filters = {
       ...state.present.filters,
-      ...(action.filters ?? generatedPatch.filters ?? {}),
+      ...appliedFilters,
     };
     if (!layersToAdd.length && valuesEqual(filters, state.present.filters)) {
       return state;
