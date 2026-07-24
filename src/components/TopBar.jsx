@@ -37,7 +37,7 @@ export function TopBar({
         <button type="button" className="icon-button" onClick={onRedo} disabled={!canRedo} aria-label="重做">
           <Redo2 size={17} />
         </button>
-        <button type="button" className="comparison-button" onClick={onToggleBackground} disabled={!canCompare} aria-pressed={!backgroundVisible}>
+        <button type="button" className="comparison-button" data-testid="comparison-toggle" onClick={onToggleBackground} disabled={!canCompare} aria-pressed={!backgroundVisible}>
           {backgroundVisible ? <Eye size={16} /> : <EyeOff size={16} />}
           <span>{backgroundVisible ? "原图对比" : "显示原图"}</span>
         </button>

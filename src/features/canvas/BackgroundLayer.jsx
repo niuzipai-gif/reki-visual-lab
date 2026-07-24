@@ -47,6 +47,87 @@ function imageResource(image) {
   return { kind: "drawable", source };
 }
 
+function isBlobLike(value) {
+  return (
+    value instanceof Blob ||
+    (value &&
+      typeof value === "object" &&
+      Number.isFinite(value.size) &&
+      typeof value.type === "string" &&
+      typeof value.slice === "function")
+  );
+}
+
+function directOriginalResource(value) {
+  if (typeof value === "string") {
+    return { kind: "url", source: value, owned: false };
+  }
+  if (!value || isBlobLike(value)) return null;
+
+  if (typeof value.url === "string") {
+    return { kind: "url", source: value.url, owned: false };
+  }
+
+  const wrapped = value.source ?? value.element ?? value.bitmap ?? value.image;
+  if (wrapped && wrapped !== value) return directOriginalResource(wrapped);
+
+  if (typeof value === "object" || typeof value === "function") {
+    return { kind: "drawable", source: value, owned: false };
+  }
+  return null;
+}
+
+function disposeOriginalResource(resource) {
+  if (!resource?.owned) return;
+  resource.dispose?.();
+}
+
+async function decodeOriginalResource(value) {
+  if (!isBlobLike(value)) return directOriginalResource(value);
+
+  if (typeof globalThis.createImageBitmap === "function") {
+    try {
+      const bitmap = await globalThis.createImageBitmap(value, {
+        imageOrientation: "from-image",
+      });
+      return {
+        kind: "drawable",
+        source: bitmap,
+        owned: true,
+        dispose: () => bitmap.close?.(),
+      };
+    } catch {
+      // Fall through to an object URL when ImageBitmap decoding is unavailable.
+    }
+  }
+
+  if (
+    typeof URL?.createObjectURL !== "function" ||
+    typeof globalThis.Image !== "function"
+  ) {
+    throw new Error("无法读取原图");
+  }
+
+  const url = URL.createObjectURL(value);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const candidate = new Image();
+      candidate.onload = () => resolve(candidate);
+      candidate.onerror = () => reject(new Error("无法读取原图"));
+      candidate.src = url;
+    });
+    return {
+      kind: "drawable",
+      source: image,
+      owned: true,
+      dispose: () => URL.revokeObjectURL(url),
+    };
+  } catch (error) {
+    URL.revokeObjectURL(url);
+    throw error;
+  }
+}
+
 export function BackgroundLayer({
   image,
   canvasSize,
@@ -56,25 +137,112 @@ export function BackgroundLayer({
 }) {
   const canvasRef = useRef(null);
   const sourceCacheRef = useRef(null);
+  const sourceGenerationRef = useRef(0);
+  const scheduledFrameRef = useRef(null);
+  const originalResourceRef = useRef(null);
   const resource = useMemo(() => imageResource(image), [image]);
   const isDemo = image?.demo === true;
   const [urlSource, setUrlSource] = useState(null);
+  const [originalResource, setOriginalResource] = useState(null);
   const [renderError, setRenderError] = useState(null);
   const [canvasReady, setCanvasReady] = useState(false);
   const dimensions = previewSize(canvasSize.width, canvasSize.height);
+  const activeResource = showOriginal ? originalResource : resource;
+  const displayResource = activeResource ?? resource;
+
+  function replaceOriginalResource(nextResource) {
+    const previous = originalResourceRef.current;
+    if (previous !== nextResource) disposeOriginalResource(previous);
+    originalResourceRef.current = nextResource;
+    setOriginalResource(nextResource);
+  }
 
   useEffect(() => {
     sourceCacheRef.current = null;
-    setCanvasReady(false);
+    if (!showOriginal) setCanvasReady(false);
     setRenderError(null);
-  }, [resource]);
+  }, [resource, showOriginal]);
+
+  useEffect(() => {
+    const generation = ++sourceGenerationRef.current;
+    sourceCacheRef.current = null;
+    const scheduled = scheduledFrameRef.current;
+    if (scheduled) {
+      scheduled.cancel(scheduled.handle);
+      scheduledFrameRef.current = null;
+    }
+
+    let cancelled = false;
+    replaceOriginalResource(null);
+    if (!showOriginal) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const originalFile = image?.originalFile;
+    if (originalFile == null) {
+      replaceOriginalResource(resource);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const direct = directOriginalResource(originalFile);
+    if (direct) {
+      replaceOriginalResource(direct);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void decodeOriginalResource(originalFile)
+      .then((decoded) => {
+        if (
+          cancelled ||
+          generation !== sourceGenerationRef.current
+        ) {
+          disposeOriginalResource(decoded);
+          return;
+        }
+        replaceOriginalResource(decoded);
+      })
+      .catch(() => {
+        if (!cancelled && generation === sourceGenerationRef.current) {
+          setRenderError("原图不可用，请重新导入");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [image?.originalFile, resource, showOriginal]);
+
+  useEffect(() => {
+    return () => {
+      const scheduled = scheduledFrameRef.current;
+      if (scheduled) scheduled.cancel(scheduled.handle);
+      disposeOriginalResource(originalResourceRef.current);
+      originalResourceRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      displayResource?.kind !== "url" ||
+      urlSource?.url === displayResource.source
+    ) {
+      return;
+    }
+    setUrlSource(null);
+  }, [displayResource, urlSource?.url]);
 
   useEffect(() => {
     const source =
-      resource?.kind === "drawable"
-        ? resource.source
-        : resource?.kind === "url"
-          ? urlSource?.url === resource.source
+      activeResource?.kind === "drawable"
+        ? activeResource.source
+        : activeResource?.kind === "url"
+          ? urlSource?.url === activeResource.source
             ? urlSource.source
             : null
           : null;
@@ -89,9 +257,11 @@ export function BackgroundLayer({
     const cancel =
       globalThis.cancelAnimationFrame ??
       ((handle) => clearTimeout(handle));
+    const generation = sourceGenerationRef.current;
 
     const handle = schedule(() => {
-      if (cancelled) return;
+      scheduledFrameRef.current = null;
+      if (cancelled || generation !== sourceGenerationRef.current) return;
       try {
         const context = canvas.getContext("2d", {
           willReadFrequently: true,
@@ -103,6 +273,7 @@ export function BackgroundLayer({
         if (
           active &&
           cached?.source === source &&
+          cached.showOriginal === showOriginal &&
           cached.width === dimensions.width &&
           cached.height === dimensions.height &&
           cached.pixels
@@ -125,10 +296,12 @@ export function BackgroundLayer({
           dimensions.width,
           dimensions.height,
         );
+        if (generation !== sourceGenerationRef.current) return;
         onImageSourceReady?.(source);
         setCanvasReady(true);
         sourceCacheRef.current = {
           source,
+          showOriginal,
           width: dimensions.width,
           height: dimensions.height,
           pixels: null,
@@ -152,21 +325,30 @@ export function BackgroundLayer({
           setRenderError("无法应用像素效果，已保留原图");
         }
       } catch {
-        setCanvasReady(false);
-        setRenderError("无法绘制底图，已保留原图");
+        if (generation !== sourceGenerationRef.current) return;
+        if (showOriginal) {
+          setRenderError("原图不可用，请重新导入");
+        } else {
+          setCanvasReady(false);
+          setRenderError("无法绘制底图，已保留原图");
+        }
       }
     });
+    scheduledFrameRef.current = { handle, cancel };
 
     return () => {
       cancelled = true;
       cancel(handle);
+      if (scheduledFrameRef.current?.handle === handle) {
+        scheduledFrameRef.current = null;
+      }
     };
   }, [
     dimensions.height,
     dimensions.width,
     filters,
     showOriginal,
-    resource,
+    activeResource,
     urlSource,
     onImageSourceReady,
   ]);
@@ -180,20 +362,26 @@ export function BackgroundLayer({
       data-original={String(showOriginal)}
       style={{ filter: showOriginal ? "" : previewFilter(filters) }}
     >
-      {resource?.kind === "url" ? (
+      {displayResource?.kind === "url" ? (
         <img
           data-testid="background-image-source"
           className={canvasReady ? "background-source hidden" : "background-source"}
-          src={resource.source}
+          src={displayResource.source}
           alt=""
           draggable={false}
           onLoad={(event) =>
             setUrlSource({
-              url: resource.source,
+              url: displayResource.source,
               source: event.currentTarget,
             })
           }
-          onError={() => setRenderError("无法加载底图，请重新选择照片")}
+          onError={() =>
+            setRenderError(
+              showOriginal
+                ? "原图不可用，请重新导入"
+                : "无法加载底图，请重新选择照片",
+            )
+          }
         />
       ) : null}
       {resource ? (

@@ -965,6 +965,70 @@ describe("EditorCanvas", () => {
     }
   });
 
+  test("switches to the saved original source without removing annotations", async () => {
+    const workingSource = { width: 800, height: 1000, name: "working-preview" };
+    const originalSource = { width: 1600, height: 2000, name: "original-file" };
+    const originalFile = new Blob(["original"], { type: "image/png" });
+    const drawImage = vi.fn();
+    vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(originalSource));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      clearRect: vi.fn(),
+      drawImage,
+      getImageData: vi.fn(
+        () => new ImageData(new Uint8ClampedArray([120, 120, 120, 255]), 1, 1),
+      ),
+      putImageData: vi.fn(),
+    });
+    vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+
+    const annotation = layer("label", "persisted-marker", [{ x: 0.25, y: 0.5 }]);
+    const project = projectWith({
+      image: { source: workingSource, originalFile },
+      filters: { threshold: 128 },
+      layers: [annotation],
+    });
+    const { rerender } = render(
+      <EditorCanvas
+        project={project}
+        activeTool="select"
+        selectedLayerId="persisted-marker"
+        onSelectLayer={vi.fn()}
+        onCreateLayer={vi.fn()}
+        onChangeLayer={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(drawImage).toHaveBeenCalledWith(workingSource, 0, 0, 1080, 1350),
+    );
+
+    drawImage.mockClear();
+    rerender(
+      <EditorCanvas
+        project={{
+          ...project,
+          canvas: { ...project.canvas, backgroundVisible: false },
+        }}
+        activeTool="select"
+        selectedLayerId="persisted-marker"
+        onSelectLayer={vi.fn()}
+        onCreateLayer={vi.fn()}
+        onChangeLayer={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(drawImage).toHaveBeenCalledWith(originalSource, 0, 0, 1080, 1350),
+    );
+    expect(screen.getByTestId("canvas-background")).toHaveAttribute(
+      "data-original",
+      "true",
+    );
+    expect(document.querySelector('[data-layer-id="persisted-marker"]')).toBeInTheDocument();
+  });
+
   test("routes URL and demo backgrounds without drawing either through canvas", () => {
     const drawImage = vi.fn();
     const getContext = vi

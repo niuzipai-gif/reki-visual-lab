@@ -446,4 +446,104 @@ describe("BackgroundLayer", () => {
     );
     expect(getImageData).not.toHaveBeenCalled();
   });
+
+  test("redraws from originalFile and restores the working preview after toggling", async () => {
+    const workingSource = { width: 2, height: 1, name: "working-preview" };
+    const originalSource = { width: 8, height: 4, name: "original-file" };
+    const originalFile = new Blob(["original"], { type: "image/png" });
+    const drawImage = vi.fn();
+    vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(originalSource));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      clearRect: vi.fn(),
+      drawImage,
+      getImageData: vi.fn(
+        () => new ImageData(new Uint8ClampedArray([120, 120, 120, 255]), 1, 1),
+      ),
+      putImageData: vi.fn(),
+    });
+    vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+
+    const image = { source: workingSource, originalFile };
+    const { rerender } = render(
+      <BackgroundLayer
+        image={image}
+        canvasSize={{ width: 1, height: 1 }}
+        filters={{ threshold: 128 }}
+      />,
+    );
+    await waitFor(() =>
+      expect(drawImage).toHaveBeenCalledWith(workingSource, 0, 0, 1, 1),
+    );
+
+    drawImage.mockClear();
+    rerender(
+      <BackgroundLayer
+        image={image}
+        canvasSize={{ width: 1, height: 1 }}
+        filters={{ threshold: 128 }}
+        showOriginal
+      />,
+    );
+    await waitFor(() =>
+      expect(drawImage).toHaveBeenCalledWith(originalSource, 0, 0, 1, 1),
+    );
+
+    drawImage.mockClear();
+    rerender(
+      <BackgroundLayer
+        image={image}
+        canvasSize={{ width: 1, height: 1 }}
+        filters={{ threshold: 128 }}
+      />,
+    );
+    await waitFor(() =>
+      expect(drawImage).toHaveBeenCalledWith(workingSource, 0, 0, 1, 1),
+    );
+  });
+
+  test.each([
+    ["URL", "blob:original-url"],
+    ["ImageBitmap", { width: 8, height: 4, name: "original-bitmap" }],
+    ["HTMLImageElement", document.createElement("img")],
+  ])("uses an %s originalFile instead of the processed source", async (_name, originalFile) => {
+    const workingSource = { width: 2, height: 1, name: "working-preview" };
+    const drawImage = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      clearRect: vi.fn(),
+      drawImage,
+    });
+    vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+
+    render(
+      <BackgroundLayer
+        image={{ source: workingSource, originalFile }}
+        canvasSize={{ width: 1, height: 1 }}
+        filters={{}}
+        showOriginal
+      />,
+    );
+
+    if (typeof originalFile === "string") {
+      const source = screen.getByTestId("background-image-source");
+      fireEvent.load(source);
+    }
+
+    await waitFor(() =>
+      expect(drawImage).toHaveBeenCalledWith(
+        typeof originalFile === "string"
+          ? screen.getByTestId("background-image-source")
+          : originalFile,
+        0,
+        0,
+        1,
+        1,
+      ),
+    );
+  });
 });
