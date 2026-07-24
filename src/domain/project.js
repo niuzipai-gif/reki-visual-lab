@@ -1,3 +1,9 @@
+import {
+  legacyFiltersToEffectStack,
+  normalizeEffectStack,
+} from "../features/filters/effectStack.js";
+import { DEFAULT_ANIMATION, sanitizeAnimation } from "../features/motion/animationRuntime.js";
+
 export const DEFAULT_STYLE = Object.freeze({
   lineColor: "#e5484d",
   textColor: "#fff7ed",
@@ -55,7 +61,12 @@ export function normalizeProject(project) {
     },
     filters: {},
     effectStack,
-    layers: Array.isArray(project.layers) ? project.layers : [],
+    layers: Array.isArray(project.layers)
+      ? project.layers.map((layer) => ({
+          ...layer,
+          animation: sanitizeAnimation(layer?.animation),
+        }))
+      : [],
   };
 }
 
@@ -70,6 +81,7 @@ export function createAnnotation(type, points = [], overrides = {}) {
     label: "label_01",
     value: null,
     style: { ...DEFAULT_STYLE, dash: [...DEFAULT_STYLE.dash] },
+    animation: { ...DEFAULT_ANIMATION },
     ...overrides,
   };
 }

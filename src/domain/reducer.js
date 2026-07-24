@@ -10,6 +10,7 @@ import {
   legacyFiltersToEffectStack,
   normalizeEffectStack,
 } from "../features/filters/effectStack.js";
+import { sanitizeAnimation } from "../features/motion/animationRuntime.js";
 
 export const MAX_HISTORY_ENTRIES = 100;
 
@@ -245,6 +246,20 @@ export function editorReducer(state, action) {
       ...state.present,
       layers: state.present.layers.map((layer) =>
         layer.id === action.id ? { ...layer, ...patch } : layer,
+      ),
+    });
+  }
+
+  if (action.type === "layer/animation") {
+    const source = state.present.layers.find((layer) => layer.id === action.id);
+    if (!source) return state;
+    const animation = sanitizeAnimation(action.animation);
+    if (valuesEqual(source.animation, animation)) return state;
+
+    return commit(state, {
+      ...state.present,
+      layers: state.present.layers.map((layer) =>
+        layer.id === action.id ? { ...layer, animation } : layer,
       ),
     });
   }

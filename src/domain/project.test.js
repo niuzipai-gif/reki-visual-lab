@@ -5,6 +5,7 @@ import {
   createProject,
   normalizeProject,
 } from "./project.js";
+import { DEFAULT_ANIMATION } from "../features/motion/animationRuntime.js";
 
 describe("project factories", () => {
   test("creates a versioned local project with the requested canvas size", () => {
@@ -90,6 +91,7 @@ describe("project factories", () => {
         opacity: 1,
         curveTension: 0,
       },
+      animation: DEFAULT_ANIMATION,
     });
     expect(item.points).toHaveLength(2);
     expect(item.name).toMatch(/^path_\d{4}$/);
@@ -104,6 +106,30 @@ describe("project factories", () => {
 
     expect(anotherDash).toEqual([]);
     expect(defaultDash).toEqual([]);
+  });
+
+  test("sanitizes persisted layer animation config without mutating the saved project", () => {
+    const legacy = {
+      ...createProject(),
+      layers: [
+        createAnnotation("box", [], {
+          animation: { type: "glitch", durationMs: 20, delayMs: 999999, amplitude: 3 },
+        }),
+      ],
+    };
+
+    const normalized = normalizeProject(legacy);
+
+    expect(normalized.layers[0].animation).toEqual({
+      type: "glitch",
+      durationMs: 200,
+      delayMs: 6000,
+      loop: true,
+      amplitude: 1,
+      direction: "normal",
+    });
+    expect(normalized.layers[0]).not.toBe(legacy.layers[0]);
+    expect(legacy.layers[0].animation.durationMs).toBe(20);
   });
 
   test("keeps the exported defaults frozen and applies annotation overrides last", () => {

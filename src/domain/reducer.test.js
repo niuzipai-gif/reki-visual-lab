@@ -204,6 +204,44 @@ describe("editor history", () => {
 });
 
 describe("layer actions", () => {
+  test("updates a layer animation as one sanitized undoable commit", () => {
+    const layer = createAnnotation("path", [], { id: "animated-layer" });
+    const start = addLayer(createEditorState(), layer);
+    const animated = editorReducer(start, {
+      type: "layer/animation",
+      id: layer.id,
+      animation: { type: "orbit", durationMs: 20, delayMs: 12, loop: false, amplitude: 4 },
+    });
+    const undone = editorReducer(animated, { type: "history/undo" });
+
+    expect(animated.present.layers[0].animation).toEqual({
+      type: "orbit",
+      durationMs: 200,
+      delayMs: 12,
+      loop: false,
+      amplitude: 1,
+      direction: "normal",
+    });
+    expect(animated.past).toHaveLength(start.past.length + 1);
+    expect(undone.present.layers[0].animation).toEqual(layer.animation);
+  });
+
+  test("ignores animation changes for missing layers and equivalent configs", () => {
+    const layer = createAnnotation("box", [], { id: "static-layer" });
+    const state = addLayer(createEditorState(), layer);
+
+    expect(editorReducer(state, {
+      type: "layer/animation",
+      id: "missing",
+      animation: { type: "fade" },
+    })).toBe(state);
+    expect(editorReducer(state, {
+      type: "layer/animation",
+      id: layer.id,
+      animation: layer.animation,
+    })).toBe(state);
+  });
+
   test("updates and removes a layer through history commits", () => {
     const layer = createAnnotation("label", [], { name: "before" });
     const added = addLayer(createEditorState(), layer);
