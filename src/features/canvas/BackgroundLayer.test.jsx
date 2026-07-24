@@ -2,6 +2,7 @@ import React, { StrictMode } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { BackgroundLayer } from "./BackgroundLayer.jsx";
+import { analyzeImageFeatures } from "../ai/styleAdvisor.js";
 
 const canvasSize = { width: 1080, height: 1350 };
 const filters = {
@@ -85,6 +86,38 @@ describe("BackgroundLayer", () => {
     await waitFor(() =>
       expect(onImageSourceReady).toHaveBeenCalledWith(drawable),
     );
+  });
+
+  test("passes a bounded local pixel sample for nonzero style feature analysis", async () => {
+    const drawable = { width: 800, height: 1000 };
+    const onImageSourceReady = vi.fn();
+    const sample = {
+      width: 64,
+      height: 64,
+      data: new Uint8ClampedArray(Array.from({ length: 64 * 64 * 4 }, (_, index) => index % 4 === 3 ? 255 : index % 4 === 0 ? 220 : 30)),
+    };
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      getImageData: vi.fn(() => sample),
+    });
+
+    render(
+      <BackgroundLayer
+        image={drawable}
+        canvasSize={canvasSize}
+        filters={{}}
+        onImageSourceReady={onImageSourceReady}
+      />,
+    );
+
+    await waitFor(() => expect(onImageSourceReady).toHaveBeenCalledWith(
+      drawable,
+      expect.objectContaining({ imageData: sample, width: 800, height: 1000 }),
+    ));
+    const features = analyzeImageFeatures(onImageSourceReady.mock.calls[0][1]);
+    expect(features.saturation).toBeGreaterThan(0);
+    expect(features.luminance).toBeGreaterThan(0);
   });
 
   test("keeps the visible canvas mounted when drawImage rejects a drawable", () => {

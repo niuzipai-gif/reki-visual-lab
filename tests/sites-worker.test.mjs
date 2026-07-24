@@ -82,7 +82,7 @@ test("proxies a sanitized summary to MiniMax without exposing the key", async ()
   globalThis.fetch = async (input, init) => {
     calls.push({ input, init });
     return new Response(JSON.stringify({
-      choices: [{ message: { content: JSON.stringify({ recommendations: [] }) } }],
+      choices: [{ message: { content: JSON.stringify({ recommendations: [{ id: "remote" }] }) } }],
     }), { status: 200, headers: { "content-type": "application/json" } });
   };
   try {
@@ -100,6 +100,42 @@ test("proxies a sanitized summary to MiniMax without exposing the key", async ()
     assert.match(calls[0].init.headers.authorization, /^Bearer /);
     assert.doesNotMatch(JSON.stringify(calls[0].init.body), /raw-image/);
     assert.doesNotMatch(JSON.stringify(await response.json()), /test-token/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("rejects an oversized request before configuration lookup", async () => {
+  const response = await worker.fetch(
+    new Request("https://example.test/api/style-advice", {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": String(256 * 1024 + 1) },
+      body: "{}",
+    }),
+    { ASSETS: { fetch: async () => new Response("asset", { status: 200 }) } },
+  );
+
+  assert.equal(response.status, 413);
+  assert.equal((await response.json()).error.code, "PAYLOAD_TOO_LARGE");
+});
+
+test("normalizes an empty provider recommendation payload", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    choices: [{ message: { content: JSON.stringify({ recommendations: [] }) } }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    const response = await worker.fetch(
+      new Request("https://example.test/api/style-advice", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ features: { width: 100 } }),
+      }),
+      { ASSETS: { fetch: async () => new Response("asset", { status: 200 }) }, MINIMAX_API_KEY: "test-token" },
+    );
+
+    assert.equal(response.status, 502);
+    assert.equal((await response.json()).error.code, "UPSTREAM_INVALID_RESPONSE");
   } finally {
     globalThis.fetch = originalFetch;
   }

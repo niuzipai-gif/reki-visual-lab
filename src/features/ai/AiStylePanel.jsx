@@ -21,6 +21,7 @@ function completeRecommendations(input) {
 
 export function AiStylePanel({
   imageSource,
+  analysisSource,
   analyzeFeatures = analyzeImageFeatures,
   getAdvice = getStyleAdvice,
   dispatch,
@@ -39,7 +40,7 @@ export function AiStylePanel({
     setStatus({ type: "loading" });
     let features;
     try {
-      features = analyzeFeatures(imageSource ?? {});
+      features = analyzeFeatures(analysisSource ?? imageSource ?? {});
       const result = await getAdvice(features);
       if (id !== requestId.current) return;
       const remoteValidation = validateStyleAdvice({ recommendations: result?.recommendations });
@@ -83,7 +84,7 @@ export function AiStylePanel({
       </p>
       {status.type === "idle" ? (
         <p className="ai-feedback">
-          {imageSource ? "先做一次本地分析，再获取三套可应用的编辑方案。" : "图片加载完成后即可分析并获取风格建议。"}
+          {imageSource ? "先做一次本地分析，再获取三套可应用的编辑方案。" : "等待上传图片后可分析并获取风格建议。"}
         </p>
       ) : null}
       {status.type === "loading" ? (

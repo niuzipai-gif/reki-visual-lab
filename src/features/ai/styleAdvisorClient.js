@@ -5,6 +5,7 @@ import {
 } from "./styleAdvisor.js";
 
 export const STYLE_ADVICE_TIMEOUT_MS = 8000;
+export const MAX_STYLE_ADVICE_RESPONSE_BYTES = 256 * 1024;
 
 function finite(value, fallback) {
   const number = Number(value);
@@ -55,6 +56,31 @@ function errorResult(error) {
   return { ok: false, error: String(code), recommendations: [] };
 }
 
+function codedError(code) {
+  const error = new Error(code);
+  error.code = code;
+  return error;
+}
+
+async function readJsonResponse(response) {
+  const declaredLength = Number(response?.headers?.get?.("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_STYLE_ADVICE_RESPONSE_BYTES) {
+    throw codedError("RESPONSE_TOO_LARGE");
+  }
+  if (typeof response?.arrayBuffer === "function") {
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > MAX_STYLE_ADVICE_RESPONSE_BYTES) {
+      throw codedError("RESPONSE_TOO_LARGE");
+    }
+    try {
+      return JSON.parse(new TextDecoder().decode(buffer));
+    } catch {
+      throw codedError("INVALID_JSON");
+    }
+  }
+  return response.json();
+}
+
 /** Request validated recommendations from the same-origin worker proxy. */
 export async function requestStyleAdvice(features, options = {}) {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
@@ -66,6 +92,14 @@ export async function requestStyleAdvice(features, options = {}) {
   if (typeof fetchImpl !== "function") return errorResult({ code: "FETCH_UNAVAILABLE" });
 
   const controller = new AbortController();
+  const callerSignal = options.signal;
+  let callerAborted = Boolean(callerSignal?.aborted);
+  const onCallerAbort = () => {
+    callerAborted = true;
+    controller.abort();
+  };
+  callerSignal?.addEventListener?.("abort", onCallerAbort, { once: true });
+  if (callerAborted) controller.abort();
   const timer = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
@@ -78,9 +112,11 @@ export async function requestStyleAdvice(features, options = {}) {
     });
     let payload;
     try {
-      payload = await response.json();
-    } catch {
+      payload = await readJsonResponse(response);
+    } catch (error) {
+      if (error?.code === "RESPONSE_TOO_LARGE") return errorResult(error);
       payload = null;
+      if (response?.ok) return errorResult({ code: "INVALID_JSON" });
     }
     if (!response?.ok) {
       return errorResult({
@@ -90,10 +126,12 @@ export async function requestStyleAdvice(features, options = {}) {
     const advice = payload?.advice ?? payload;
     return validateStyleAdvice(advice);
   } catch (error) {
+    if (callerAborted) return errorResult({ code: "ABORTED" });
     if (controller.signal.aborted) return errorResult({ code: "TIMEOUT" });
     return errorResult(error);
   } finally {
     clearTimeout(timer);
+    callerSignal?.removeEventListener?.("abort", onCallerAbort);
   }
 }
 

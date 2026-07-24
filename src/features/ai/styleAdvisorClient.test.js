@@ -73,4 +73,58 @@ describe("style advisor client", () => {
     expect(result.recommendations).toHaveLength(3);
     expect(result.error).toBe("timeout");
   });
+
+  test("composes caller abort with the internal timeout signal", async () => {
+    const caller = new AbortController();
+    let upstreamSignal;
+    const fetchImpl = vi.fn((_url, options) => {
+      upstreamSignal = options.signal;
+      return new Promise((resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+      });
+    });
+
+    const pending = requestStyleAdvice({ width: 10 }, { fetchImpl, signal: caller.signal });
+    caller.abort();
+    const result = await pending;
+
+    expect(upstreamSignal.aborted).toBe(true);
+    expect(result).toMatchObject({ ok: false, error: "ABORTED" });
+  });
+
+  test("rejects an oversized response before attempting JSON parsing", async () => {
+    const oversized = "x".repeat(256 * 1024 + 1);
+    const response = new Response(oversized, { status: 200 });
+    response.json = vi.fn(() => {
+      throw new Error("should not parse");
+    });
+    const result = await requestStyleAdvice({ width: 10 }, {
+      fetchImpl: vi.fn().mockResolvedValue(response),
+    });
+
+    expect(result).toMatchObject({ ok: false, error: "RESPONSE_TOO_LARGE" });
+    expect(response.json).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    [401, "UPSTREAM_AUTH_FAILED"],
+    [429, "UPSTREAM_RATE_LIMITED"],
+  ])("preserves normalized provider status %s", async (status, code) => {
+    const result = await requestStyleAdvice({ width: 10 }, {
+      fetchImpl: vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code } }), {
+        status,
+        headers: { "content-type": "application/json" },
+      })),
+    });
+
+    expect(result).toMatchObject({ ok: false, error: code });
+  });
+
+  test("normalizes a successful response with invalid JSON", async () => {
+    const result = await requestStyleAdvice({ width: 10 }, {
+      fetchImpl: vi.fn().mockResolvedValue(new Response("{not-json", { status: 200 })),
+    });
+
+    expect(result).toMatchObject({ ok: false, error: "INVALID_JSON" });
+  });
 });

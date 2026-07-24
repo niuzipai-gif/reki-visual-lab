@@ -66,10 +66,6 @@ async function styleAdvice(request, env) {
   if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
     return json({ error: { code: "PAYLOAD_TOO_LARGE", message: "Request body is too large" } }, 413);
   }
-  if (!env?.MINIMAX_API_KEY) {
-    return json({ error: { code: "AI_NOT_CONFIGURED", message: "AI advice is not configured" } }, 503);
-  }
-
   let body;
   try {
     const text = await request.text();
@@ -79,6 +75,9 @@ async function styleAdvice(request, env) {
     body = JSON.parse(text);
   } catch {
     return json({ error: { code: "INVALID_JSON", message: "Request body must be valid JSON" } }, 400);
+  }
+  if (!env?.MINIMAX_API_KEY) {
+    return json({ error: { code: "AI_NOT_CONFIGURED", message: "AI advice is not configured" } }, 503);
   }
   const features = sanitizeFeatures(body?.features ?? body);
   if (!features) {
@@ -126,7 +125,13 @@ async function styleAdvice(request, env) {
       return json({ error: { code: "UPSTREAM_INVALID_RESPONSE", message: "AI provider returned invalid JSON" } }, 502);
     }
     const advice = parseModelContent(payload);
-    if (!advice || typeof advice !== "object" || !Array.isArray(advice.recommendations)) {
+    if (
+      !advice ||
+      typeof advice !== "object" ||
+      !Array.isArray(advice.recommendations) ||
+      advice.recommendations.length === 0 ||
+      advice.recommendations.some((recommendation) => !recommendation || typeof recommendation !== "object" || Array.isArray(recommendation))
+    ) {
       return json({ error: { code: "UPSTREAM_INVALID_RESPONSE", message: "AI provider returned invalid advice" } }, 502);
     }
     return json({ recommendations: advice.recommendations.slice(0, 3) });

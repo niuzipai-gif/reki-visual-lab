@@ -297,7 +297,23 @@ export function BackgroundLayer({
           dimensions.height,
         );
         if (generation !== sourceGenerationRef.current) return;
-        onImageSourceReady?.(source);
+        let featureSample = null;
+        if (!active && onImageSourceReady && typeof context.getImageData === "function") {
+          try {
+            const sampleWidth = Math.min(64, dimensions.width);
+            const sampleHeight = Math.min(64, dimensions.height);
+            featureSample = {
+              imageData: context.getImageData(0, 0, sampleWidth, sampleHeight),
+              width: Number(source.naturalWidth ?? source.videoWidth ?? source.width) || dimensions.width,
+              height: Number(source.naturalHeight ?? source.videoHeight ?? source.height) || dimensions.height,
+              subjectHints: [],
+            };
+          } catch {
+            // A tainted or unavailable canvas still remains usable for landmark scanning.
+          }
+        }
+        if (featureSample) onImageSourceReady?.(source, featureSample);
+        else onImageSourceReady?.(source);
         setCanvasReady(true);
         sourceCacheRef.current = {
           source,

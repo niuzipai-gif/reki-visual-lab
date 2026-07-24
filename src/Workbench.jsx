@@ -92,6 +92,7 @@ export function Workbench({
   const [aiImageSource, setAiImageSource] = useState(() =>
     drawableImageSource(initialProject?.image),
   );
+  const [aiImageAnalysis, setAiImageAnalysis] = useState(null);
   const presetSeed = useRef(40);
   const initializedSelection = useRef(false);
   const exportCloseRef = useRef(null);
@@ -119,6 +120,7 @@ export function Workbench({
 
   useEffect(() => {
     setAiImageSource(drawableImageSource(state.present.image));
+    setAiImageAnalysis(null);
   }, [state.present.image]);
 
   useEffect(() => {
@@ -276,7 +278,11 @@ export function Workbench({
           dispatch({ type: "layers/removeBySource", source: "ai" })
         }
       />
-      <AiStylePanel imageSource={aiImageSource} dispatch={dispatch} />
+      <AiStylePanel
+        imageSource={aiImageSource}
+        analysisSource={aiImageAnalysis ?? aiImageSource}
+        dispatch={dispatch}
+      />
     </div>
   );
 
@@ -365,7 +371,10 @@ export function Workbench({
               dispatch({ type: "selection/set", id: layer.id });
             }}
             onChangeLayer={(id, patch) => dispatch({ type: "layer/update", id, patch })}
-            onImageSourceReady={setAiImageSource}
+            onImageSourceReady={(source, analysis) => {
+              setAiImageSource(source);
+              setAiImageAnalysis(analysis ?? null);
+            }}
           />
           {!state.present.image ? (
             <div className="missing-source-panel" role="status">
