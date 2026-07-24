@@ -110,6 +110,7 @@ export async function requestStyleAdvice(features, options = {}) {
       body: JSON.stringify({ features: sanitizeFeatureSummary(features) }),
       signal: controller.signal,
     });
+    if (callerAborted) return errorResult({ code: "ABORTED" });
     let payload;
     try {
       payload = await readJsonResponse(response);
