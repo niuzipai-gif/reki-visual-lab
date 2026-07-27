@@ -216,6 +216,45 @@ function updateFragment(project, id, candidate) {
   return next;
 }
 
+function updateFragmentEffects(project, id, operation, effect, patch, toIndex) {
+  const fragment = project.layers.find((layer) => layer.id === id);
+  if (fragment?.type !== "extractedFragment") return project;
+  const current = normalizeEffectStack(fragment.effects ?? []);
+  let effects = current;
+  if (operation === "add") {
+    const additions = addEffects(current, [effect]);
+    if (!additions.length) return project;
+    effects = [...current, ...additions];
+  }
+  if (operation === "update") {
+    const selected = current.find((item) => item.id === effect);
+    if (!selected) return project;
+    const { id: _ignoredId, type: _ignoredType, ...safePatch } = patch ?? {};
+    const next = createEffect(selected.type, {
+      ...selected,
+      ...safePatch,
+      id: selected.id,
+    });
+    if (!next) return project;
+    effects = current.map((item) => item.id === selected.id ? next : item);
+  }
+  if (operation === "remove") {
+    effects = current.filter((item) => item.id !== effect);
+    if (effects.length === current.length) return project;
+  }
+  if (operation === "move") {
+    const from = current.findIndex((item) => item.id === effect);
+    if (from < 0) return project;
+    effects = [...current];
+    const [moved] = effects.splice(from, 1);
+    const to = Math.max(0, Math.min(Number(toIndex) || 0, effects.length));
+    effects.splice(to, 0, moved);
+  }
+  if (operation === "reset") effects = [];
+  if (valuesEqual(current, effects)) return project;
+  return updateFragment(project, id, { effects });
+}
+
 function valuesEqual(first, second) {
   if (Object.is(first, second)) return true;
   if (
@@ -352,6 +391,19 @@ export function editorReducer(state, action) {
 
   if (action.type === "fragment/update") {
     const nextPresent = updateFragment(state.present, action.id, action.patch);
+    if (nextPresent === state.present) return state;
+    return commit(state, nextPresent);
+  }
+
+  if (action.type === "fragment/effects") {
+    const nextPresent = updateFragmentEffects(
+      state.present,
+      action.id,
+      action.operation,
+      action.effect,
+      action.patch,
+      action.toIndex,
+    );
     if (nextPresent === state.present) return state;
     return commit(state, nextPresent);
   }

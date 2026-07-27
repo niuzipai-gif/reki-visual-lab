@@ -24,9 +24,10 @@ vi.mock("react-konva", () => ({
       {children}
     </div>
   ),
-  Image: ({ name, cropX, cropY, cropWidth, cropHeight, x, y, width, height }) => (
+  Image: ({ name, image, cropX, cropY, cropWidth, cropHeight, x, y, width, height }) => (
     <span
       data-name={name}
+      data-preview-source={image?.constructor?.name === "PreviewCanvas" ? "local-effects" : "original"}
       data-crop-x={cropX}
       data-crop-y={cropY}
       data-crop-width={cropWidth}
@@ -96,6 +97,40 @@ describe("FragmentNode", () => {
 
     expect(container.querySelector('[data-name="fragment-motion-geometry"]'))
       .toHaveAttribute("data-opacity", "0.35");
+  });
+
+  test("renders selected local effects from a cached cropped preview instead of changing the base image", () => {
+    class PreviewCanvas {
+      constructor(width, height) {
+        this.width = width;
+        this.height = height;
+        this.context = {
+          clearRect: vi.fn(), drawImage: vi.fn(),
+          getImageData: () => new ImageData(new Uint8ClampedArray([100, 0, 0, 255]), 1, 1),
+          putImageData: vi.fn(),
+        };
+      }
+      getContext() { return this.context; }
+    }
+    vi.stubGlobal("OffscreenCanvas", PreviewCanvas);
+    const { container } = render(
+      <FragmentNode
+        layer={{
+          ...fragment,
+          effects: [{
+            id: "brightness", type: "brightness", name: "亮度", visible: true,
+            opacity: 1, settings: { amount: 1.2 },
+          }],
+        }}
+        image={{ width: 1000, height: 800 }}
+        canvasSize={{ width: 1000, height: 1000 }}
+      />,
+    );
+
+    const pixels = container.querySelector('[data-name="fragment-image"]');
+    expect(pixels).toHaveAttribute("data-preview-source", "local-effects");
+    expect(pixels).toHaveAttribute("data-crop-x", "0");
+    vi.unstubAllGlobals();
   });
 
   test("moves only the extracted fragment transform and never marker points", () => {

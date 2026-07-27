@@ -157,6 +157,57 @@ describe("composition export", () => {
     vi.unstubAllGlobals();
   });
 
+  test("exports source holes and a moved fragment through its own local effect stack", async () => {
+    const contexts = [];
+    vi.stubGlobal("document", {
+      createElement: () => {
+        const context = {
+          clearRect: vi.fn(), drawImage: vi.fn(), fillRect: vi.fn(),
+          save: vi.fn(), restore: vi.fn(), translate: vi.fn(), rotate: vi.fn(), scale: vi.fn(),
+          beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+          getImageData: vi.fn(() => new ImageData(new Uint8ClampedArray([100, 0, 0, 255]), 1, 1)),
+          putImageData: vi.fn(), setLineDash: vi.fn(),
+        };
+        const canvas = {
+          width: 0,
+          height: 0,
+          getContext: () => context,
+          toBlob: (callback, type) => callback(new Blob([type], { type })),
+        };
+        context.canvas = canvas;
+        contexts.push(context);
+        return canvas;
+      },
+    });
+
+    await renderProjectFrameToBlob({
+      project: {
+        canvas: { width: 4, height: 1 },
+        effectStack: [],
+        layers: [{
+          id: "fragment", type: "extractedFragment", visible: true,
+          sourceRect: { x: 0, y: 0, width: 0.25, height: 1 },
+          transform: { x: 0.75, y: 0, width: 0.25, height: 1 },
+          sourceFill: "white", opacity: 1, animation: { type: "none" },
+          effects: [{
+            id: "local-brightness", type: "brightness", name: "亮度", visible: true,
+            opacity: 1, settings: { amount: 2 },
+          }],
+        }],
+      },
+      sourceBitmap: { width: 4, height: 1 },
+      format: "png",
+    });
+
+    expect(contexts).toHaveLength(2);
+    expect(contexts[0].fillRect).toHaveBeenCalledWith(0, 0, 1, 1);
+    expect(contexts[1].putImageData).toHaveBeenCalledTimes(1);
+    expect(contexts[0].drawImage).toHaveBeenLastCalledWith(
+      expect.anything(), 3, 0, 1, 1,
+    );
+    vi.unstubAllGlobals();
+  });
+
   test("throws typed memory errors before an unsafe canvas allocation", async () => {
     await expect(
       renderProjectToBlob({
@@ -256,6 +307,42 @@ describe("composition export", () => {
     expect(contexts[0].moveTo.mock.calls).toEqual(contexts[1].moveTo.mock.calls);
     expect(contexts[0].lineTo.mock.calls).toEqual(contexts[1].lineTo.mock.calls);
     expect(contexts[0].clip.mock.calls).toEqual(contexts[1].clip.mock.calls);
+    vi.unstubAllGlobals();
+  });
+
+  test("changes a fragment's rendered transform at a nonzero export-frame time", async () => {
+    const contexts = [];
+    vi.stubGlobal("document", {
+      createElement: () => {
+        const context = {
+          clearRect: vi.fn(), drawImage: vi.fn(), save: vi.fn(), restore: vi.fn(),
+          translate: vi.fn(), rotate: vi.fn(), scale: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+          setLineDash: vi.fn(),
+        };
+        const canvas = {
+          width: 0, height: 0, getContext: () => context,
+          toBlob: (callback, type) => callback(new Blob([type], { type })),
+        };
+        context.canvas = canvas;
+        contexts.push(context);
+        return canvas;
+      },
+    });
+    const project = {
+      canvas: { width: 100, height: 100 },
+      layers: [{
+        id: "animated-fragment", type: "extractedFragment", visible: true,
+        sourceRect: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+        transform: { x: 0.3, y: 0.3, width: 0.2, height: 0.2 },
+        sourceFill: "preserve", effects: [], opacity: 1,
+        animation: { type: "orbit", durationMs: 1000, delayMs: 0, loop: true, amplitude: 1, direction: "normal" },
+      }],
+    };
+
+    await renderProjectFrameToBlob({ project, sourceBitmap: { width: 100, height: 100 }, timeMs: 0 });
+    await renderProjectFrameToBlob({ project, sourceBitmap: { width: 100, height: 100 }, timeMs: 250 });
+
+    expect(contexts[0].translate.mock.calls[0]).not.toEqual(contexts[1].translate.mock.calls[0]);
     vi.unstubAllGlobals();
   });
 });

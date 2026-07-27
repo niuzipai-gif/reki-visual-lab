@@ -57,6 +57,7 @@ export function Inspector({
   onDelete,
   onExtract,
   onRelink,
+  onFragmentEffectAction,
 }) {
   const [batchLabelDraft, setBatchLabelDraft] = useState(
     layer?.label ?? "",
@@ -79,7 +80,12 @@ export function Inspector({
   }
 
   if (layer.type === "extractedFragment") {
-    return <FragmentInspector layer={layer} onPatch={onPatch} onRelink={onRelink} />;
+    return <FragmentInspector
+      layer={layer}
+      onPatch={onPatch}
+      onRelink={onRelink}
+      onEffectAction={onFragmentEffectAction}
+    />;
   }
 
   const style = layer.style;

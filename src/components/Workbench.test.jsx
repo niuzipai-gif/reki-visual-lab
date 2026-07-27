@@ -58,6 +58,7 @@ vi.mock("../features/canvas/EditorCanvas.jsx", async () => {
           data-selected-animation={JSON.stringify(selected?.animation ?? null)}
           data-selected-type={selected?.type ?? ""}
           data-selected-source-fill={selected?.sourceFill ?? ""}
+          data-selected-effects={JSON.stringify(selected?.effects ?? [])}
           data-selected-linked={String(selected?.linkedToMarker ?? "")}
           data-motion-duration={project.motion?.durationMs}
         >
@@ -399,6 +400,20 @@ describe("responsive Reki workbench", () => {
 
     await user.selectOptions(screen.getByLabelText("原位置填充"), "black");
     expect(canvas).toHaveAttribute("data-selected-source-fill", "black");
+  });
+
+  test("keeps fragment effect cards local and never adds an implicit base-image effect", async () => {
+    const user = userEvent.setup();
+    renderDemo();
+    const canvas = screen.getByRole("application", { name: "标注画布" });
+
+    await user.click(screen.getByRole("button", { name: "提取框内原图" }));
+    await user.click(screen.getByRole("button", { name: "添加 颗粒 片段效果" }));
+
+    expect(JSON.parse(canvas.dataset.selectedEffects)).toEqual([
+      expect.objectContaining({ type: "grain" }),
+    ]);
+    expect(JSON.parse(canvas.dataset.effectStack)).toEqual([]);
   });
 
   test("reconnects a detached fragment to its marker bounds", async () => {

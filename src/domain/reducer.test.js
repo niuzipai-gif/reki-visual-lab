@@ -274,6 +274,32 @@ describe("layer actions", () => {
     expect(invalidFill).toBe(moved);
     expect(whiteFill.present.layers[1].sourceFill).toBe("white");
   });
+
+  test("updates a fragment effect stack without adding a background effect", () => {
+    const marker = createAnnotation("box", [
+      { x: 0.2, y: 0.2 },
+      { x: 0.5, y: 0.5 },
+    ], { id: "marker" });
+    const withFragment = editorReducer(
+      addLayer(createEditorState(), marker),
+      { type: "fragment/create", markerId: marker.id },
+    );
+    const fragment = withFragment.present.layers[1];
+    const updated = editorReducer(withFragment, {
+      type: "fragment/effects",
+      id: fragment.id,
+      operation: "add",
+      effect: {
+        id: "local-grain", type: "grain", name: "颗粒", visible: true,
+        opacity: 1, settings: { amount: 0.3, seed: 1 },
+      },
+    });
+
+    expect(updated.present.layers[1].effects).toEqual([
+      expect.objectContaining({ id: "local-grain", type: "grain" }),
+    ]);
+    expect(updated.present.effectStack).toEqual([]);
+  });
   test("updates the persisted global motion duration as one undoable commit", () => {
     const start = createEditorState(createProject());
     const updated = editorReducer(start, {

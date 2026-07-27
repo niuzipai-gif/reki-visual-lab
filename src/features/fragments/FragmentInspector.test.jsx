@@ -67,6 +67,24 @@ describe("FragmentInspector", () => {
     expect(onPatch).toHaveBeenCalledWith({ opacity: 0.35 });
   });
 
+  test("adds effect cards to this fragment instead of the project-wide background stack", () => {
+    const onEffectAction = vi.fn();
+    render(
+      <FragmentInspector
+        layer={fragment}
+        onPatch={vi.fn()}
+        onEffectAction={onEffectAction}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "添加 颗粒 片段效果" }));
+
+    expect(onEffectAction).toHaveBeenCalledWith("add", expect.objectContaining({
+      type: "grain",
+      settings: { amount: 0.3, seed: 1 },
+    }));
+  });
+
   test("lets an independently moved fragment reconnect to its source marker", () => {
     const onRelink = vi.fn();
     render(

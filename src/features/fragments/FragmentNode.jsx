@@ -1,7 +1,8 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Circle, Group, Image, Rect } from "react-konva";
 import { resizeBoundsFromHandle } from "../../domain/transform.js";
 import { resolveAnimation, resolveDrawClip } from "../motion/animationRuntime.js";
+import { createFragmentPreview } from "./fragmentComposite.js";
 
 const RESIZE_HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 const MIN_SIZE = 0.01;
@@ -71,6 +72,10 @@ function fragmentOpacity(value) {
   return Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1;
 }
 
+function previewEffectSignature(effects) {
+  return JSON.stringify(effects ?? []);
+}
+
 /**
  * A non-destructive rectangular view into the image source. Dragging only
  * writes `transform`, so the reducer deliberately unlinks it from its marker.
@@ -96,6 +101,27 @@ export function FragmentNode({
   };
   const imageWidth = sourceDimension(image, "width", canvasWidth);
   const imageHeight = sourceDimension(image, "height", canvasHeight);
+  const localPreview = useMemo(() => {
+    try {
+      return createFragmentPreview({
+        source: image,
+        layer,
+        canvasSize,
+      });
+    } catch {
+      // A tainted source can still render through Konva's direct crop path.
+      return null;
+    }
+  }, [
+    image,
+    canvasSize?.width,
+    canvasSize?.height,
+    layer?.sourceRect?.x,
+    layer?.sourceRect?.y,
+    layer?.sourceRect?.width,
+    layer?.sourceRect?.height,
+    previewEffectSignature(layer?.effects),
+  ]);
   const motion = resolveAnimation(layer?.animation, animationTimeMs);
   const opacity = fragmentOpacity(layer?.opacity);
   const origin = {
@@ -148,11 +174,11 @@ export function FragmentNode({
       {image ? (
         <Image
           name="fragment-image"
-          image={image}
-          cropX={sourceRect.x * imageWidth}
-          cropY={sourceRect.y * imageHeight}
-          cropWidth={sourceRect.width * imageWidth}
-          cropHeight={sourceRect.height * imageHeight}
+          image={localPreview ?? image}
+          cropX={localPreview ? 0 : sourceRect.x * imageWidth}
+          cropY={localPreview ? 0 : sourceRect.y * imageHeight}
+          cropWidth={localPreview ? localPreview.width : sourceRect.width * imageWidth}
+          cropHeight={localPreview ? localPreview.height : sourceRect.height * imageHeight}
           x={bounds.x}
           y={bounds.y}
           width={bounds.width}

@@ -1,4 +1,6 @@
 import React from "react";
+import { EffectStackPanel, effectDefaults } from "../filters/EffectStackPanel.jsx";
+import { createEffect, EFFECT_TYPES } from "../filters/effectStack.js";
 
 const SOURCE_FILL_OPTIONS = [
   ["preserve", "保留原图"],
@@ -7,8 +9,14 @@ const SOURCE_FILL_OPTIONS = [
   ["white", "白底"],
 ];
 
+const EFFECT_LABELS = Object.freeze({
+  brightness: "亮度", contrast: "对比度", saturation: "饱和度", sharpness: "锐化",
+  threshold: "阈值", halftone: "网点", grain: "颗粒", rgbOffset: "RGB 偏移",
+  scanline: "扫描线", duotone: "双色调",
+});
+
 /** Inspector controls for a rectangular original-pixel reference layer. */
-export function FragmentInspector({ layer, onPatch, onRelink }) {
+export function FragmentInspector({ layer, onPatch, onRelink, onEffectAction }) {
   if (!layer || layer.type !== "extractedFragment") return null;
   const opacity = Number.isFinite(Number(layer.opacity))
     ? Math.max(0, Math.min(1, Number(layer.opacity)))
@@ -67,6 +75,40 @@ export function FragmentInspector({ layer, onPatch, onRelink }) {
             onClick={() => onRelink?.()}
           >
             重新关联标记
+          </button>
+        ) : null}
+      </fieldset>
+      <fieldset className="fragment-effects-panel">
+        <legend>片段局部效果</legend>
+        <p className="fragment-inspector-meta">
+          只作用于这块移动后的原图片段，不会给底图自动套滤镜。
+        </p>
+        <div className="effect-palette">
+          {EFFECT_TYPES.map((type) => (
+            <button
+              type="button"
+              key={type}
+              aria-label={`添加 ${EFFECT_LABELS[type]} 片段效果`}
+              onClick={() => onEffectAction?.(
+                "add",
+                createEffect(type, { settings: effectDefaults(type) }),
+              )}
+            >
+              + {EFFECT_LABELS[type]}
+            </button>
+          ))}
+        </div>
+        <EffectStackPanel
+          effects={layer.effects ?? []}
+          onAction={onEffectAction}
+        />
+        {(layer.effects ?? []).length ? (
+          <button
+            type="button"
+            className="filter-reset"
+            onClick={() => onEffectAction?.("reset")}
+          >
+            清除片段效果
           </button>
         ) : null}
       </fieldset>

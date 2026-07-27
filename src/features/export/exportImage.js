@@ -2,7 +2,6 @@ import { denormalizePoint, makeCurvePoints } from "../../domain/geometry.js";
 import { DEFAULT_STYLE } from "../../domain/project.js";
 import { MAX_DECODED_PIXELS } from "../import/decodeImage.js";
 import {
-  applyEffectStack,
   legacyFiltersToEffectStack,
 } from "../filters/effectStack.js";
 import {
@@ -10,6 +9,7 @@ import {
   resolveDrawClip,
   sanitizeAnimation,
 } from "../motion/animationRuntime.js";
+import { composeProjectFrameToContext } from "../fragments/fragmentComposite.js";
 
 const MAX_SCALE = 4;
 const DEFAULT_DEVICE_MEMORY = 4;
@@ -372,26 +372,6 @@ export function drawAnimatedAnnotationToContext(
   drawMotionGeometry(context, layer, canvasSize, scale, bounds, motion, primaryStyle);
 }
 
-function drawSource(context, source, width, height) {
-  const drawable = sourceDrawable(source);
-  if (!drawable) throw exportError("EXPORT_SOURCE", "完整图片导出需要原始照片");
-  try {
-    context.drawImage(drawable, 0, 0, width, height);
-  } catch (error) {
-    throw exportError("EXPORT_CANVAS", "原始照片无法绘制到导出画布", error);
-  }
-}
-
-function applyEffectsToCanvas(context, width, height, effectStack) {
-  if (!effectStack.length) return;
-  try {
-    const pixels = context.getImageData(0, 0, width, height);
-    context.putImageData(applyEffectStack(pixels, effectStack), 0, 0);
-  } catch (error) {
-    throw exportError("EXPORT_CANVAS", "这张照片不允许读取像素，无法应用效果", error);
-  }
-}
-
 async function canvasBlob(canvas, format, quality) {
   const type = format === "jpg" || format === "jpeg" ? "image/jpeg" : "image/png";
   const safeQuality = Number.isFinite(quality) ? Math.max(0, Math.min(1, quality)) : 0.92;
@@ -429,28 +409,28 @@ export async function renderProjectFrameToBlob({
   const effectStack = Array.isArray(project?.effectStack)
     ? project.effectStack
     : legacyFiltersToEffectStack(project?.filters);
-  if (!isSafeExport(plan, undefined, plan.includeBackground && effectStack.length > 0)) {
+  const fragmentHasEffects = (project?.layers ?? []).some(
+    (layer) => layer?.type === "extractedFragment" && Array.isArray(layer.effects) && layer.effects.length > 0,
+  );
+  if (!isSafeExport(plan, undefined, plan.includeBackground && (effectStack.length > 0 || fragmentHasEffects))) {
     throw exportError("EXPORT_MEMORY", "导出尺寸过大，请降低倍率或缩小画布");
   }
   const canvas = createCanvas(plan.width, plan.height);
   const context = getContext(canvas);
   try {
     try {
-      context.clearRect(0, 0, plan.width, plan.height);
-      if (plan.includeBackground) {
-        drawSource(context, sourceBitmap, plan.width, plan.height);
-        context.filter = "none";
-        applyEffectsToCanvas(context, plan.width, plan.height, effectStack);
+      if (plan.includeBackground && !sourceDrawable(sourceBitmap)) {
+        throw exportError("EXPORT_SOURCE", "完整图片导出需要原始照片");
       }
-      for (const layer of project.layers ?? []) {
-        drawAnimatedAnnotationToContext(
-          context,
-          layer,
-          project.canvas,
-          scale,
-          timeMs,
-        );
-      }
+      composeProjectFrameToContext(context, {
+        project,
+        sourceBitmap,
+        scale,
+        timeMs,
+        includeBackground: plan.includeBackground,
+        baseEffects: effectStack,
+        drawAnnotation: drawAnimatedAnnotationToContext,
+      });
     } catch (error) {
       if (error?.code?.startsWith?.("EXPORT_")) throw error;
       throw exportError("EXPORT_CANVAS", "无法绘制导出内容", error);

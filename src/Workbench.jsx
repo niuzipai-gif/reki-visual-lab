@@ -242,6 +242,18 @@ export function Workbench({
     });
   };
 
+  const handleFragmentEffectAction = (operation, effect, patch) => {
+    if (selectedLayer?.type !== "extractedFragment") return;
+    dispatch({
+      type: "fragment/effects",
+      id: selectedLayer.id,
+      operation,
+      effect,
+      patch: operation === "move" ? undefined : patch,
+      toIndex: operation === "move" ? patch : undefined,
+    });
+  };
+
   const handleLayerAction = (action, layer, index) => {
     const actions = {
       toggle: { type: "layer/toggle", id: layer.id },
@@ -292,6 +304,7 @@ export function Workbench({
             });
           }
         }}
+        onFragmentEffectAction={handleFragmentEffectAction}
         onDelete={() => selectedLayer && dispatch({ type: "layer/remove", id: selectedLayer.id })}
       />
       {selectedLayer ? (
