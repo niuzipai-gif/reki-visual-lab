@@ -66,6 +66,11 @@ function roundedRect(rect) {
   };
 }
 
+function fragmentOpacity(value) {
+  const opacity = Number(value);
+  return Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1;
+}
+
 /**
  * A non-destructive rectangular view into the image source. Dragging only
  * writes `transform`, so the reducer deliberately unlinks it from its marker.
@@ -92,6 +97,7 @@ export function FragmentNode({
   const imageWidth = sourceDimension(image, "width", canvasWidth);
   const imageHeight = sourceDimension(image, "height", canvasHeight);
   const motion = resolveAnimation(layer?.animation, animationTimeMs);
+  const opacity = fragmentOpacity(layer?.opacity);
   const origin = {
     x: bounds.x + bounds.width / 2,
     y: bounds.y + bounds.height / 2,
@@ -133,7 +139,7 @@ export function FragmentNode({
       scaleX={motion.scale}
       scaleY={motion.scale}
       rotation={motion.rotation}
-      opacity={motion.opacity}
+      opacity={motion.opacity * opacity}
       clipX={clip?.x}
       clipY={clip?.y}
       clipWidth={clip?.width}

@@ -171,18 +171,23 @@ function orbitBounds(marker, points, canvas) {
   const center = points[0];
   if (!center) return null;
   const style = styleFor(marker);
+  const width = canvasDimension(canvas, "width");
+  const height = canvasDimension(canvas, "height");
   const fallbackEdge = {
     x: center.x + Math.max(1, finite(style.anchorSize, DEFAULT_STYLE.anchorSize)) * 6 /
-      canvasDimension(canvas, "width"),
+      width,
     y: center.y,
   };
   const edge = points[1] ?? fallbackEdge;
-  const radius = Math.hypot(edge.x - center.x, edge.y - center.y);
+  const radius = Math.hypot(
+    (edge.x - center.x) * width,
+    (edge.y - center.y) * height,
+  );
   return {
-    x: center.x - radius,
-    y: center.y - radius,
-    width: radius * 2,
-    height: radius * 2,
+    x: center.x - radius / width,
+    y: center.y - radius / height,
+    width: radius * 2 / width,
+    height: radius * 2 / height,
   };
 }
 
@@ -303,6 +308,7 @@ export function createExtractedFragment({ marker, canvas, sourceFill = "preserve
     sourceRect: { ...sourceRect },
     linkedToMarker: true,
     sourceFill,
+    opacity: 1,
     transform: { ...sourceRect },
     effects: [],
     animation: { ...DEFAULT_ANIMATION },

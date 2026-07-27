@@ -169,6 +169,7 @@ describe("project factories", () => {
       sourceMarkerId: "marker-1",
       sourceFill: "white",
       linkedToMarker: false,
+      opacity: 1,
       effects: [],
     });
     expect(normalized.layers[0]).not.toBe(saved.layers[0]);

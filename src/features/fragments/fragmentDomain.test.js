@@ -118,6 +118,35 @@ describe("marker extraction domain", () => {
     expect(hidden.height).toBeGreaterThanOrEqual(0.01);
   });
 
+  test("uses pixel geometry for vertical and diagonal orbit extraction bounds", () => {
+    const aspectCanvas = { width: 1080, height: 1350 };
+    const vertical = markerSourceRect(
+      createAnnotation("orbit", [{ x: 0.5, y: 0.5 }, { x: 0.5, y: 0.6 }], {
+        showLabel: false,
+      }),
+      aspectCanvas,
+    );
+    const diagonal = markerSourceRect(
+      createAnnotation("orbit", [{ x: 0.5, y: 0.5 }, { x: 0.6, y: 0.6 }], {
+        showLabel: false,
+      }),
+      aspectCanvas,
+    );
+
+    // A 0.1 vertical move is 135px. The visible circle must therefore reach
+    // 135px / 1080px = 0.125 on each horizontal side, plus its safe margin.
+    expect(vertical.x).toBeLessThanOrEqual(0.375);
+    expect(vertical.x + vertical.width).toBeGreaterThanOrEqual(0.625);
+    expect(vertical.y).toBeLessThanOrEqual(0.4);
+    expect(vertical.y + vertical.height).toBeGreaterThanOrEqual(0.6);
+
+    // The diagonal radius is sqrt(108^2 + 135^2) rather than sqrt(.1^2 + .1^2).
+    expect(diagonal.x).toBeLessThanOrEqual(0.34);
+    expect(diagonal.x + diagonal.width).toBeGreaterThanOrEqual(0.66);
+    expect(diagonal.y).toBeLessThanOrEqual(0.372);
+    expect(diagonal.y + diagonal.height).toBeGreaterThanOrEqual(0.628);
+  });
+
   test("creates an extracted fragment with an empty local effect stack", () => {
     const marker = createAnnotation("box", markerPoints.box, { id: "marker-box" });
     const fragment = createExtractedFragment({ marker, canvas });
@@ -127,6 +156,7 @@ describe("marker extraction domain", () => {
       sourceMarkerId: marker.id,
       linkedToMarker: true,
       sourceFill: "preserve",
+      opacity: 1,
       effects: [],
     });
     expect(fragment.sourceRect).toEqual(markerSourceRect(marker, canvas));

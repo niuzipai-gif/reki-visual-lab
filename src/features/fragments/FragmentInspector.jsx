@@ -10,6 +10,9 @@ const SOURCE_FILL_OPTIONS = [
 /** Inspector controls for a rectangular original-pixel reference layer. */
 export function FragmentInspector({ layer, onPatch, onRelink }) {
   if (!layer || layer.type !== "extractedFragment") return null;
+  const opacity = Number.isFinite(Number(layer.opacity))
+    ? Math.max(0, Math.min(1, Number(layer.opacity)))
+    : 1;
 
   return (
     <div className="inspector-form fragment-inspector">
@@ -40,6 +43,18 @@ export function FragmentInspector({ layer, onPatch, onRelink }) {
       </fieldset>
       <fieldset>
         <legend>片段状态</legend>
+        <label className="control-field">
+          <span>片段透明度 {Math.round(opacity * 100)}%</span>
+          <input
+            aria-label="片段透明度"
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={opacity}
+            onChange={(event) => onPatch?.({ opacity: Number(event.target.value) })}
+          />
+        </label>
         <p className="fragment-inspector-meta">
           {layer.linkedToMarker === false
             ? "已独立移动或缩放，可继续添加效果和动态。"

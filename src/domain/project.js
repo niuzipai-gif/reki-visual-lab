@@ -29,6 +29,12 @@ function normalizeFragmentRect(rect) {
   return { x, y, width, height };
 }
 
+function normalizeFragmentOpacity(value) {
+  const opacity = Number(value);
+  if (!Number.isFinite(opacity)) return 1;
+  return Math.max(0, Math.min(1, opacity));
+}
+
 export const DEFAULT_STYLE = Object.freeze({
   lineColor: "#e5484d",
   textColor: "#fff7ed",
@@ -124,6 +130,7 @@ function normalizeLayer(layer) {
     transform: transform ?? sourceRect ?? { x: 0, y: 0, width: 0.01, height: 0.01 },
     linkedToMarker: layer.linkedToMarker !== false,
     sourceFill: SOURCE_FILL_TYPES.has(layer.sourceFill) ? layer.sourceFill : "preserve",
+    opacity: normalizeFragmentOpacity(layer.opacity),
     effects: normalizeEffectStack(layer.effects ?? []),
   };
 }

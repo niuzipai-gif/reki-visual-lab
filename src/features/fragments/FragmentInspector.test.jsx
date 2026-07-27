@@ -56,6 +56,17 @@ describe("FragmentInspector", () => {
     expect(onPatch).toHaveBeenCalledWith({ sourceFill: "transparent" });
   });
 
+  test("changes the extracted fragment opacity without touching the background", () => {
+    const onPatch = vi.fn();
+    render(<FragmentInspector layer={fragment} onPatch={onPatch} />);
+
+    fireEvent.change(screen.getByRole("slider", { name: "片段透明度" }), {
+      target: { value: "0.35" },
+    });
+
+    expect(onPatch).toHaveBeenCalledWith({ opacity: 0.35 });
+  });
+
   test("lets an independently moved fragment reconnect to its source marker", () => {
     const onRelink = vi.fn();
     render(

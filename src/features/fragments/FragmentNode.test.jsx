@@ -6,10 +6,12 @@ import { FragmentNode } from "./FragmentNode.jsx";
 const konva = vi.hoisted(() => ({ drag: { x: 0, y: 0 } }));
 
 vi.mock("react-konva", () => ({
-  Group: ({ children, id, draggable, onDragEnd, ...props }) => (
+  Group: ({ children, id, name, opacity, draggable, onDragEnd, ...props }) => (
     <div
       {...props}
       data-layer-id={id}
+      data-name={name}
+      data-opacity={opacity}
       data-draggable={String(Boolean(draggable))}
       onDragEnd={() => onDragEnd?.({
         target: {
@@ -81,6 +83,19 @@ describe("FragmentNode", () => {
     expect(pixels).toHaveAttribute("data-crop-y", "160");
     expect(pixels).toHaveAttribute("data-x", "450");
     expect(pixels).toHaveAttribute("data-y", "500");
+  });
+
+  test("multiplies fragment opacity into its local motion geometry", () => {
+    const { container } = render(
+      <FragmentNode
+        layer={{ ...fragment, opacity: 0.35 }}
+        image={{ width: 1000, height: 800 }}
+        canvasSize={{ width: 1000, height: 1000 }}
+      />,
+    );
+
+    expect(container.querySelector('[data-name="fragment-motion-geometry"]'))
+      .toHaveAttribute("data-opacity", "0.35");
   });
 
   test("moves only the extracted fragment transform and never marker points", () => {
