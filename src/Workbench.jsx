@@ -93,6 +93,7 @@ export function Workbench({
   const [motionPlaying, setMotionPlaying] = useState(false);
   const [motionTimeMs, setMotionTimeMs] = useState(0);
   const [motionClockEpoch, setMotionClockEpoch] = useState(0);
+  const [comparisonVisible, setComparisonVisible] = useState(false);
   const [comparisonPrimed, setComparisonPrimed] = useState(false);
   const [aiImageSource, setAiImageSource] = useState(() =>
     drawableImageSource(initialProject?.image),
@@ -179,7 +180,6 @@ export function Workbench({
   const activePreset = state.present.layers.findLast(
     ({ presetId }) => presetId,
   )?.presetId ?? null;
-  const comparisonVisible = state.present.canvas.backgroundVisible === false;
 
   const updateSelected = (patch) => {
     if (selectedLayer) dispatch({ type: "layer/update", id: selectedLayer.id, patch });
@@ -401,7 +401,7 @@ export function Workbench({
         }}
         onToggleBackground={() => {
           if (!comparisonVisible) setComparisonPrimed(true);
-          dispatch({ type: "canvas/update", patch: { backgroundVisible: comparisonVisible } });
+          setComparisonVisible((visible) => !visible);
         }}
         onExport={() => setExportOpen(true)}
       />

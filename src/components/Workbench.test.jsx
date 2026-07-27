@@ -361,6 +361,23 @@ describe("responsive Reki workbench", () => {
     );
   });
 
+  test("keeps original comparison out of persisted project history", async () => {
+    const user = userEvent.setup();
+    const onProjectChange = vi.fn();
+    render(<Workbench initialDemoProject onProjectChange={onProjectChange} />);
+    const undo = screen.getByRole("button", { name: "撤销" });
+
+    expect(undo).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "原图对比" }));
+
+    expect(onProjectChange).not.toHaveBeenCalled();
+    expect(undo).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "关闭对比" }));
+    expect(onProjectChange).not.toHaveBeenCalled();
+    expect(undo).toBeDisabled();
+  });
+
   test("routes the bottom-image tool to explicit effect cards and resets all effects", async () => {
     const user = userEvent.setup();
     renderDemo();
