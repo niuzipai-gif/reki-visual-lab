@@ -82,7 +82,7 @@ test("proxies a sanitized summary to MiniMax without exposing the key", async ()
   globalThis.fetch = async (input, init) => {
     calls.push({ input, init });
     return new Response(JSON.stringify({
-      choices: [{ message: { content: JSON.stringify({ recommendations: [{ id: "remote" }] }) } }],
+      choices: [{ message: { content: JSON.stringify({ recommendations: [{ id: "remote", filters: { contrast: 1.2 } }] }) } }],
     }), { status: 200, headers: { "content-type": "application/json" } });
   };
   try {
@@ -99,7 +99,10 @@ test("proxies a sanitized summary to MiniMax without exposing the key", async ()
     assert.equal(calls.length, 1);
     assert.match(calls[0].init.headers.authorization, /^Bearer /);
     assert.doesNotMatch(JSON.stringify(calls[0].init.body), /raw-image/);
-    assert.doesNotMatch(JSON.stringify(await response.json()), /test-token/);
+    assert.doesNotMatch(JSON.stringify(calls[0].init.body), /must include [^"\\]*filters/i);
+    const payload = await response.json();
+    assert.equal(payload.recommendations[0].filters, undefined);
+    assert.doesNotMatch(JSON.stringify(payload), /test-token/);
   } finally {
     globalThis.fetch = originalFetch;
   }

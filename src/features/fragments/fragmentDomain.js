@@ -23,6 +23,7 @@ const MARKER_TYPE_SET = new Set(MARKER_TYPES);
 const SOURCE_FILL_SET = new Set(SOURCE_FILL_TYPES);
 const MIN_SOURCE_SIZE = 0.01;
 const STACK_OFFSET = 12;
+const SAFE_MARGIN_PX = 2;
 
 function finite(value, fallback = null) {
   const number = Number(value);
@@ -60,6 +61,36 @@ function boundsForPoints(points) {
     y,
     width: Math.max(...xs) - x,
     height: Math.max(...ys) - y,
+  };
+}
+
+function unionBounds(bounds) {
+  const valid = bounds.filter(Boolean);
+  if (!valid.length) return null;
+  const left = Math.min(...valid.map(({ x }) => x));
+  const top = Math.min(...valid.map(({ y }) => y));
+  const right = Math.max(...valid.map(({ x, width }) => x + width));
+  const bottom = Math.max(...valid.map(({ y, height }) => y + height));
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+function expandBounds(bounds, xPadding = 0, yPadding = xPadding) {
+  if (!bounds) return null;
+  return {
+    x: bounds.x - xPadding,
+    y: bounds.y - yPadding,
+    width: bounds.width + xPadding * 2,
+    height: bounds.height + yPadding * 2,
+  };
+}
+
+function pointBounds(point, radiusX = 0, radiusY = radiusX) {
+  if (!point) return null;
+  return {
+    x: point.x - radiusX,
+    y: point.y - radiusY,
+    width: radiusX * 2,
+    height: radiusY * 2,
   };
 }
 
@@ -103,21 +134,37 @@ function styleFor(marker) {
   };
 }
 
-function labelBounds(marker, points, canvas) {
-  const point = points[0];
+function textBounds(point, label, offset, style, canvas) {
   if (!point) return null;
-  const style = styleFor(marker);
-  const offset = marker?.labelOffset;
   const width = canvasDimension(canvas, "width");
   const height = canvasDimension(canvas, "height");
   const fontSize = Math.max(1, finite(style.fontSize, DEFAULT_STYLE.fontSize));
-  const label = String(marker?.label ?? "");
   return {
     x: point.x + finite(offset?.x, 0) / width,
     y: point.y + finite(offset?.y, 0) / height,
-    width: Math.max(fontSize / width, label.length * fontSize * 0.6 / width),
+    width: Math.max(fontSize / width, String(label ?? "").length * fontSize * 0.6 / width),
     height: fontSize / height,
   };
+}
+
+function markerTextBounds(marker, points, style, canvas) {
+  if (marker?.showLabel === false || !points.length) return null;
+  const offset = marker?.labelOffset ?? { x: 0, y: 0 };
+  if (marker.type === "label") {
+    return textBounds(points[0], marker.label, offset, style, canvas);
+  }
+  const point = marker?.labelPosition === "start" ? points[0] : points.at(-1);
+  const fontSize = Math.max(1, finite(style.fontSize, DEFAULT_STYLE.fontSize));
+  return textBounds(
+    point,
+    marker?.label,
+    {
+      x: finite(offset?.x, 0) + 8,
+      y: finite(offset?.y, 0) - fontSize / 2,
+    },
+    style,
+    canvas,
+  );
 }
 
 function orbitBounds(marker, points, canvas) {
@@ -139,6 +186,56 @@ function orbitBounds(marker, points, canvas) {
   };
 }
 
+function shapeBounds(marker, points, style, canvas) {
+  const pointBox = boundsForPoints(points);
+  const width = canvasDimension(canvas, "width");
+  const height = canvasDimension(canvas, "height");
+  const strokeX = Math.max(0, finite(style.lineWidth, DEFAULT_STYLE.lineWidth)) / 2 / width;
+  const strokeY = Math.max(0, finite(style.lineWidth, DEFAULT_STYLE.lineWidth)) / 2 / height;
+  const anchorX = Math.max(0, finite(style.anchorSize, DEFAULT_STYLE.anchorSize)) / width;
+  const anchorY = Math.max(0, finite(style.anchorSize, DEFAULT_STYLE.anchorSize)) / height;
+  const bounds = [];
+
+  switch (marker.type) {
+    case "stackBox":
+      if (pointBox) {
+        bounds.push(expandBounds({
+          x: pointBox.x,
+          y: pointBox.y - STACK_OFFSET / height,
+          width: pointBox.width + STACK_OFFSET / width,
+          height: pointBox.height + STACK_OFFSET / height,
+        }, strokeX, strokeY));
+      }
+      break;
+    case "orbit": {
+      const orbit = orbitBounds(marker, points, canvas);
+      if (orbit) bounds.push(expandBounds(orbit, strokeX, strokeY));
+      bounds.push(...points.slice(0, 2).map((point) => pointBounds(point, anchorX, anchorY)));
+      break;
+    }
+    case "leader":
+      if (pointBox) bounds.push(expandBounds(pointBox, strokeX, strokeY));
+      bounds.push(pointBounds(points[0], anchorX, anchorY));
+      break;
+    case "nodeCloud":
+      if (pointBox) bounds.push(expandBounds(pointBox, strokeX, strokeY));
+      bounds.push(...points.map((point) => pointBounds(point, anchorX, anchorY)));
+      break;
+    case "randomNodes":
+      bounds.push(...points.map((point) => pointBounds(point, anchorX, anchorY)));
+      break;
+    case "box":
+    case "path":
+      if (pointBox) bounds.push(expandBounds(pointBox, strokeX, strokeY));
+      break;
+    case "label":
+      break;
+    default:
+      break;
+  }
+  return unionBounds(bounds) ?? pointBox;
+}
+
 /** True when a layer can point to a visible original-image rectangle. */
 export function isSpatialMarker(marker) {
   return MARKER_TYPE_SET.has(marker?.type);
@@ -157,23 +254,17 @@ export function markerSourceRect(marker, canvas) {
   const points = markerPoints(marker);
   if (!points.length) return null;
 
-  let bounds;
-  if (marker.type === "label") {
-    bounds = labelBounds(marker, points, canvas);
-  } else if (marker.type === "orbit") {
-    bounds = orbitBounds(marker, points, canvas);
-  } else {
-    bounds = boundsForPoints(points);
-    if (marker.type === "stackBox" && bounds) {
-      bounds = {
-        x: bounds.x,
-        y: bounds.y - STACK_OFFSET / canvasDimension(canvas, "height"),
-        width: bounds.width + STACK_OFFSET / canvasDimension(canvas, "width"),
-        height: bounds.height + STACK_OFFSET / canvasDimension(canvas, "height"),
-      };
-    }
-  }
-  return clampRect(bounds);
+  const style = styleFor(marker);
+  const text = markerTextBounds(marker, points, style, canvas);
+  const bounds = unionBounds([
+    shapeBounds(marker, points, style, canvas),
+    text,
+  ]) ?? boundsForPoints(points);
+  return clampRect(expandBounds(
+    bounds,
+    SAFE_MARGIN_PX / canvasDimension(canvas, "width"),
+    SAFE_MARGIN_PX / canvasDimension(canvas, "height"),
+  ));
 }
 
 export function normalizeSourceRect(rect) {

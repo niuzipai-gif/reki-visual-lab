@@ -62,6 +62,25 @@ describe("offline style advisor", () => {
     expect(first.every((item) => validateStyleAdvice({ recommendations: [item] }).ok)).toBe(true);
   });
 
+  test("drops remote AI filter patches while retaining its marker advice", () => {
+    const result = validateStyleAdvice({
+      recommendations: [{
+        id: "remote-no-filter",
+        name: "Remote",
+        description: "Markers only",
+        filters: { contrast: 1.4, grain: 0.3 },
+        annotationType: "path",
+        density: 60,
+        labelMode: "single",
+        risk: "Keep clear space",
+      }],
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(result.recommendations[0].filters).toEqual({});
+    expect(styleToEditorPatch(result.recommendations[0]).filters).toEqual({});
+  });
+
   test("maps a recommendation into an immutable editor patch", () => {
     const recommendation = getOfflineRecommendations({})[0];
     const project = {

@@ -93,7 +93,7 @@ describe("editor history", () => {
     expect(redone.selectedLayerId).toBeNull();
   });
 
-  test("applies an AI style atomically, marks generated layers, and selects the first", () => {
+  test("applies an AI style atomically without injecting its suggested filters", () => {
     const start = createEditorState();
     const recommendation = {
       id: "style-test",
@@ -111,13 +111,7 @@ describe("editor history", () => {
     const undone = editorReducer(applied, { type: "history/undo" });
 
     expect(applied.present.filters).toEqual({});
-    expect(applied.present.effectStack.map(({ type }) => type)).toEqual([
-      "contrast",
-      "grain",
-    ]);
-    expect(applied.present.effectStack[1]).toEqual(
-      expect.objectContaining({ type: "grain", settings: { amount: 0.12, seed: 1 } }),
-    );
+    expect(applied.present.effectStack).toEqual([]);
     expect(applied.present.layers).toHaveLength(2);
     expect(applied.present.layers.every(({ source }) => source === "ai-style")).toBe(true);
     expect(applied.selectedLayerId).toBe("style-path");
@@ -125,7 +119,7 @@ describe("editor history", () => {
     expect(undone.present).toEqual(start.present);
   });
 
-  test("rejects an unvalidated style patch without changing editor state", () => {
+  test("rejects an unvalidated style patch and ignores unvalidated AI filters", () => {
     const start = createEditorState();
     const action = {
       type: "style/apply",
@@ -143,20 +137,20 @@ describe("editor history", () => {
     };
 
     expect(editorReducer(start, action)).toBe(start);
-    expect(
-      editorReducer(start, {
-        type: "style/apply",
-        recommendation: {
-          id: "safe-rec",
-          name: "Safe",
-          filters: { contrast: 1.1 },
-          annotationType: "path",
-          density: 60,
-          labelMode: "single",
-        },
-        filters: { contrast: 99, hacked: true },
-      }),
-    ).toBe(start);
+    const applied = editorReducer(start, {
+      type: "style/apply",
+      recommendation: {
+        id: "safe-rec",
+        name: "Safe",
+        filters: { contrast: 1.1 },
+        annotationType: "path",
+        density: 60,
+        labelMode: "single",
+      },
+      filters: { contrast: 99, hacked: true },
+    });
+    expect(applied.present.layers).toHaveLength(2);
+    expect(applied.present.effectStack).toEqual([]);
   });
 
   test("clones accepted style patches before committing them", () => {
@@ -169,7 +163,7 @@ describe("editor history", () => {
 
     patch.filters.grain = 0.8;
     patch.layers[0].points[0].x = 0.9;
-    expect(applied.present.effectStack[0].settings.amount).toBe(0.1);
+    expect(applied.present.effectStack).toEqual([]);
     expect(applied.present.layers[0].points[0].x).toBe(0.1);
   });
 
@@ -183,7 +177,7 @@ describe("editor history", () => {
 
     recommendation.filters.grain = 0.8;
     recommendation.layers[0].points[0].x = 0.9;
-    expect(applied.present.effectStack[0].settings.amount).toBe(0.1);
+    expect(applied.present.effectStack).toEqual([]);
     expect(applied.present.layers[0].points[0].x).toBe(0.1);
   });
 
@@ -196,9 +190,7 @@ describe("editor history", () => {
     });
 
     expect(applied.present.filters).toEqual({});
-    expect(applied.present.effectStack).toEqual([
-      expect.objectContaining({ type: "grain", settings: { amount: 0.1, seed: 1 } }),
-    ]);
+    expect(applied.present.effectStack).toEqual([]);
     expect(applied.present.layers[0].source).toBe("ai-style");
   });
 });
@@ -265,7 +257,7 @@ describe("layer actions", () => {
     const moved = editorReducer(withFragment, {
       type: "fragment/update",
       id: fragment.id,
-      patch: { transform: { ...fragment.transform, x: 0.7 } },
+      patch: { transform: { ...fragment.transform, x: 0.6 } },
     });
     const invalidFill = editorReducer(moved, {
       type: "fragment/sourceFill",
@@ -278,7 +270,7 @@ describe("layer actions", () => {
       sourceFill: "white",
     });
 
-    expect(moved.present.layers[1]).toMatchObject({ linkedToMarker: false, transform: { x: 0.7 } });
+    expect(moved.present.layers[1]).toMatchObject({ linkedToMarker: false, transform: { x: 0.6 } });
     expect(invalidFill).toBe(moved);
     expect(whiteFill.present.layers[1].sourceFill).toBe("white");
   });
@@ -675,7 +667,7 @@ describe("project-level actions", () => {
     })).toBe(updated);
   });
 
-  test("converts preset and AI legacy pixel filters into explicit effect cards", () => {
+  test("converts preset filters but ignores remote AI pixel filter suggestions", () => {
     const preset = editorReducer(createEditorState(), {
       type: "preset/apply",
       filters: { grain: 0.18, rgbOffset: 2 },
@@ -694,12 +686,10 @@ describe("project-level actions", () => {
       "rgbOffset",
     ]);
     expect(styled.present.filters).toEqual({});
-    expect(styled.present.effectStack).toEqual([
-      expect.objectContaining({ type: "grain", settings: { amount: 0.22, seed: 1 } }),
-    ]);
+    expect(styled.present.effectStack).toEqual([]);
   });
 
-  test("keeps CSS-only preset and AI filter patches as visible effect cards", () => {
+  test("keeps explicit preset effects but ignores CSS-only AI filter patches", () => {
     const preset = editorReducer(createEditorState(), {
       type: "preset/apply",
       filters: { contrast: 1.18, saturation: 0.82 },
@@ -718,10 +708,7 @@ describe("project-level actions", () => {
       "saturation",
     ]);
     expect(styled.present.filters).toEqual({});
-    expect(styled.present.effectStack.map(({ type }) => type)).toEqual([
-      "brightness",
-      "sharpness",
-    ]);
+    expect(styled.present.effectStack).toEqual([]);
   });
 
   test("converts legacy filter update and reset actions into effect stack mutations", () => {

@@ -58,6 +58,7 @@ describe("style advisor client", () => {
 
     expect(result.ok).toBe(true);
     expect(result.recommendations).toHaveLength(1);
+    expect(result.recommendations[0].filters).toEqual({});
     const [, options] = fetchImpl.mock.calls[0];
     expect(options.method).toBe("POST");
     expect(JSON.parse(options.body)).toEqual({

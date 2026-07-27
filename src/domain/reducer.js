@@ -479,7 +479,6 @@ export function editorReducer(state, action) {
     const recommendation = action.recommendation ?? action.patch ?? {};
     const generatedPatch = Array.isArray(recommendation.layers)
       ? sanitizeEditorPatch({
-          filters: recommendation.filters,
           layers: recommendation.layers,
         })
       : sanitizeEditorPatch(
@@ -487,14 +486,8 @@ export function editorReducer(state, action) {
             features: action.features,
             seed: action.seed,
           }),
-        );
+    );
     if (!generatedPatch) return state;
-    let appliedFilters = generatedPatch.filters;
-    if (action.filters !== undefined && action.filters !== null) {
-      const filterPatch = sanitizeEditorPatch({ filters: action.filters, layers: [] });
-      if (!filterPatch) return state;
-      appliedFilters = filterPatch.filters;
-    }
     const generatedLayers = (generatedPatch.layers ?? []).map((layer) => ({
       ...structuredClone(layer),
       source: "ai-style",
@@ -505,17 +498,12 @@ export function editorReducer(state, action) {
       existingIds.add(id);
       return true;
     });
-    const effectsToAdd = addEffects(
-      state.present.effectStack ?? [],
-      legacyFilterPatchToEffects(appliedFilters),
-    );
-    if (!layersToAdd.length && !effectsToAdd.length) {
+    if (!layersToAdd.length) {
       return state;
     }
     const nextPresent = {
       ...state.present,
       layers: [...state.present.layers, ...layersToAdd],
-      effectStack: [...(state.present.effectStack ?? []), ...effectsToAdd],
     };
     return commit(
       state,

@@ -55,6 +55,11 @@ function parseModelContent(payload) {
   }
 }
 
+function recommendationWithoutFilters(recommendation) {
+  const { filters: _ignoredFilters, ...safeRecommendation } = recommendation;
+  return safeRecommendation;
+}
+
 async function styleAdvice(request, env) {
   if (request.method !== "POST") {
     return json({ error: { code: "METHOD_NOT_ALLOWED", message: "POST required" } }, 405);
@@ -100,7 +105,7 @@ async function styleAdvice(request, env) {
         messages: [
           {
             role: "system",
-            content: "You are an image-editing style advisor. Return JSON only with exactly three recommendations. Do not generate images. Each recommendation must include id, name, description, filters, annotationType, density, labelMode, and risk.",
+            content: "You are an image-editing style advisor. Return JSON only with exactly three recommendations. Do not generate images or prescribe image filters. Each recommendation must include id, name, description, annotationType, density, labelMode, and risk.",
           },
           { role: "user", content: JSON.stringify({ features }) },
         ],
@@ -134,7 +139,11 @@ async function styleAdvice(request, env) {
     ) {
       return json({ error: { code: "UPSTREAM_INVALID_RESPONSE", message: "AI provider returned invalid advice" } }, 502);
     }
-    return json({ recommendations: advice.recommendations.slice(0, 3) });
+    return json({
+      recommendations: advice.recommendations
+        .slice(0, 3)
+        .map(recommendationWithoutFilters),
+    });
   } catch (error) {
     if (controller.signal.aborted) {
       return json({ error: { code: "UPSTREAM_TIMEOUT", message: "AI provider timed out" } }, 504);

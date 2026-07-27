@@ -60,9 +60,62 @@ describe("marker extraction domain", () => {
 
     expect(stacked.y).toBeLessThan(0.2);
     expect(stacked.width).toBeGreaterThan(0.5);
-    expect(label.x).toBeCloseTo(0.33, 3);
-    expect(label.y).toBeCloseTo(0.431, 3);
+    expect(label.x).toBeLessThan(0.33);
+    expect(label.y).toBeLessThan(0.431);
     expect(label.width).toBeGreaterThanOrEqual(0.12);
+  });
+
+  test("includes annotation labels, stroke, anchor radius, and a safe crop margin", () => {
+    const stroked = markerSourceRect(
+      createAnnotation("box", [{ x: 0.2, y: 0.2 }, { x: 0.7, y: 0.7 }], {
+        style: { ...DEFAULT_STYLE, lineWidth: 10 },
+      }),
+      canvas,
+    );
+    const anchored = markerSourceRect(
+      createAnnotation("randomNodes", [{ x: 0.5, y: 0.5 }], {
+        style: { ...DEFAULT_STYLE, anchorSize: 10 },
+      }),
+      canvas,
+    );
+    const labelledPath = markerSourceRect(
+      createAnnotation("path", [{ x: 0.3, y: 0.5 }, { x: 0.5, y: 0.5 }], {
+        label: "OFFSET_LABEL",
+        labelOffset: { x: 80, y: 20 },
+        style: { ...DEFAULT_STYLE, fontSize: 20 },
+      }),
+      canvas,
+    );
+
+    expect(stroked.x).toBeCloseTo(0.193, 3);
+    expect(anchored.x).toBeCloseTo(0.488, 3);
+    expect(labelledPath.x + labelledPath.width).toBeGreaterThan(0.7);
+    expect(labelledPath.y).toBeLessThan(0.5);
+  });
+
+  test("does not include hidden label text in a marker source rectangle", () => {
+    const visible = markerSourceRect(
+      createAnnotation("label", [{ x: 0.5, y: 0.5 }], {
+        label: "VERY_WIDE_LABEL",
+        labelOffset: { x: 160, y: 30 },
+        style: { ...DEFAULT_STYLE, fontSize: 28 },
+      }),
+      canvas,
+    );
+    const hidden = markerSourceRect(
+      createAnnotation("label", [{ x: 0.5, y: 0.5 }], {
+        showLabel: false,
+        label: "VERY_WIDE_LABEL",
+        labelOffset: { x: 160, y: 30 },
+        style: { ...DEFAULT_STYLE, fontSize: 28 },
+      }),
+      canvas,
+    );
+
+    expect(visible.x + visible.width).toBeGreaterThan(0.85);
+    expect(hidden.x + hidden.width).toBeLessThan(0.52);
+    expect(hidden.width).toBeGreaterThanOrEqual(0.01);
+    expect(hidden.height).toBeGreaterThanOrEqual(0.01);
   });
 
   test("creates an extracted fragment with an empty local effect stack", () => {

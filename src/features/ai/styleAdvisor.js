@@ -6,15 +6,6 @@ import {
   findStylePreset,
 } from "./stylePresets.js";
 
-const FILTER_RANGES = Object.freeze({
-  brightness: [0.5, 1.5],
-  contrast: [0.5, 1.8],
-  saturation: [0, 2],
-  sharpness: [0, 1],
-  grain: [0, 1],
-  rgbOffset: [-32, 32],
-});
-
 function finite(value, fallback = 0) {
   try {
     const number = Number(value);
@@ -135,19 +126,6 @@ function parseAdvice(input) {
   return input;
 }
 
-function validFilterPatch(filters) {
-  if (!filters || typeof filters !== "object" || Array.isArray(filters)) return null;
-  const output = {};
-  for (const [key, value] of Object.entries(filters)) {
-    const range = FILTER_RANGES[key];
-    const number = numberValue(value);
-    if (!range || number === null) return null;
-    if (number < range[0] || number > range[1]) return null;
-    output[key] = number;
-  }
-  return output;
-}
-
 const SAFE_STYLE_KEYS = Object.freeze({
   lineColor: "color",
   textColor: "color",
@@ -234,10 +212,9 @@ function sanitizeStyleLayers(layers) {
 
 export function sanitizeEditorPatch(patch) {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) return null;
-  const filters = validFilterPatch(patch.filters);
   const layers = sanitizeStyleLayers(patch.layers);
-  if (!filters || !layers) return null;
-  return { filters, layers };
+  if (!layers) return null;
+  return { filters: {}, layers };
 }
 
 function safeText(value, fallback, maximum) {
@@ -250,11 +227,9 @@ function validateRecommendation(candidate, index) {
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
     return { ok: false, error: `recommendation_${index}_invalid` };
   }
-  const filters = validFilterPatch(candidate.filters);
   const annotationType = candidate.annotationType ?? candidate.markerType;
   const density = Number(candidate.density ?? 60);
   const labelMode = candidate.labelMode ?? "single";
-  if (!filters) return { ok: false, error: `recommendation_${index}_filters_invalid` };
   if (!ALLOWED_ANNOTATION_TYPES.includes(annotationType)) {
     return { ok: false, error: `recommendation_${index}_annotation_invalid` };
   }
@@ -270,7 +245,7 @@ function validateRecommendation(candidate, index) {
       id: safeText(candidate.id, `style-${index + 1}`, 64),
       name: safeText(candidate.name, `风格方案 ${index + 1}`, 80),
       description: safeText(candidate.description, "离线风格建议", 240),
-      filters,
+      filters: {},
       annotationType,
       density,
       labelMode,
@@ -302,7 +277,7 @@ export function createRecommendation(name, filters, annotationType, options = {}
     id: options.id ?? preset?.id ?? `offline-${annotationType}`,
     name,
     description: options.description ?? preset?.description ?? "离线风格建议",
-    filters: { ...filters },
+    filters: {},
     annotationType,
     density: options.density ?? preset?.density ?? 60,
     labelMode: options.labelMode ?? preset?.labelMode ?? "single",
@@ -327,7 +302,6 @@ export function styleToEditorPatch(recommendation, options = {}) {
   // callers can keep the project object at the front of an editor pipeline.
   if (
     recommendation?.layers &&
-    recommendation?.filters &&
     options?.annotationType
   ) {
     candidate = options;
@@ -349,7 +323,7 @@ export function styleToEditorPatch(recommendation, options = {}) {
       });
   if (!layers) return { filters: {}, layers: [] };
   return {
-    filters: structuredClone(safe.filters),
+    filters: {},
     layers: structuredClone(layers),
   };
 }
