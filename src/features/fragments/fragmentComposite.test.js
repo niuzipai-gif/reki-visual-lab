@@ -1,7 +1,12 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  FRAGMENT_PREVIEW_CACHE_MAX_BYTES,
+  FRAGMENT_PREVIEW_CACHE_MAX_ENTRIES,
   composeProjectFrameToContext,
+  createFragmentPreview,
   drawFragmentToContext,
+  fragmentPreviewCacheMetrics,
+  resetFragmentPreviewCache,
 } from "./fragmentComposite.js";
 
 function color(value, alpha = 255) {
@@ -171,5 +176,87 @@ describe("fragment export compositor", () => {
     expect(initialCalls.filter(([name]) => name === "translate")[0]).not.toEqual(
       animatedCalls.filter(([name]) => name === "translate")[0],
     );
+  });
+});
+
+class PreviewCanvas {
+  constructor(width, height) {
+    this.width = width;
+    this.height = height;
+    this.context = {
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      getImageData: () => new ImageData(new Uint8ClampedArray([0, 0, 0, 255]), 1, 1),
+      putImageData: vi.fn(),
+    };
+  }
+
+  getContext() {
+    return this.context;
+  }
+}
+
+function localEffectLayer(id, sourceRect) {
+  return {
+    id,
+    type: "extractedFragment",
+    sourceRect,
+    effects: [{
+      id: "local-brightness", type: "brightness", name: "亮度", visible: true,
+      opacity: 1, settings: { amount: 1.1 },
+    }],
+  };
+}
+
+afterEach(() => {
+  resetFragmentPreviewCache();
+  vi.unstubAllGlobals();
+});
+
+describe("fragment preview cache", () => {
+  test("evicts the least-recently-used entry within one source entry budget", () => {
+    vi.stubGlobal("OffscreenCanvas", PreviewCanvas);
+    const sourceImage = { width: 1000, height: 1000 };
+    const preview = (index) => createFragmentPreview({
+      source: sourceImage,
+      layer: localEffectLayer(`fragment-${index}`, {
+        x: index / (FRAGMENT_PREVIEW_CACHE_MAX_ENTRIES + 2),
+        y: 0,
+        width: 0.01,
+        height: 0.01,
+      }),
+      canvasSize: { width: 1000, height: 1000 },
+    });
+
+    const first = preview(0);
+    const second = preview(1);
+    for (let index = 2; index < FRAGMENT_PREVIEW_CACHE_MAX_ENTRIES; index += 1) {
+      preview(index);
+    }
+    expect(preview(0)).toBe(first);
+
+    preview(FRAGMENT_PREVIEW_CACHE_MAX_ENTRIES);
+
+    expect(fragmentPreviewCacheMetrics(sourceImage)).toMatchObject({
+      entryCount: FRAGMENT_PREVIEW_CACHE_MAX_ENTRIES,
+    });
+    expect(preview(1)).not.toBe(second);
+  });
+
+  test("does not retain an effected preview that exceeds one source byte budget", () => {
+    vi.stubGlobal("OffscreenCanvas", PreviewCanvas);
+    const dimension = Math.floor(Math.sqrt(FRAGMENT_PREVIEW_CACHE_MAX_BYTES / 4)) + 1;
+    const sourceImage = { width: dimension, height: dimension };
+
+    createFragmentPreview({
+      source: sourceImage,
+      layer: localEffectLayer("oversized", { x: 0, y: 0, width: 1, height: 1 }),
+      canvasSize: { width: dimension, height: dimension },
+    });
+
+    expect(fragmentPreviewCacheMetrics(sourceImage)).toEqual({
+      entryCount: 0,
+      byteSize: 0,
+    });
   });
 });

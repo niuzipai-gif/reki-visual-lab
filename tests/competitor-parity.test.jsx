@@ -125,7 +125,7 @@ test("keeps layer visibility, lock, ordering, duplication, and delete operations
 test("keeps motion export choices available alongside the competitor editing tools", async () => {
   const user = userEvent.setup();
   await renderWorkbench();
-  await user.click(await screen.findByRole("button", { name: "导出图片" }));
+  await user.click(await screen.findByRole("button", { name: "导出" }));
   await user.click(screen.getByLabelText("动画视频"));
   expect(screen.getByRole("button", { name: "导出视频" })).toBeEnabled();
 }, 15_000);

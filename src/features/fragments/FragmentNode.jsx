@@ -80,7 +80,24 @@ function previewEffectSignature(effects) {
  * A non-destructive rectangular view into the image source. Dragging only
  * writes `transform`, so the reducer deliberately unlinks it from its marker.
  */
-export function FragmentNode({
+function fragmentNodePropsEqual(previous, next) {
+  if (
+    previous.layer !== next.layer ||
+    previous.image !== next.image ||
+    previous.canvasSize?.width !== next.canvasSize?.width ||
+    previous.canvasSize?.height !== next.canvasSize?.height ||
+    previous.selected !== next.selected
+  ) {
+    return false;
+  }
+
+  const previousAnimation = previous.layer?.animation?.type ?? "none";
+  const nextAnimation = next.layer?.animation?.type ?? "none";
+  if (previousAnimation !== nextAnimation) return false;
+  return previousAnimation === "none" || previous.animationTimeMs === next.animationTimeMs;
+}
+
+export const FragmentNode = React.memo(function FragmentNode({
   layer,
   image,
   canvasSize,
@@ -252,4 +269,4 @@ export function FragmentNode({
       ) : null}
     </Group>
   );
-}
+}, fragmentNodePropsEqual);

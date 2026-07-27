@@ -11,6 +11,7 @@ import {
   Trash2,
   Unlock,
 } from "lucide-react";
+import { layerTypeLabel, layerTypeShortLabel } from "../../domain/layerTypeLabels.js";
 
 function LayerButton({ label, onClick, disabled, children }) {
   return <button type="button" aria-label={label} title={label} onClick={onClick} disabled={disabled}>{children}</button>;
@@ -41,8 +42,8 @@ export function LayersPanel({ layers, selectedLayerId, onSelect, onAction, onCle
           {layers.map((layer, index) => (
             <li key={layer.id} className={selectedLayerId === layer.id ? "selected" : ""}>
               <button type="button" className="layer-select" aria-label={`选择图层 ${layer.name}`} aria-pressed={selectedLayerId === layer.id} onClick={() => onSelect(layer.id)}>
-                <span className="layer-type">{layer.type.slice(0, 2).toUpperCase()}</span>
-                <span><b>{layer.name}</b><small>{layer.type}</small></span>
+                <span className="layer-type">{layerTypeShortLabel(layer.type)}</span>
+                <span><b>{layer.name}</b><small>{layerTypeLabel(layer.type)}</small></span>
               </button>
               <div className="layer-actions">
                 <LayerButton label={`${layer.visible ? "隐藏" : "显示"} ${layer.name}`} onClick={() => onAction("toggle", layer, index)}>{layer.visible ? <Eye size={14} /> : <EyeOff size={14} />}</LayerButton>

@@ -41,6 +41,54 @@ describe("MotionPanel", () => {
     expect(screen.getByText("0.12s / 4.00s")).toBeVisible();
   });
 
+  test("keeps static layers focused while preserving advanced animation values", () => {
+    const onChange = vi.fn();
+    const advancedAnimation = {
+      type: "none",
+      durationMs: 1500,
+      delayMs: 800,
+      loop: false,
+      amplitude: 0.75,
+      direction: "alternate",
+    };
+    const { rerender } = render(
+      <MotionPanel
+        layer={animatedLayer({ animation: advancedAnimation })}
+        timeMs={450}
+        onChange={onChange}
+        onPlayChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("动画类型")).toBeVisible();
+    expect(screen.getByRole("button", { name: "播放动画预览" })).toBeVisible();
+    expect(screen.getByRole("slider", { name: "全局时间轴" })).toHaveValue("450");
+    expect(screen.getByText("选择动画后，可调整时长、延迟与动态幅度。")).toBeVisible();
+    expect(screen.queryByLabelText("动画时长")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("动画延迟")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("循环播放")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("动态幅度")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("播放方向")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("动画类型"), { target: { value: "fade" } });
+    expect(onChange).toHaveBeenCalledWith({ ...advancedAnimation, type: "fade" });
+
+    rerender(
+      <MotionPanel
+        layer={animatedLayer({ animation: { ...advancedAnimation, type: "fade" } })}
+        timeMs={450}
+        onChange={onChange}
+        onPlayChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("动画时长")).toHaveValue(1500);
+    expect(screen.getByLabelText("动画延迟")).toHaveValue(800);
+    expect(screen.getByLabelText("循环播放")).not.toBeChecked();
+    expect(screen.getByLabelText("动态幅度")).toHaveValue("75");
+    expect(screen.getByLabelText("播放方向")).toHaveValue("alternate");
+  });
+
   test("exposes all persisted animation controls and restart", () => {
     const onChange = vi.fn();
     const onRestart = vi.fn();

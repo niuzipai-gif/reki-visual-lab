@@ -39,6 +39,13 @@ const MOTION_BUTTONS = {
   bundle: "导出实况素材包",
 };
 
+const OUTPUT_TITLES = {
+  image: "导出图片",
+  video: "导出动画视频",
+  gif: "导出 GIF",
+  bundle: "导出实况素材包",
+};
+
 export function ExportDialog({ project, onClose, onExported, onBusyChange, closeButtonRef, motionRenderer = renderMotion }) {
   const [format, setFormat] = useState("png");
   const [outputType, setOutputType] = useState("image");
@@ -162,6 +169,7 @@ export function ExportDialog({ project, onClose, onExported, onBusyChange, close
 
   const isExporting = status === "exporting" || typeof status === "object";
   const exportLabel = outputType === "image" ? "导出图片" : MOTION_BUTTONS[outputType];
+  const exportTitle = OUTPUT_TITLES[outputType];
 
   return (
     <div className="export-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (!isExporting && event.target === event.currentTarget) close(); }}>
@@ -169,7 +177,7 @@ export function ExportDialog({ project, onClose, onExported, onBusyChange, close
         <header className="export-dialog-header">
           <div>
             <small>OUTPUT / LOCAL ONLY</small>
-            <h2 id="reki-export-title">导出图片</h2>
+            <h2 id="reki-export-title">{exportTitle}</h2>
           </div>
           <button ref={closeButtonRef} type="button" className="icon-button" aria-label="关闭导出设置" disabled={isExporting} onClick={close}>×</button>
         </header>

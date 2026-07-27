@@ -206,7 +206,7 @@ describe("responsive Reki workbench", () => {
     expect(screen.getByRole("region", { name: "高级检查器" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "图层" })).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("照片仅在本机处理");
-    expect(screen.getByRole("button", { name: "导出图片" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "导出" })).toBeVisible();
   });
 
   test("changes tools, applies a preset, and supports undo and redo", async () => {
@@ -334,7 +334,7 @@ describe("responsive Reki workbench", () => {
     expect(document.querySelector(".canvas-stage-wrap")).toHaveClass(
       "demo-canvas",
     );
-    await user.click(screen.getByRole("button", { name: /原图对比/ }));
+    await user.click(screen.getByTestId("comparison-toggle"));
     expect(document.querySelector(".canvas-stage-wrap")).toHaveClass(
       "demo-canvas",
     );
@@ -369,9 +369,7 @@ describe("responsive Reki workbench", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "关闭对比" }));
-    expect(screen.getByLabelText("原图实时对照")).toHaveAttribute(
-      "hidden",
-    );
+    expect(screen.queryByLabelText("原图实时对照")).not.toBeInTheDocument();
     expect(editor).toBeVisible();
   });
 
@@ -796,7 +794,7 @@ describe("responsive Reki workbench", () => {
     const user = userEvent.setup();
     renderDemo();
 
-    await user.click(screen.getByRole("button", { name: "导出图片" }));
+    await user.click(screen.getByRole("button", { name: "导出" }));
     const dialog = screen.getByRole("dialog", { name: "导出设置" });
     const close = within(dialog).getByRole("button", { name: "关闭导出设置" });
 
@@ -901,7 +899,7 @@ describe("responsive Reki workbench", () => {
       .toHaveAttribute("max", "5200");
   });
 
-  test("advances the RAF preview cursor and freezes it when paused or restarted", async () => {
+  test("publishes RAF preview time at most once every 30fps interval", async () => {
     const user = userEvent.setup();
     const callbacks = [];
     const cancelFrame = vi.fn();
@@ -919,18 +917,51 @@ describe("responsive Reki workbench", () => {
 
       expect(callbacks).toHaveLength(1);
       await act(async () => {
-        callbacks[0](1600);
+        callbacks[0](1000);
       });
-      expect(canvas).toHaveAttribute("data-animation-time", "600");
+      await act(async () => {
+        callbacks[1](1016);
+        callbacks[2](1032);
+      });
+      expect(canvas).toHaveAttribute("data-animation-time", "0");
+
+      await act(async () => {
+        callbacks[3](1034);
+      });
+      expect(canvas).toHaveAttribute("data-animation-time", "34");
 
       await user.click(screen.getByRole("button", { name: "暂停动画预览" }));
       expect(cancelFrame).toHaveBeenCalled();
-      expect(canvas).toHaveAttribute("data-animation-time", "600");
+      expect(canvas).toHaveAttribute("data-animation-time", "34");
+
+      fireEvent.change(screen.getByRole("slider", { name: "全局时间轴" }), {
+        target: { value: "750" },
+      });
+      expect(canvas).toHaveAttribute("data-animation-time", "750");
 
       await user.click(screen.getByRole("button", { name: "重新开始动画预览" }));
       expect(canvas).toHaveAttribute("data-animation-time", "0");
     } finally {
       now.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("does not auto-play a new animation when the operating system requests reduced motion", () => {
+    const media = {
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    };
+    vi.stubGlobal("matchMedia", vi.fn(() => media));
+    try {
+      renderDemo();
+      fireEvent.change(screen.getByLabelText("动画类型"), {
+        target: { value: "glitch" },
+      });
+      expect(screen.getByRole("button", { name: "播放动画预览" }))
+        .toBeVisible();
+    } finally {
       vi.unstubAllGlobals();
     }
   });

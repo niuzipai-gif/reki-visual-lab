@@ -292,7 +292,23 @@ function handlePosition(bounds, handle) {
   return { x, y };
 }
 
-export function AnnotationNode({
+function annotationNodePropsEqual(previous, next) {
+  if (
+    previous.layer !== next.layer ||
+    previous.canvasSize?.width !== next.canvasSize?.width ||
+    previous.canvasSize?.height !== next.canvasSize?.height ||
+    previous.selected !== next.selected
+  ) {
+    return false;
+  }
+
+  const previousAnimation = previous.layer?.animation?.type ?? "none";
+  const nextAnimation = next.layer?.animation?.type ?? "none";
+  if (previousAnimation !== nextAnimation) return false;
+  return previousAnimation === "none" || previous.animationTimeMs === next.animationTimeMs;
+}
+
+export const AnnotationNode = React.memo(function AnnotationNode({
   layer,
   canvasSize,
   selected,
@@ -479,4 +495,4 @@ export function AnnotationNode({
       ) : null}
     </Group>
   );
-}
+}, annotationNodePropsEqual);

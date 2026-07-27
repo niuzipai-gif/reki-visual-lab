@@ -15,3 +15,4 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 - Layout: hybrid workbench; desktop uses a tool rail and floating inspector, mobile uses a bottom dock and bottom sheet.
 - Privacy: images and AI inference remain in the browser.
 - Scope: static images and short local motion exports; competitor annotation capabilities are the minimum feature line. Video/GIF/materials exports must render locally and never claim native iPhone Live Photo support.
+- Ordinary-user experience and responsive direct manipulation take priority over decorative preview motion. Keep the approved visual direction, but only repaint the smallest necessary part of the editor during animation and expose advanced motion controls progressively.

@@ -66,6 +66,23 @@ describe("ExportDialog export lifecycle", () => {
     expect(screen.getByText("封面图 + 短视频，可导入美图秀秀转换")).toBeVisible();
   });
 
+  test("updates the dialog title to match the selected output", async () => {
+    const user = userEvent.setup();
+    render(<ExportDialog project={{ name: "demo", canvas: { width: 100, height: 120 }, motion: { durationMs: 4000 }, filters: {}, layers: [], image: {} }} />);
+
+    await user.click(screen.getByLabelText("动画视频"));
+    expect(screen.getByRole("heading", { name: "导出动画视频" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "导出视频" })).toBeVisible();
+
+    await user.click(screen.getByLabelText("GIF"));
+    expect(screen.getByRole("heading", { name: "导出 GIF" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "导出 GIF" })).toBeVisible();
+
+    await user.click(screen.getByLabelText("实况素材包"));
+    expect(screen.getByRole("heading", { name: "导出实况素材包" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "导出实况素材包" })).toBeVisible();
+  });
+
   test("cancels a running animation export without triggering a download", async () => {
     const user = userEvent.setup();
     let capturedSignal;

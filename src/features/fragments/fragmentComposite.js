@@ -2,7 +2,10 @@ import { applyEffectStack, normalizeEffectStack } from "../filters/effectStack.j
 import { resolveAnimation, resolveDrawClip } from "../motion/animationRuntime.js";
 
 const MIN_RECT = 0.01;
-const FRAGMENT_PREVIEW_CACHE = new WeakMap();
+export const FRAGMENT_PREVIEW_CACHE_MAX_ENTRIES = 24;
+export const FRAGMENT_PREVIEW_CACHE_MAX_BYTES = 16 * 1024 * 1024;
+
+let FRAGMENT_PREVIEW_CACHE = new WeakMap();
 
 function number(value, fallback = 0) {
   const numeric = Number(value);
@@ -124,6 +127,54 @@ function effectSignature(effects) {
   return JSON.stringify(normalizeEffectStack(effects));
 }
 
+function previewByteSize(canvas) {
+  const width = Math.max(1, number(canvas?.width, 1));
+  const height = Math.max(1, number(canvas?.height, 1));
+  return width * height * 4;
+}
+
+function cachedPreview(drawable, signature) {
+  const sourceCache = FRAGMENT_PREVIEW_CACHE.get(drawable);
+  const entry = sourceCache?.entries.get(signature);
+  if (!entry) return null;
+  sourceCache.entries.delete(signature);
+  sourceCache.entries.set(signature, entry);
+  return entry.canvas;
+}
+
+function cachePreview(drawable, signature, canvas) {
+  const sourceCache = FRAGMENT_PREVIEW_CACHE.get(drawable) ?? {
+    entries: new Map(),
+    byteSize: 0,
+  };
+  const byteSize = previewByteSize(canvas);
+  sourceCache.entries.set(signature, { canvas, byteSize });
+  sourceCache.byteSize += byteSize;
+
+  while (
+    sourceCache.entries.size > FRAGMENT_PREVIEW_CACHE_MAX_ENTRIES ||
+    sourceCache.byteSize > FRAGMENT_PREVIEW_CACHE_MAX_BYTES
+  ) {
+    const [oldestKey, oldest] = sourceCache.entries.entries().next().value;
+    sourceCache.entries.delete(oldestKey);
+    sourceCache.byteSize -= oldest.byteSize;
+  }
+  FRAGMENT_PREVIEW_CACHE.set(drawable, sourceCache);
+}
+
+export function resetFragmentPreviewCache() {
+  FRAGMENT_PREVIEW_CACHE = new WeakMap();
+}
+
+export function fragmentPreviewCacheMetrics(source) {
+  const drawable = fragmentDrawable(source);
+  const sourceCache = drawable ? FRAGMENT_PREVIEW_CACHE.get(drawable) : null;
+  return {
+    entryCount: sourceCache?.entries.size ?? 0,
+    byteSize: sourceCache?.byteSize ?? 0,
+  };
+}
+
 function fragmentImage({ source, sourceRect, canvasSize, canvasFactory }) {
   const drawable = fragmentDrawable(source);
   if (!drawable || !sourceRect) return null;
@@ -159,15 +210,13 @@ export function createFragmentPreview({ source, layer, canvasSize, canvasFactory
   if (!drawable || !sourceRect || !effects.length) return null;
   const signature = `${sourceRect.x}:${sourceRect.y}:${sourceRect.width}:${sourceRect.height}:${effectSignature(effects)}`;
   const canCache = !canvasFactory && (typeof drawable === "object" || typeof drawable === "function");
-  const cached = canCache ? FRAGMENT_PREVIEW_CACHE.get(drawable)?.get(signature) : null;
+  const cached = canCache ? cachedPreview(drawable, signature) : null;
   if (cached) return cached;
   const crop = fragmentImage({ source: drawable, sourceRect, canvasSize, canvasFactory });
   if (!crop) return null;
   applyLocalEffects(crop.context, crop.width, crop.height, effects);
   if (canCache) {
-    const sourceCache = FRAGMENT_PREVIEW_CACHE.get(drawable) ?? new Map();
-    sourceCache.set(signature, crop.canvas);
-    FRAGMENT_PREVIEW_CACHE.set(drawable, sourceCache);
+    cachePreview(drawable, signature, crop.canvas);
   }
   return crop.canvas;
 }

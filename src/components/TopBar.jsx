@@ -38,7 +38,7 @@ export function TopBar({
         <button type="button" className="icon-button" onClick={onRedo} disabled={!canRedo} aria-label="重做">
           <Redo2 size={17} />
         </button>
-        <button type="button" className="comparison-button" data-testid="comparison-toggle" onClick={onToggleBackground} disabled={!canCompare} aria-pressed={comparisonVisible}>
+        <button type="button" className="comparison-button" data-testid="comparison-toggle" onClick={onToggleBackground} disabled={!canCompare} aria-label={comparisonVisible ? "关闭对比" : "原图对比"} aria-pressed={comparisonVisible}>
           {comparisonVisible ? <EyeOff size={16} /> : <Eye size={16} />}
           <span>{comparisonVisible ? "关闭对比" : "原图对比"}</span>
         </button>
@@ -47,7 +47,7 @@ export function TopBar({
         <b>{ratio}</b><span>{canvas.width} × {canvas.height}</span>
       </div>
       <button type="button" className="primary-button export-button" onClick={onExport}>
-        <Download size={16} />导出图片
+        <Download size={16} />导出
       </button>
     </header>
   );

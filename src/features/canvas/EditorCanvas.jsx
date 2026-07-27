@@ -6,7 +6,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Layer, Stage } from "react-konva";
+import { Layer, Line, Stage } from "react-konva";
 import { normalizePoint } from "../../domain/geometry.js";
 import { createAnnotation } from "../../domain/project.js";
 import { TOOL_DEFINITIONS } from "../tools/toolDefinitions.js";
@@ -19,6 +19,7 @@ const TOOL_BY_ID = new Map(
 );
 const TOUCH_JITTER_RADIUS_PX = 12;
 const TOUCH_DOUBLE_TAP_WINDOW_MS = 500;
+const StableBackgroundLayer = React.memo(BackgroundLayer);
 
 function clamp(value) {
   return Math.max(0, Math.min(1, value));
@@ -165,6 +166,7 @@ export function EditorCanvas({
 }) {
   const draftPoints = useRef([]);
   const recentTouchTap = useRef(null);
+  const [draftVersion, setDraftVersion] = useState(0);
   const canvasSize = project.canvas;
   const viewportRef = useRef(null);
   const [availableSize, setAvailableSize] = useState(canvasSize);
@@ -203,6 +205,7 @@ export function EditorCanvas({
   useEffect(() => {
     draftPoints.current = [];
     recentTouchTap.current = null;
+    setDraftVersion((version) => version + 1);
   }, [activeTool]);
 
   useEffect(() => {
@@ -254,8 +257,10 @@ export function EditorCanvas({
 
       const next = appendUniquePoint(draftPoints.current, point);
       draftPoints.current = next;
+      setDraftVersion((version) => version + 1);
       if (tool.objectType === "leader" && next.length >= 2) {
         draftPoints.current = [];
+        setDraftVersion((version) => version + 1);
         create(tool.objectType, next);
       }
       return;
@@ -269,13 +274,29 @@ export function EditorCanvas({
     if (tool.objectType !== "path" || draftPoints.current.length < 2) return;
     const points = draftPoints.current;
     draftPoints.current = [];
+    setDraftVersion((version) => version + 1);
     create(tool.objectType, points);
   }
+
+  function cancelPathDraft() {
+    if (tool.objectType !== "path" || !draftPoints.current.length) return false;
+    draftPoints.current = [];
+    recentTouchTap.current = null;
+    setDraftVersion((version) => version + 1);
+    return true;
+  }
+
+  const draftPathPoints = draftVersion >= 0 && tool.objectType === "path"
+    ? draftPoints.current.flatMap((point) => [
+        point.x * canvasSize.width,
+        point.y * canvasSize.height,
+      ])
+    : [];
 
   return (
     <>
       <span id="canvas-keyboard-help" className="sr-only">
-        Escape 清除选择。使用节点路径工具时，Enter 完成路径。
+        Escape 清除选择；节点路径草稿可按 Escape 取消，按 Enter 完成。
       </span>
       <div
         ref={viewportRef}
@@ -286,7 +307,7 @@ export function EditorCanvas({
         aria-describedby="canvas-keyboard-help"
         tabIndex={0}
         onKeyDown={(event) => {
-          if (event.key === "Escape") onSelectLayer?.(null);
+          if (event.key === "Escape" && !cancelPathDraft()) onSelectLayer?.(null);
           if (event.key === "Enter") completePath();
         }}
       >
@@ -298,7 +319,7 @@ export function EditorCanvas({
             height: fitted.height,
           }}
         >
-          <BackgroundLayer
+          <StableBackgroundLayer
             image={project.image}
             canvasSize={canvasSize}
             filters={project.filters}
@@ -317,6 +338,17 @@ export function EditorCanvas({
             onDblTap={completePath}
           >
             <Layer>
+              {draftPathPoints.length ? (
+                <Line
+                  name="path-draft-line"
+                  points={draftPathPoints}
+                  stroke="#e5484d"
+                  strokeWidth={2}
+                  dash={[7, 5]}
+                  opacity={0.9}
+                  listening={false}
+                />
+              ) : null}
               {visibleLayers.map((layer) => layer.type === "extractedFragment" ? (
                 <FragmentNode
                   key={layer.id}
@@ -341,6 +373,13 @@ export function EditorCanvas({
               ))}
             </Layer>
           </Stage>
+          {tool.objectType === "path" ? (
+            <div className="path-draft-helper" role="status">
+              {draftPathPoints.length
+                ? "继续点按，双击或按 Enter 完成，按 Esc 取消。"
+                : "点按画布添加路径节点。"}
+            </div>
+          ) : null}
           {grid ? (
             <div
               className="canvas-grid-overlay"

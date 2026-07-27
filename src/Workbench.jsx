@@ -24,6 +24,50 @@ import { ToolRail } from "./features/tools/ToolRail.jsx";
 import { TOOL_DEFINITIONS } from "./features/tools/toolDefinitions.js";
 import { useResizablePanels } from "./hooks/useResizablePanels.js";
 
+const PREVIEW_FRAME_INTERVAL_MS = 1000 / 30;
+
+const StableTopBar = React.memo(TopBar, (previous, next) => (
+  previous.canUndo === next.canUndo &&
+  previous.canRedo === next.canRedo &&
+  previous.comparisonVisible === next.comparisonVisible &&
+  previous.canCompare === next.canCompare &&
+  previous.canvas === next.canvas
+));
+const StableToolRail = React.memo(
+  ToolRail,
+  (previous, next) => previous.activeTool === next.activeTool,
+);
+const StablePresetStrip = React.memo(
+  PresetStrip,
+  (previous, next) => previous.activePreset === next.activePreset,
+);
+const StableFilterPanel = React.memo(
+  FilterPanel,
+  (previous, next) => previous.effects === next.effects,
+);
+const StableLayersPanel = React.memo(LayersPanel, (previous, next) => (
+  previous.layers === next.layers &&
+  previous.selectedLayerId === next.selectedLayerId
+));
+const StableInspector = React.memo(
+  Inspector,
+  (previous, next) => (
+    previous.layer === next.layer &&
+    previous.layerList === next.layerList
+  ),
+);
+const StableStatusBar = React.memo(StatusBar, (previous, next) => (
+  previous.zoom === next.zoom &&
+  previous.grid === next.grid &&
+  previous.canvas === next.canvas &&
+  previous.saveStatus === next.saveStatus
+));
+const StableBottomDock = React.memo(BottomDock, (previous, next) => (
+  previous.activeSheet === next.activeSheet &&
+  previous.canCompare === next.canCompare &&
+  previous.comparisonVisible === next.comparisonVisible
+));
+
 export function createDemoProject() {
   const project = createProject({ width: 1080, height: 1350 });
   return {
@@ -94,7 +138,9 @@ export function Workbench({
   const [motionTimeMs, setMotionTimeMs] = useState(0);
   const [motionClockEpoch, setMotionClockEpoch] = useState(0);
   const [comparisonVisible, setComparisonVisible] = useState(false);
-  const [comparisonPrimed, setComparisonPrimed] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(
+    () => Boolean(globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches),
+  );
   const [aiImageSource, setAiImageSource] = useState(() =>
     drawableImageSource(initialProject?.image),
   );
@@ -105,6 +151,7 @@ export function Workbench({
   const lastNotifiedProject = useRef(state.present);
   const replaceInputRef = useRef(null);
   const motionTimeRef = useRef(0);
+  const lastMotionPublishRef = useRef(Number.NEGATIVE_INFINITY);
   const [replaceFeedback, setReplaceFeedback] = useState(null);
   const timelineDurationMs = state.present.motion?.durationMs ?? 4000;
   const {
@@ -138,6 +185,15 @@ export function Workbench({
   }, [state.present.image]);
 
   useEffect(() => {
+    const media = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)");
+    if (!media) return undefined;
+    const syncPreference = () => setPrefersReducedMotion(Boolean(media.matches));
+    syncPreference();
+    media.addEventListener?.("change", syncPreference);
+    return () => media.removeEventListener?.("change", syncPreference);
+  }, []);
+
+  useEffect(() => {
     if (!exportOpen) return undefined;
     const previouslyFocused = document.activeElement;
     const close = () => setExportOpen(false);
@@ -165,7 +221,10 @@ export function Workbench({
     const tick = (now) => {
       const next = (now - startedAt) % timelineDurationMs;
       motionTimeRef.current = next;
-      setMotionTimeMs(next);
+      if (now - lastMotionPublishRef.current >= PREVIEW_FRAME_INTERVAL_MS) {
+        lastMotionPublishRef.current = now;
+        setMotionTimeMs(next);
+      }
       frameId = requestAnimationFrame(tick);
     };
     frameId = requestAnimationFrame(tick);
@@ -194,7 +253,7 @@ export function Workbench({
   const updateSelectedAnimation = (animation) => {
     if (!selectedLayer) return;
     dispatch({ type: "layer/animation", id: selectedLayer.id, animation });
-    if (animation.type !== "none") setMotionPlaying(true);
+    if (animation.type !== "none" && !prefersReducedMotion) setMotionPlaying(true);
   };
 
   const restartMotionPreview = () => {
@@ -275,7 +334,7 @@ export function Workbench({
   };
 
   const layersPanel = (
-    <LayersPanel
+    <StableLayersPanel
       layers={state.present.layers}
       selectedLayerId={state.selectedLayerId}
       onSelect={(id) => dispatch({ type: "selection/set", id })}
@@ -285,8 +344,9 @@ export function Workbench({
   );
   const inspector = (
     <div className="inspector-motion-stack">
-      <Inspector
+      <StableInspector
         layer={selectedLayer}
+        layerList={state.present.layers}
         onPatch={updateSelected}
         onBatchLabel={batchLabel}
         onApplyStyle={applyStyle}
@@ -333,7 +393,7 @@ export function Workbench({
     if (action === "reset") dispatch({ type: "effects/reset", effects: [] });
   };
   const filterPanel = (
-    <FilterPanel
+    <StableFilterPanel
       effects={state.present.effectStack}
       onAction={handleEffectAction}
     />
@@ -414,7 +474,7 @@ export function Workbench({
 
   return (
     <main className="workbench-shell" role="region" aria-label="编辑工作台">
-      <TopBar
+      <StableTopBar
         canUndo={state.past.length > 0}
         canRedo={state.future.length > 0}
         comparisonVisible={comparisonVisible}
@@ -427,12 +487,11 @@ export function Workbench({
           dispatch({ type: "history/redo" });
         }}
         onToggleBackground={() => {
-          if (!comparisonVisible) setComparisonPrimed(true);
           setComparisonVisible((visible) => !visible);
         }}
         onExport={() => setExportOpen(true)}
       />
-      <ToolRail
+      <StableToolRail
         activeTool={activeTool}
         onSelectTool={setActiveTool}
         onAiScan={() => {
@@ -440,7 +499,7 @@ export function Workbench({
           setMobileSheet(null);
         }}
       />
-      <PresetStrip activePreset={activePreset} onApply={applyPreset} />
+      <StablePresetStrip activePreset={activePreset} onApply={applyPreset} />
       <section
         className={`canvas-workspace${grid ? " grid-visible" : ""}`}
         aria-label="画布工作区"
@@ -510,7 +569,7 @@ export function Workbench({
               </div>
             ) : null}
           </div>
-          {comparisonVisible || comparisonPrimed ? (
+          {comparisonVisible ? (
             <OriginalComparisonPane
               image={state.present.image}
               canvasSize={state.present.canvas}
@@ -529,11 +588,14 @@ export function Workbench({
         </GlassPanel>
         <GlassPanel className="desktop-layers" aria-label="图层">{layersPanel}</GlassPanel>
       </section>
-      <StatusBar zoom={zoom} grid={grid} canvas={state.present.canvas} saveStatus={saveStatus} onZoomChange={setZoom} onToggleGrid={() => setGrid((value) => !value)} />
-      <BottomDock
+      <StableStatusBar zoom={zoom} grid={grid} canvas={state.present.canvas} saveStatus={saveStatus} onZoomChange={setZoom} onToggleGrid={() => setGrid((value) => !value)} />
+      <StableBottomDock
         activeSheet={mobileSheet}
+        canCompare={Boolean(state.present.image)}
+        comparisonVisible={comparisonVisible}
         onOpen={(sheet) => setMobileSheet(sheet)}
         onExport={() => setExportOpen(true)}
+        onToggleComparison={() => setComparisonVisible((visible) => !visible)}
       />
       <BottomSheet
         tab={mobileSheet}

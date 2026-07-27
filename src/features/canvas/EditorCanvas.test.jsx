@@ -1525,6 +1525,37 @@ describe("EditorCanvas", () => {
     );
   });
 
+  test("shows an in-progress path guide and Escape cancels the draft without creating a layer", () => {
+    const onCreatePath = vi.fn();
+    const onSelectLayer = vi.fn();
+    render(
+      <EditorCanvas
+        project={projectWith()}
+        activeTool="node-path"
+        selectedLayerId={null}
+        onSelectLayer={onSelectLayer}
+        onCreateLayer={onCreatePath}
+        onChangeLayer={vi.fn()}
+      />,
+    );
+    const stage = editorStage();
+
+    expect(screen.getByText("点按画布添加路径节点。"))
+      .toBeVisible();
+
+    fireEvent.click(stage);
+    expect(screen.getByText("继续点按，双击或按 Enter 完成，按 Esc 取消。"))
+      .toBeVisible();
+    expect(document.querySelector('[data-name="path-draft-line"]'))
+      .toHaveAttribute("data-points", "[270,675]");
+
+    fireEvent.keyDown(screen.getByTestId("editor-canvas"), { key: "Escape" });
+    expect(document.querySelector('[data-name="path-draft-line"]'))
+      .not.toBeInTheDocument();
+    expect(onCreatePath).not.toHaveBeenCalled();
+    expect(onSelectLayer).not.toHaveBeenCalled();
+  });
+
   test("deduplicates a double-click terminal anchor and creates once in StrictMode", () => {
     const onCreatePath = vi.fn();
     render(

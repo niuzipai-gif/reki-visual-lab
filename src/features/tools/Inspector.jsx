@@ -2,6 +2,7 @@ import React, { useEffect, useId, useState } from "react";
 import { Paintbrush, Trash2 } from "lucide-react";
 import { isSpatialMarker } from "../fragments/fragmentDomain.js";
 import { FragmentInspector } from "../fragments/FragmentInspector.jsx";
+import { layerTypeLabel } from "../../domain/layerTypeLabels.js";
 
 const LABEL_TYPES = new Set([
   "label",
@@ -97,7 +98,7 @@ export function Inspector({
 
   return (
     <div className="inspector-form">
-      <header><div><small>SELECTED OBJECT</small><h2>{layer.name}</h2></div><span className="type-badge">{layer.type}</span></header>
+      <header><div><small>SELECTED OBJECT</small><h2>{layer.name}</h2></div><span className="type-badge">{layerTypeLabel(layer.type)}</span></header>
       {isSpatialMarker(layer) ? (
         <button
           type="button"

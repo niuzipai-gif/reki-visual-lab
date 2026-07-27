@@ -23,4 +23,21 @@ describe("TopBar branding", () => {
       "/brand/reki-character-mark.png",
     );
   });
+
+  test("uses a generic export entry label", () => {
+    render(
+      <TopBar
+        canUndo={false}
+        canRedo={false}
+        backgroundVisible
+        canvas={{ width: 1080, height: 1350 }}
+        onUndo={() => {}}
+        onRedo={() => {}}
+        onToggleBackground={() => {}}
+        onExport={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "导出" })).toBeVisible();
+  });
 });

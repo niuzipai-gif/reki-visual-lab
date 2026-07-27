@@ -116,6 +116,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .background-source { position: absolute; inset: 0; }
 .canvas-background .hidden { visibility: hidden; }
 .canvas-surface .konvajs-content { position: relative; z-index: 1; }
+.path-draft-helper { position: absolute; z-index: 4; right: 10px; bottom: 10px; max-width: calc(100% - 20px); padding: 7px 9px; border: 1px solid rgba(255, 247, 237, .34); border-radius: 9px; color: #fff7ed; background: rgba(29, 27, 23, .74); box-shadow: 0 8px 20px rgba(0,0,0,.16); font-size: .62rem; line-height: 1.35; pointer-events: none; }
 .canvas-grid-overlay { position: absolute; z-index: 2; inset: 0; pointer-events: none; background-image: linear-gradient(rgba(176,47,62,.11) 1px, transparent 1px), linear-gradient(90deg, rgba(176,47,62,.11) 1px, transparent 1px); background-size: 10% 10%; }
 .desktop-inspector, .desktop-layers { position: absolute; right: 18px; width: var(--reki-panel-width, 320px); overflow: auto; }
 .desktop-inspector { top: 18px; max-height: calc(64% - 24px); padding: 14px; }
@@ -300,7 +301,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 @media (max-width: 759px) {
   .workbench-shell { height: 100dvh; min-height: 0; grid-template-columns: 1fr; grid-template-rows: 54px 64px minmax(0,1fr); }
   .top-bar { grid-column: 1; grid-template-columns: 1fr auto auto; padding: 0 10px; gap: 6px; }
-  .brand-lockup small, .comparison-button, .canvas-meta { display: none; }
+  .brand-lockup small, .canvas-meta { display: none; }
+  .comparison-button { width: 34px; min-height: 34px; padding: 0; justify-content: center; }
+  .comparison-button span { display: none; }
   .brand-icon { width: 28px; height: 28px; }
   .top-history { order: 2; }
   .top-history .icon-button { width: 32px; height: 32px; }

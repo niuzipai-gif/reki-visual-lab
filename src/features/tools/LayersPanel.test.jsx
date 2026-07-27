@@ -45,4 +45,19 @@ describe("LayersPanel clear-all action", () => {
     await user.click(screen.getByRole("button", { name: "清除全部图层" }));
     expect(onClearAll).toHaveBeenCalledTimes(1);
   });
+
+  test("uses the human-facing Chinese type label instead of the internal identifier", () => {
+    render(
+      <LayersPanel
+        layers={[layer]}
+        selectedLayerId={layer.id}
+        onSelect={vi.fn()}
+        onAction={vi.fn()}
+        onClearAll={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("节点路径")).toBeVisible();
+    expect(screen.queryByText("path")).not.toBeInTheDocument();
+  });
 });

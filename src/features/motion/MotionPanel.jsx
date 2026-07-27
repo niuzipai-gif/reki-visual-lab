@@ -49,6 +49,7 @@ export function MotionPanel({
   if (!layer) return null;
   const animation = animationFor(layer);
   const duration = Math.max(200, Number(timelineDurationMs) || 4000);
+  const hasAnimation = animation.type !== "none";
 
   function update(patch) {
     onChange?.(sanitizeAnimation({ ...animation, ...patch }));
@@ -84,67 +85,69 @@ export function MotionPanel({
         </select>
       </label>
 
-      <div className="range-grid motion-range-grid">
-        <label className="control-field" htmlFor="motion-duration">
-          动画时长
+      {hasAnimation ? <>
+        <div className="range-grid motion-range-grid">
+          <label className="control-field" htmlFor="motion-duration">
+            动画时长
+            <input
+              id="motion-duration"
+              type="number"
+              min="200"
+              max="6000"
+              step="100"
+              value={animation.durationMs}
+              onChange={(event) => update({ durationMs: event.target.value })}
+            />
+          </label>
+          <label className="control-field" htmlFor="motion-delay">
+            动画延迟
+            <input
+              id="motion-delay"
+              type="number"
+              min="0"
+              max="6000"
+              step="100"
+              value={animation.delayMs}
+              onChange={(event) => update({ delayMs: event.target.value })}
+            />
+          </label>
+        </div>
+
+        <label className="switch-row" htmlFor="motion-loop">
+          循环播放
           <input
-            id="motion-duration"
-            type="number"
-            min="200"
-            max="6000"
-            step="100"
-            value={animation.durationMs}
-            onChange={(event) => update({ durationMs: event.target.value })}
+            id="motion-loop"
+            type="checkbox"
+            checked={animation.loop}
+            onChange={(event) => update({ loop: event.target.checked })}
           />
         </label>
-        <label className="control-field" htmlFor="motion-delay">
-          动画延迟
+
+        <label className="control-field" htmlFor="motion-amplitude">
+          动态幅度
           <input
-            id="motion-delay"
-            type="number"
+            id="motion-amplitude"
+            type="range"
             min="0"
-            max="6000"
-            step="100"
-            value={animation.delayMs}
-            onChange={(event) => update({ delayMs: event.target.value })}
+            max="100"
+            value={Math.round(animation.amplitude * 100)}
+            onChange={(event) => update({ amplitude: Number(event.target.value) / 100 })}
           />
         </label>
-      </div>
 
-      <label className="switch-row" htmlFor="motion-loop">
-        循环播放
-        <input
-          id="motion-loop"
-          type="checkbox"
-          checked={animation.loop}
-          onChange={(event) => update({ loop: event.target.checked })}
-        />
-      </label>
-
-      <label className="control-field" htmlFor="motion-amplitude">
-        动态幅度
-        <input
-          id="motion-amplitude"
-          type="range"
-          min="0"
-          max="100"
-          value={Math.round(animation.amplitude * 100)}
-          onChange={(event) => update({ amplitude: Number(event.target.value) / 100 })}
-        />
-      </label>
-
-      <label className="control-field" htmlFor="motion-direction">
-        播放方向
-        <select
-          id="motion-direction"
-          value={animation.direction}
-          onChange={(event) => update({ direction: event.target.value })}
-        >
-          {Object.entries(DIRECTION_LABELS).map(([direction, label]) => (
-            <option key={direction} value={direction}>{label}</option>
-          ))}
-        </select>
-      </label>
+        <label className="control-field" htmlFor="motion-direction">
+          播放方向
+          <select
+            id="motion-direction"
+            value={animation.direction}
+            onChange={(event) => update({ direction: event.target.value })}
+          >
+            {Object.entries(DIRECTION_LABELS).map(([direction, label]) => (
+              <option key={direction} value={direction}>{label}</option>
+            ))}
+          </select>
+        </label>
+      </> : <p>选择动画后，可调整时长、延迟与动态幅度。</p>}
 
       <div className="motion-timeline" aria-label="全局动画时间轴">
         <div className="motion-timeline-row">
