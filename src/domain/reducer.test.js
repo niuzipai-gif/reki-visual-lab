@@ -469,6 +469,70 @@ describe("layer actions", () => {
     ]);
   });
 
+  test("sanitizes extracted fragments during batch updates", () => {
+    const marker = createAnnotation("box", [
+      { x: 0.2, y: 0.2 },
+      { x: 0.5, y: 0.5 },
+    ], { id: "marker" });
+    const withFragment = editorReducer(
+      addLayer(createEditorState(), marker),
+      { type: "fragment/create", markerId: marker.id },
+    );
+    const fragment = withFragment.present.layers[1];
+    const updated = editorReducer(withFragment, {
+      type: "layers/updateMany",
+      updates: [
+        { id: marker.id, patch: { label: "safe-marker" } },
+        {
+          id: fragment.id,
+          patch: {
+            sourceMarkerId: "hijacked-marker",
+            sourceFill: "neon",
+            sourceRect: { x: -1, y: 0, width: 3, height: 3 },
+            transform: { x: -1, y: 0, width: 3, height: 3 },
+            effects: [{ type: "script", settings: { code: "alert(1)" } }],
+          },
+        },
+      ],
+    });
+
+    expect(updated.present.layers[0].label).toBe("safe-marker");
+    expect(updated.present.layers[1]).toMatchObject({
+      sourceMarkerId: marker.id,
+      sourceFill: "preserve",
+      linkedToMarker: true,
+      effects: [],
+    });
+    expect(updated.present.layers[1].sourceRect).toEqual(
+      updated.present.layers[1].transform,
+    );
+    expect(updated.past).toHaveLength(withFragment.past.length + 1);
+  });
+
+  test("unlinks an extracted fragment for a valid batched transform", () => {
+    const marker = createAnnotation("box", [
+      { x: 0.2, y: 0.2 },
+      { x: 0.5, y: 0.5 },
+    ], { id: "marker" });
+    const withFragment = editorReducer(
+      addLayer(createEditorState(), marker),
+      { type: "fragment/create", markerId: marker.id },
+    );
+    const fragment = withFragment.present.layers[1];
+    const updated = editorReducer(withFragment, {
+      type: "layers/updateMany",
+      updates: [{
+        id: fragment.id,
+        patch: { transform: { ...fragment.transform, x: 0.6 } },
+      }],
+    });
+
+    expect(updated.present.layers[1]).toMatchObject({
+      linkedToMarker: false,
+      transform: { x: 0.6 },
+    });
+  });
+
   test("adds an AI scan atomically and one undo removes every generated layer", () => {
     const manual = createAnnotation("box", [], { id: "manual" });
     const first = createAnnotation("nodeCloud", [], {

@@ -428,7 +428,14 @@ export function editorReducer(state, action) {
   if (action.type === "layers/updateMany") {
     const updates = new Map();
     for (const update of action.updates ?? []) {
-      if (!hasLayer(state.present, update.id)) continue;
+      const source = state.present.layers.find((layer) => layer.id === update.id);
+      if (!source) continue;
+      if (source.type === "extractedFragment") {
+        const patch = fragmentPatch(source, update.patch);
+        if (!patch || !hasEffectivePatch(source, patch)) continue;
+        updates.set(update.id, { ...(updates.get(update.id) ?? {}), ...patch });
+        continue;
+      }
       const { id: _ignoredId, ...patch } = update.patch ?? {};
       updates.set(update.id, { ...(updates.get(update.id) ?? {}), ...patch });
     }
@@ -443,9 +450,13 @@ export function editorReducer(state, action) {
     if (!changed) return state;
 
     let nextPresent = { ...state.present, layers };
-    for (const layer of layers) {
-      if (updates.has(layer.id) && isSpatialMarker(layer)) {
-        nextPresent = syncLinkedFragments(nextPresent, layer.id);
+    for (const [id, patch] of updates) {
+      const source = state.present.layers.find((layer) => layer.id === id);
+      if (isSpatialMarker(source)) {
+        nextPresent = syncLinkedFragments(nextPresent, id);
+      }
+      if (source?.type === "extractedFragment" && patch.linkedToMarker === true) {
+        nextPresent = syncLinkedFragments(nextPresent, source.sourceMarkerId);
       }
     }
     return commit(state, nextPresent);
