@@ -967,7 +967,7 @@ describe("EditorCanvas", () => {
 
     expect(screen.getByTestId("canvas-background")).toHaveAttribute(
       "data-original",
-      "true",
+      "false",
     );
     expect(screen.getByTestId("canvas-background").style.filter).toBe("");
     expect(surface.style.filter).toBe("");
@@ -1021,7 +1021,7 @@ describe("EditorCanvas", () => {
     }
   });
 
-  test("switches to the saved original source without removing annotations", async () => {
+  test("keeps the editable preview source when comparison state is enabled", async () => {
     const workingSource = { width: 800, height: 1000, name: "working-preview" };
     const originalSource = { width: 1600, height: 2000, name: "original-file" };
     const originalFile = new Blob(["original"], { type: "image/png" });
@@ -1075,12 +1075,16 @@ describe("EditorCanvas", () => {
       />,
     );
 
-    await waitFor(() =>
-      expect(drawImage).toHaveBeenCalledWith(originalSource, 0, 0, 1080, 1350),
+    expect(drawImage).not.toHaveBeenCalledWith(
+      originalSource,
+      0,
+      0,
+      1080,
+      1350,
     );
     expect(screen.getByTestId("canvas-background")).toHaveAttribute(
       "data-original",
-      "true",
+      "false",
     );
     expect(document.querySelector('[data-layer-id="persisted-marker"]')).toBeInTheDocument();
   });
@@ -1215,7 +1219,7 @@ describe("EditorCanvas", () => {
 
     expect(screen.getByTestId("canvas-background")).toHaveAttribute(
       "data-original",
-      "true",
+      "false",
     );
   });
 

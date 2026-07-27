@@ -6,6 +6,10 @@ import { createDemoProject, Workbench } from "../Workbench.jsx";
 import { createAnnotation, createProject } from "../domain/project.js";
 import { TOOL_DEFINITIONS } from "../features/tools/toolDefinitions.js";
 
+const { editorCanvasSpy } = vi.hoisted(() => ({
+  editorCanvasSpy: vi.fn(),
+}));
+
 vi.mock("../features/canvas/EditorCanvas.jsx", async () => {
   const { createAnnotation } = await import("../domain/project.js");
 
@@ -22,6 +26,7 @@ vi.mock("../features/canvas/EditorCanvas.jsx", async () => {
       onImageSourceReady,
       animationTimeMs,
     }) {
+      editorCanvasSpy({ onImageSourceReady });
       const selected = project.layers.find(
         ({ id }) => id === selectedLayerId,
       );
@@ -303,8 +308,56 @@ describe("responsive Reki workbench", () => {
       "demo-canvas",
     );
     await user.click(screen.getByRole("button", { name: /原图对比/ }));
-    expect(document.querySelector(".canvas-stage-wrap")).not.toHaveClass(
+    expect(document.querySelector(".canvas-stage-wrap")).toHaveClass(
       "demo-canvas",
+    );
+    expect(document.querySelector(".canvas-comparison-layout")).toHaveClass(
+      "is-comparing",
+    );
+  });
+
+  test("keeps the editing canvas active beside an unfiltered original comparison pane", async () => {
+    const user = userEvent.setup();
+    const project = {
+      ...createDemoProject(),
+      effectStack: [{
+        id: "contrast-1",
+        type: "contrast",
+        name: "对比度",
+        visible: true,
+        opacity: 1,
+        settings: { amount: 1.2 },
+      }],
+    };
+    render(<Workbench initialDemoProject={project} />);
+    const editor = screen.getByRole("application", { name: "标注画布" });
+
+    await user.click(screen.getByRole("button", { name: "原图对比" }));
+
+    expect(editor).toBeVisible();
+    expect(editor).toHaveAttribute("data-effect-stack", JSON.stringify(project.effectStack));
+    expect(screen.getByLabelText("原图实时对照")).toHaveAttribute(
+      "data-effect-count",
+      "0",
+    );
+
+    await user.click(screen.getByRole("button", { name: "关闭对比" }));
+    expect(screen.getByLabelText("原图实时对照")).toHaveAttribute(
+      "hidden",
+    );
+    expect(editor).toBeVisible();
+  });
+
+  test("keeps the editor image callback stable when comparison is toggled", async () => {
+    const user = userEvent.setup();
+    editorCanvasSpy.mockClear();
+    renderDemo();
+    const initialCallback = editorCanvasSpy.mock.calls.at(-1)[0].onImageSourceReady;
+
+    await user.click(screen.getByRole("button", { name: "原图对比" }));
+
+    expect(editorCanvasSpy.mock.calls.at(-1)[0].onImageSourceReady).toBe(
+      initialCallback,
     );
   });
 

@@ -5,6 +5,8 @@ import {
   legacyFiltersToEffectStack,
 } from "../filters/effectStack.js";
 
+const EMPTY_EFFECT_STACK = Object.freeze([]);
+
 function imageResource(image) {
   // The renderer only borrows decoded resources; import/project code owns disposal.
   if (!image) return null;
@@ -29,6 +31,15 @@ function imageResource(image) {
   }
 
   return { kind: "drawable", source };
+}
+
+function imageRenderIdentity(image) {
+  if (!image || typeof image !== "object") return image;
+  if (image.demo) return "demo";
+  const wrapped = image.source ?? image.element ?? image.bitmap ?? image.image;
+  if (wrapped !== undefined && wrapped !== null) return wrapped;
+  if (typeof image.url === "string") return image.url;
+  return image;
 }
 
 function isBlobLike(value) {
@@ -125,16 +136,24 @@ export function BackgroundLayer({
   const sourceGenerationRef = useRef(0);
   const scheduledFrameRef = useRef(null);
   const originalResourceRef = useRef(null);
-  const resource = useMemo(() => imageResource(image), [image]);
+  const renderIdentity = imageRenderIdentity(image);
+  const resource = useMemo(() => imageResource(image), [renderIdentity]);
   const isDemo = image?.demo === true;
   const [urlSource, setUrlSource] = useState(null);
   const [originalResource, setOriginalResource] = useState(null);
   const [renderError, setRenderError] = useState(null);
   const [canvasReady, setCanvasReady] = useState(false);
   const dimensions = previewSize(canvasSize.width, canvasSize.height);
+  const explicitEffectStack = Array.isArray(effectStack);
+  const effectStackInput = explicitEffectStack
+    ? effectStack.length > 0
+      ? effectStack
+      : EMPTY_EFFECT_STACK
+    : null;
+  const legacyFilterInput = explicitEffectStack ? null : filters;
   const effectiveStack = useMemo(
-    () => (Array.isArray(effectStack) ? effectStack : legacyFiltersToEffectStack(filters)),
-    [effectStack, filters],
+    () => effectStackInput ?? legacyFiltersToEffectStack(legacyFilterInput),
+    [effectStackInput, legacyFilterInput],
   );
   const activeResource = showOriginal ? originalResource : resource;
   const displayResource = activeResource ?? resource;

@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { BackgroundLayer } from "./BackgroundLayer.jsx";
 import { analyzeImageFeatures } from "../ai/styleAdvisor.js";
-import { applyEffectStack } from "../filters/effectStack.js";
+import * as effectStackModule from "../filters/effectStack.js";
 
 const canvasSize = { width: 1080, height: 1350 };
 const filters = {
@@ -39,7 +39,7 @@ describe("BackgroundLayer", () => {
     render(<BackgroundLayer image={{ width: 1, height: 1 }} canvasSize={{ width: 1, height: 1 }} filters={{}} effectStack={effectStack} />);
     await waitFor(() => expect(putImageData).toHaveBeenCalledTimes(1));
     expect(Array.from(putImageData.mock.calls[0][0].data)).toEqual(
-      Array.from(applyEffectStack(sourcePixels, effectStack).data),
+      Array.from(effectStackModule.applyEffectStack(sourcePixels, effectStack).data),
     );
   });
 
@@ -754,5 +754,80 @@ describe("BackgroundLayer", () => {
     expect(drawImage).not.toHaveBeenCalled();
     frames[1].callback(0);
     expect(drawImage).toHaveBeenCalledWith(originalSource, 0, 0, 1, 1);
+  });
+
+  test("keeps a cached original presentation when only its project wrapper changes", async () => {
+    const originalSource = { width: 8, height: 4, name: "camera-original" };
+    const workingSource = { width: 4, height: 2, name: "working-preview" };
+    const drawImage = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      clearRect: vi.fn(),
+      drawImage,
+    });
+    vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+
+    const { rerender } = render(
+      <BackgroundLayer
+        image={{ source: workingSource, originalFile: originalSource }}
+        canvasSize={{ width: 1, height: 1 }}
+        filters={{}}
+        effectStack={[]}
+        showOriginal
+      />,
+    );
+    await waitFor(() =>
+      expect(drawImage).toHaveBeenCalledWith(originalSource, 0, 0, 1, 1),
+    );
+
+    drawImage.mockClear();
+    rerender(
+      <BackgroundLayer
+        image={{ source: workingSource, originalFile: originalSource }}
+        canvasSize={{ width: 1, height: 1 }}
+        filters={{}}
+        effectStack={[]}
+        showOriginal
+      />,
+    );
+
+    expect(drawImage).not.toHaveBeenCalled();
+  });
+
+  test("does not call applyEffectStack for an unfiltered original comparison", async () => {
+    const workingSource = { width: 4, height: 2, name: "working-preview" };
+    const originalSource = { width: 8, height: 4, name: "camera-original" };
+    const pipeline = vi.spyOn(effectStackModule, "applyEffectStack");
+    const drawImage = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      clearRect: vi.fn(),
+      drawImage,
+      getImageData: vi.fn(),
+      putImageData: vi.fn(),
+    });
+    vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+
+    render(
+      <BackgroundLayer
+        image={{ source: workingSource, originalFile: originalSource }}
+        canvasSize={{ width: 1, height: 1 }}
+        filters={{ threshold: 128 }}
+        effectStack={[{
+          id: "rgb", type: "rgbOffset", name: "RGB 偏移", visible: true,
+          opacity: 1, settings: { offset: 1 },
+        }]}
+        showOriginal
+      />,
+    );
+
+    await waitFor(() =>
+      expect(drawImage).toHaveBeenCalledWith(originalSource, 0, 0, 1, 1),
+    );
+    expect(pipeline).not.toHaveBeenCalled();
   });
 });

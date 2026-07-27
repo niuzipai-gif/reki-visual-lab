@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { BottomDock } from "./components/BottomDock.jsx";
 import { BottomSheet } from "./components/BottomSheet.jsx";
 import { GlassPanel } from "./components/GlassPanel.jsx";
@@ -13,6 +13,7 @@ import {
   supportsInterruptibleLandmarkScan,
 } from "./features/ai/landmarkModel.js";
 import { EditorCanvas } from "./features/canvas/EditorCanvas.jsx";
+import { OriginalComparisonPane } from "./features/canvas/OriginalComparisonPane.jsx";
 import { ExportDialog } from "./features/export/ExportDialog.jsx";
 import { FilterPanel } from "./features/filters/FilterPanel.jsx";
 import { MotionPanel } from "./features/motion/MotionPanel.jsx";
@@ -92,6 +93,7 @@ export function Workbench({
   const [motionPlaying, setMotionPlaying] = useState(false);
   const [motionTimeMs, setMotionTimeMs] = useState(0);
   const [motionClockEpoch, setMotionClockEpoch] = useState(0);
+  const [comparisonPrimed, setComparisonPrimed] = useState(false);
   const [aiImageSource, setAiImageSource] = useState(() =>
     drawableImageSource(initialProject?.image),
   );
@@ -177,6 +179,7 @@ export function Workbench({
   const activePreset = state.present.layers.findLast(
     ({ presetId }) => presetId,
   )?.presetId ?? null;
+  const comparisonVisible = state.present.canvas.backgroundVisible === false;
 
   const updateSelected = (patch) => {
     if (selectedLayer) dispatch({ type: "layer/update", id: selectedLayer.id, patch });
@@ -221,6 +224,10 @@ export function Workbench({
         })),
     });
   };
+  const handleImageSourceReady = useCallback((source, analysis) => {
+    setAiImageSource(source);
+    setAiImageAnalysis(analysis ?? null);
+  }, []);
 
   const batchLabel = (label) => {
     if (!selectedLayer) return;
@@ -383,7 +390,7 @@ export function Workbench({
       <TopBar
         canUndo={state.past.length > 0}
         canRedo={state.future.length > 0}
-        backgroundVisible={state.present.canvas.backgroundVisible}
+        comparisonVisible={comparisonVisible}
         canCompare={Boolean(state.present.image)}
         canvas={state.present.canvas}
         onUndo={() => {
@@ -392,7 +399,10 @@ export function Workbench({
         onRedo={() => {
           dispatch({ type: "history/redo" });
         }}
-        onToggleBackground={() => dispatch({ type: "canvas/update", patch: { backgroundVisible: !state.present.canvas.backgroundVisible } })}
+        onToggleBackground={() => {
+          if (!comparisonVisible) setComparisonPrimed(true);
+          dispatch({ type: "canvas/update", patch: { backgroundVisible: comparisonVisible } });
+        }}
         onExport={() => setExportOpen(true)}
       />
       <ToolRail
@@ -415,71 +425,71 @@ export function Workbench({
           alt=""
           aria-hidden="true"
         />
-        <div
-          className={`canvas-stage-wrap${
-            state.present.image?.demo &&
-            state.present.canvas.backgroundVisible
-              ? " demo-canvas"
-              : ""
-          }`}
-        >
-          <EditorCanvas
-            project={state.present}
-            selectedLayerId={state.selectedLayerId}
-            activeTool={activeTool}
-            zoom={zoom}
-            grid={grid}
-            animationTimeMs={motionTimeMs}
-            onSelectLayer={(id) => dispatch({ type: "selection/set", id })}
-            onCreateLayer={(layer) => {
-              dispatch({ type: "layer/add", layer });
-              dispatch({ type: "selection/set", id: layer.id });
-            }}
-            onChangeLayer={(id, patch) => dispatch({ type: "layer/update", id, patch })}
-            onImageSourceReady={(source, analysis) => {
-              setAiImageSource(source);
-              setAiImageAnalysis(analysis ?? null);
-            }}
-          />
-          {!state.present.image ? (
-            <div className="missing-source-panel" role="status">
-              <b>原始照片缺失</b>
-              <span>标注已保留。添加原照片或选择替代照片即可继续。</span>
-              <input
-                ref={replaceInputRef}
-                className="sr-only"
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                aria-label="添加或替换照片"
-                onChange={async (event) => {
-                  const [file] = event.target.files ?? [];
-                  event.target.value = "";
-                  if (!file || !onReplacePhoto) return;
-                  setReplaceFeedback("正在读取照片…");
-                  try {
-                    const nextProject = await onReplacePhoto(file);
-                    if (nextProject) {
-                      dispatch({ type: "project/load", project: nextProject });
-                      setReplaceFeedback("照片已恢复");
+        <div className={`canvas-comparison-layout${comparisonVisible ? " is-comparing" : ""}`}>
+          <div className={`canvas-stage-wrap${state.present.image?.demo ? " demo-canvas" : ""}`}>
+            <EditorCanvas
+              project={state.present}
+              selectedLayerId={state.selectedLayerId}
+              activeTool={activeTool}
+              zoom={zoom}
+              grid={grid}
+              animationTimeMs={motionTimeMs}
+              onSelectLayer={(id) => dispatch({ type: "selection/set", id })}
+              onCreateLayer={(layer) => {
+                dispatch({ type: "layer/add", layer });
+                dispatch({ type: "selection/set", id: layer.id });
+              }}
+              onChangeLayer={(id, patch) => dispatch({ type: "layer/update", id, patch })}
+              onImageSourceReady={handleImageSourceReady}
+            />
+            {!state.present.image ? (
+              <div className="missing-source-panel" role="status">
+                <b>原始照片缺失</b>
+                <span>标注已保留。添加原照片或选择替代照片即可继续。</span>
+                <input
+                  ref={replaceInputRef}
+                  className="sr-only"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  aria-label="添加或替换照片"
+                  onChange={async (event) => {
+                    const [file] = event.target.files ?? [];
+                    event.target.value = "";
+                    if (!file || !onReplacePhoto) return;
+                    setReplaceFeedback("正在读取照片…");
+                    try {
+                      const nextProject = await onReplacePhoto(file);
+                      if (nextProject) {
+                        dispatch({ type: "project/load", project: nextProject });
+                        setReplaceFeedback("照片已恢复");
+                      }
+                    } catch (error) {
+                      setReplaceFeedback(
+                        error instanceof Error
+                          ? error.message
+                          : "无法读取这张图片",
+                      );
                     }
-                  } catch (error) {
-                    setReplaceFeedback(
-                      error instanceof Error
-                        ? error.message
-                        : "无法读取这张图片",
-                    );
-                  }
-                }}
-              />
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => replaceInputRef.current?.click()}
-              >
-                添加或替换照片
-              </button>
-              {replaceFeedback ? <small>{replaceFeedback}</small> : null}
-            </div>
+                  }}
+                />
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => replaceInputRef.current?.click()}
+                >
+                  添加或替换照片
+                </button>
+                {replaceFeedback ? <small>{replaceFeedback}</small> : null}
+              </div>
+            ) : null}
+          </div>
+          {comparisonVisible || comparisonPrimed ? (
+            <OriginalComparisonPane
+              image={state.present.image}
+              canvasSize={state.present.canvas}
+              zoom={zoom}
+              hidden={!comparisonVisible}
+            />
           ) : null}
         </div>
         <div className="desktop-panel-resizer" {...desktopSeparatorProps} />

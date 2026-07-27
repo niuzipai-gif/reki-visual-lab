@@ -266,7 +266,6 @@ export function EditorCanvas({
             canvasSize={canvasSize}
             filters={project.filters}
             effectStack={project.effectStack}
-            showOriginal={project.canvas.backgroundVisible === false}
             onImageSourceReady={onImageSourceReady}
           />
           <Stage
