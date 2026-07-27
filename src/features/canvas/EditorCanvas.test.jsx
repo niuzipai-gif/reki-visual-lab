@@ -2,6 +2,7 @@ import React, { StrictMode } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { createAnnotation, createProject } from "../../domain/project.js";
+import * as effectStackModule from "../filters/effectStack.js";
 import { Inspector } from "../tools/Inspector.jsx";
 import { AnnotationNode } from "./AnnotationNode.jsx";
 import { EditorCanvas } from "./EditorCanvas.jsx";
@@ -1291,6 +1292,107 @@ describe("EditorCanvas", () => {
 
     const geometry = container.querySelector('[data-name="annotation-motion-geometry"]');
     expect(geometry).toHaveAttribute("data-opacity", "0.88");
+  });
+
+  test("keeps a dragged extracted fragment independent from its source marker", async () => {
+    const marker = layer("box", "source-marker", [
+      { x: 0.1, y: 0.1 },
+      { x: 0.3, y: 0.3 },
+    ]);
+    const fragment = layer("extractedFragment", "moved-fragment", [], {
+      sourceMarkerId: marker.id,
+      sourceRect: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+      transform: { x: 0.4, y: 0.4, width: 0.2, height: 0.2 },
+      effects: [],
+      linkedToMarker: false,
+    });
+    const onChangeLayer = vi.fn();
+    konvaState.drag = { x: 108, y: -135 };
+    const { container } = render(
+      <EditorCanvas
+        project={projectWith({
+          image: { width: 1080, height: 1350 },
+          layers: [marker, fragment],
+        })}
+        activeTool="select"
+        selectedLayerId={fragment.id}
+        onSelectLayer={vi.fn()}
+        onCreateLayer={vi.fn()}
+        onChangeLayer={onChangeLayer}
+      />,
+    );
+
+    await waitFor(() => expect(container.querySelector('[data-testid="fragment-image"]')).toBeInTheDocument());
+    fireEvent.dragEnd(container.querySelector('[data-layer-id="moved-fragment"]'));
+
+    expect(onChangeLayer).toHaveBeenCalledWith("moved-fragment", {
+      transform: { x: 0.5, y: 0.3, width: 0.2, height: 0.2 },
+    });
+    expect(onChangeLayer).not.toHaveBeenCalledWith("source-marker", expect.anything());
+  });
+
+  test("does not rerun the base effect pipeline when only a fragment transform changes", async () => {
+    const image = { width: 1, height: 1 };
+    const marker = layer("box", "fragment-source", [
+      { x: 0.1, y: 0.1 },
+      { x: 0.3, y: 0.3 },
+    ]);
+    const fragment = layer("extractedFragment", "isolated-transform", [], {
+      sourceMarkerId: marker.id,
+      sourceRect: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+      transform: { x: 0.4, y: 0.4, width: 0.2, height: 0.2 },
+      sourceFill: "black",
+      effects: [],
+    });
+    const effectStack = [{
+      id: "brightness-1", type: "brightness", name: "亮度", visible: true,
+      opacity: 1, settings: { amount: 1.1 },
+    }];
+    const pipeline = vi.spyOn(effectStackModule, "applyEffectStack");
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      clearRect: vi.fn(), drawImage: vi.fn(),
+      getImageData: vi.fn(() => new ImageData(new Uint8ClampedArray([100, 100, 100, 255]), 1, 1)),
+      putImageData: vi.fn(), fillRect: vi.fn(),
+    });
+    const requestFrame = vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+    const baseProject = projectWith({ image, effectStack, layers: [marker, fragment] });
+
+    try {
+      const { rerender } = render(
+        <EditorCanvas
+          project={baseProject}
+          activeTool="select"
+          selectedLayerId={fragment.id}
+          onSelectLayer={vi.fn()}
+          onCreateLayer={vi.fn()}
+          onChangeLayer={vi.fn()}
+        />,
+      );
+      await waitFor(() => expect(pipeline).toHaveBeenCalledTimes(1));
+
+      rerender(
+        <EditorCanvas
+          project={{
+            ...baseProject,
+            layers: [marker, { ...fragment, transform: { ...fragment.transform, x: 0.6 } }],
+          }}
+          activeTool="select"
+          selectedLayerId={fragment.id}
+          onSelectLayer={vi.fn()}
+          onCreateLayer={vi.fn()}
+          onChangeLayer={vi.fn()}
+        />,
+      );
+
+      expect(pipeline).toHaveBeenCalledTimes(1);
+    } finally {
+      pipeline.mockRestore();
+      getContext.mockRestore();
+      requestFrame.mockRestore();
+    }
   });
 
   test("lets empty space between node targets bubble to the canvas", () => {

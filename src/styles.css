@@ -201,6 +201,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .layers-clear-button:hover:not(:disabled) { color: #7d2f27; background: rgba(255,255,255,.72); }
 .inspector-form fieldset { min-width: 0; margin: 14px 0 0; padding: 0; border: 0; }
 .advanced-settings-button { width: 100%; margin-top: 12px; padding: 7px 9px; border: 1px solid rgba(207,153,17,.42); border-radius: 8px; color: var(--reki-ink); background: rgba(176,47,62,.16); font-size: .62rem; font-weight: 780; text-align: left; }
+.extract-fragment-button { width: 100%; margin-top: 10px; padding: 8px 9px; border: 1px solid rgba(176,72,77,.38); border-radius: 8px; color: #7d2f27; background: rgba(229,72,77,.1); font-size: .62rem; font-weight: 780; }
+.extract-fragment-button:hover { background: rgba(229,72,77,.18); }
+.fragment-inspector-copy, .fragment-inspector-meta { margin: 11px 0 0; color: var(--reki-muted); font-size: .61rem; line-height: 1.55; }
+.fragment-inspector .type-badge { color: #7d2f27; }
+.fragment-relink-button { width: 100%; margin-top: 9px; padding: 7px 9px; border: 1px solid var(--reki-edge); border-radius: 8px; background: rgba(255,255,255,.5); color: var(--reki-ink); font-size: .59rem; font-weight: 760; }
+.fragment-relink-button:hover { background: rgba(255,255,255,.8); }
 .inspector-form legend { width: 100%; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--reki-edge); color: var(--reki-muted); font-size: .54rem; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }
 .control-field { display: grid; gap: 5px; margin-bottom: 8px; color: var(--reki-muted); font-size: .59rem; font-weight: 700; }
 .control-field input[type="range"] { width: 100%; accent-color: var(--reki-yolk); }

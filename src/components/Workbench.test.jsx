@@ -56,6 +56,9 @@ vi.mock("../features/canvas/EditorCanvas.jsx", async () => {
           data-effect-stack={JSON.stringify(project.effectStack)}
           data-animation-time={animationTimeMs}
           data-selected-animation={JSON.stringify(selected?.animation ?? null)}
+          data-selected-type={selected?.type ?? ""}
+          data-selected-source-fill={selected?.sourceFill ?? ""}
+          data-selected-linked={String(selected?.linkedToMarker ?? "")}
           data-motion-duration={project.motion?.durationMs}
         >
           <button
@@ -137,6 +140,29 @@ function aiReadyProject() {
         name: "manual",
       }),
     ],
+  };
+}
+
+function detachedFragmentProject() {
+  const marker = createAnnotation(
+    "box",
+    [{ x: 0.1, y: 0.1 }, { x: 0.3, y: 0.3 }],
+    { id: "source-marker", name: "source-marker" },
+  );
+  const fragment = createAnnotation("extractedFragment", [], {
+    id: "detached-fragment",
+    name: "detached-fragment",
+    sourceMarkerId: marker.id,
+    sourceRect: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+    transform: { x: 0.55, y: 0.45, width: 0.2, height: 0.2 },
+    linkedToMarker: false,
+    sourceFill: "preserve",
+    effects: [],
+  });
+  return {
+    ...createProject(),
+    image: { demo: true },
+    layers: [marker, fragment],
   };
 }
 
@@ -359,6 +385,31 @@ describe("responsive Reki workbench", () => {
     expect(editorCanvasSpy.mock.calls.at(-1)[0].onImageSourceReady).toBe(
       initialCallback,
     );
+  });
+
+  test("extracts the selected marker into an independently configurable original fragment", async () => {
+    const user = userEvent.setup();
+    renderDemo();
+    const canvas = screen.getByRole("application", { name: "标注画布" });
+
+    await user.click(screen.getByRole("button", { name: "提取框内原图" }));
+
+    expect(canvas).toHaveAttribute("data-selected-type", "extractedFragment");
+    expect(screen.getByLabelText("原位置填充")).toHaveValue("preserve");
+
+    await user.selectOptions(screen.getByLabelText("原位置填充"), "black");
+    expect(canvas).toHaveAttribute("data-selected-source-fill", "black");
+  });
+
+  test("reconnects a detached fragment to its marker bounds", async () => {
+    const user = userEvent.setup();
+    render(<Workbench initialDemoProject={detachedFragmentProject()} />);
+    const canvas = screen.getByRole("application", { name: "标注画布" });
+
+    await user.click(screen.getByRole("button", { name: "选择图层 detached-fragment" }));
+    await user.click(screen.getByRole("button", { name: "重新关联标记" }));
+
+    expect(canvas).toHaveAttribute("data-selected-linked", "true");
   });
 
   test("keeps original comparison out of persisted project history", async () => {

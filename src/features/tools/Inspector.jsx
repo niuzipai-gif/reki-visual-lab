@@ -1,5 +1,7 @@
 import React, { useEffect, useId, useState } from "react";
 import { Paintbrush, Trash2 } from "lucide-react";
+import { isSpatialMarker } from "../fragments/fragmentDomain.js";
+import { FragmentInspector } from "../fragments/FragmentInspector.jsx";
 
 const LABEL_TYPES = new Set([
   "label",
@@ -53,6 +55,8 @@ export function Inspector({
   onBatchLabel,
   onApplyStyle,
   onDelete,
+  onExtract,
+  onRelink,
 }) {
   const [batchLabelDraft, setBatchLabelDraft] = useState(
     layer?.label ?? "",
@@ -74,6 +78,10 @@ export function Inspector({
     );
   }
 
+  if (layer.type === "extractedFragment") {
+    return <FragmentInspector layer={layer} onPatch={onPatch} onRelink={onRelink} />;
+  }
+
   const style = layer.style;
   const patchStyle = (patch) => onPatch({ style: { ...style, ...patch } });
   const showLabels = layer.showLabel !== false;
@@ -84,6 +92,15 @@ export function Inspector({
   return (
     <div className="inspector-form">
       <header><div><small>SELECTED OBJECT</small><h2>{layer.name}</h2></div><span className="type-badge">{layer.type}</span></header>
+      {isSpatialMarker(layer) ? (
+        <button
+          type="button"
+          className="extract-fragment-button"
+          onClick={() => onExtract?.()}
+        >
+          提取框内原图
+        </button>
+      ) : null}
       <button
         type="button"
         className="advanced-settings-button"

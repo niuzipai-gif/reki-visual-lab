@@ -7,6 +7,44 @@ import {
 
 const EMPTY_EFFECT_STACK = Object.freeze([]);
 
+function sourceHolesForCanvas(sourceHoles, dimensions) {
+  if (!Array.isArray(sourceHoles)) return [];
+  return sourceHoles.flatMap((hole) => {
+    const x = Number(hole?.x);
+    const y = Number(hole?.y);
+    const width = Number(hole?.width);
+    const height = Number(hole?.height);
+    const fill = hole?.fill;
+    if (
+      ![x, y, width, height].every(Number.isFinite) ||
+      width <= 0 ||
+      height <= 0 ||
+      !["transparent", "black", "white"].includes(fill)
+    ) {
+      return [];
+    }
+    return [{
+      x: Math.max(0, x * dimensions.width),
+      y: Math.max(0, y * dimensions.height),
+      width: Math.max(0, Math.min(dimensions.width, (x + width) * dimensions.width) - Math.max(0, x * dimensions.width)),
+      height: Math.max(0, Math.min(dimensions.height, (y + height) * dimensions.height) - Math.max(0, y * dimensions.height)),
+      fill,
+    }];
+  });
+}
+
+function paintSourceHoles(context, sourceHoles, dimensions) {
+  for (const hole of sourceHolesForCanvas(sourceHoles, dimensions)) {
+    if (!hole.width || !hole.height) continue;
+    if (hole.fill === "transparent") {
+      context.clearRect(hole.x, hole.y, hole.width, hole.height);
+      continue;
+    }
+    context.fillStyle = hole.fill === "black" ? "#000" : "#fff";
+    context.fillRect(hole.x, hole.y, hole.width, hole.height);
+  }
+}
+
 function imageResource(image) {
   // The renderer only borrows decoded resources; import/project code owns disposal.
   if (!image) return null;
@@ -129,6 +167,7 @@ export function BackgroundLayer({
   filters,
   effectStack,
   showOriginal = false,
+  sourceHoles = EMPTY_EFFECT_STACK,
   onImageSourceReady,
 }) {
   const canvasRef = useRef(null);
@@ -291,6 +330,7 @@ export function BackgroundLayer({
             0,
             0,
           );
+          paintSourceHoles(context, sourceHoles, dimensions);
           setCanvasReady(true);
           setRenderError(null);
           return;
@@ -331,6 +371,7 @@ export function BackgroundLayer({
           pixels: null,
         };
         if (!active) {
+          paintSourceHoles(context, sourceHoles, dimensions);
           setRenderError(null);
           return;
         }
@@ -343,6 +384,7 @@ export function BackgroundLayer({
           );
           sourceCacheRef.current.pixels = pixels;
           context.putImageData(applyEffectStack(pixels, activeStack), 0, 0);
+          paintSourceHoles(context, sourceHoles, dimensions);
           setRenderError(null);
         } catch {
           // Drawing succeeded, so the canvas remains a safe unfiltered fallback.
@@ -375,6 +417,7 @@ export function BackgroundLayer({
     activeResource,
     urlSource,
     onImageSourceReady,
+    sourceHoles,
   ]);
 
   if (!isDemo && !resource) return null;

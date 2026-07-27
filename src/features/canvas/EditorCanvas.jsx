@@ -1,4 +1,5 @@
 import React, {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -11,6 +12,7 @@ import { createAnnotation } from "../../domain/project.js";
 import { TOOL_DEFINITIONS } from "../tools/toolDefinitions.js";
 import { AnnotationNode } from "./AnnotationNode.jsx";
 import { BackgroundLayer } from "./BackgroundLayer.jsx";
+import { FragmentNode } from "../fragments/FragmentNode.jsx";
 
 const TOOL_BY_ID = new Map(
   TOOL_DEFINITIONS.map((definition) => [definition.id, definition]),
@@ -143,6 +145,12 @@ function fittedCanvas(canvasSize, availableSize, zoom) {
   };
 }
 
+function drawableFragmentSource(image) {
+  if (!image || image.demo || typeof image === "string") return null;
+  const candidate = image.source ?? image.element ?? image.bitmap ?? image.image ?? image;
+  return candidate && typeof candidate !== "string" ? candidate : null;
+}
+
 export function EditorCanvas({
   project,
   selectedLayerId,
@@ -160,17 +168,46 @@ export function EditorCanvas({
   const canvasSize = project.canvas;
   const viewportRef = useRef(null);
   const [availableSize, setAvailableSize] = useState(canvasSize);
+  const [fragmentSource, setFragmentSource] = useState(() =>
+    drawableFragmentSource(project.image),
+  );
   const fitted = fittedCanvas(canvasSize, availableSize, zoom);
   const tool = TOOL_BY_ID.get(activeTool) ?? TOOL_BY_ID.get("select");
   const visibleLayers = useMemo(
     () => project.layers.filter((layer) => layer.visible),
     [project.layers],
   );
+  const sourceHoleSignature = useMemo(
+    () => visibleLayers
+      .filter((layer) => layer.type === "extractedFragment" && layer.sourceFill !== "preserve")
+      .map((layer) => {
+        const rect = layer.sourceRect ?? {};
+        return `${rect.x}:${rect.y}:${rect.width}:${rect.height}:${layer.sourceFill}`;
+      })
+      .join("|"),
+    [visibleLayers],
+  );
+  const sourceHoles = useMemo(
+    () => visibleLayers
+      .filter((layer) => layer.type === "extractedFragment" && layer.sourceFill !== "preserve")
+      .map((layer) => ({ ...layer.sourceRect, fill: layer.sourceFill })),
+    [sourceHoleSignature],
+  );
+
+  const handleImageSourceReady = useCallback((source, analysis) => {
+    setFragmentSource((current) => current === source ? current : source);
+    if (analysis === undefined) onImageSourceReady?.(source);
+    else onImageSourceReady?.(source, analysis);
+  }, [onImageSourceReady]);
 
   useEffect(() => {
     draftPoints.current = [];
     recentTouchTap.current = null;
   }, [activeTool]);
+
+  useEffect(() => {
+    setFragmentSource(drawableFragmentSource(project.image));
+  }, [project.image]);
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
@@ -266,7 +303,8 @@ export function EditorCanvas({
             canvasSize={canvasSize}
             filters={project.filters}
             effectStack={project.effectStack}
-            onImageSourceReady={onImageSourceReady}
+            sourceHoles={sourceHoles}
+            onImageSourceReady={handleImageSourceReady}
           />
           <Stage
             width={fitted.width}
@@ -279,7 +317,18 @@ export function EditorCanvas({
             onDblTap={completePath}
           >
             <Layer>
-              {visibleLayers.map((layer) => (
+              {visibleLayers.map((layer) => layer.type === "extractedFragment" ? (
+                <FragmentNode
+                  key={layer.id}
+                  layer={layer}
+                  image={fragmentSource}
+                  canvasSize={canvasSize}
+                  selected={layer.id === selectedLayerId}
+                  animationTimeMs={animationTimeMs}
+                  onSelect={() => onSelectLayer?.(layer.id)}
+                  onChange={(patch) => onChangeLayer?.(layer.id, patch)}
+                />
+              ) : (
                 <AnnotationNode
                   key={layer.id}
                   layer={layer}

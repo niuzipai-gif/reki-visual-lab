@@ -18,6 +18,83 @@ afterEach(() => {
 });
 
 describe("BackgroundLayer", () => {
+  test("applies non-preserve source fills after drawing the base image", async () => {
+    const clearRect = vi.fn();
+    const fillRect = vi.fn();
+    const context = {
+      clearRect,
+      drawImage: vi.fn(),
+      fillRect,
+      fillStyle: "",
+    };
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context);
+    vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+
+    render(
+      <BackgroundLayer
+        image={{ width: 100, height: 100 }}
+        canvasSize={{ width: 100, height: 100 }}
+        filters={{}}
+        sourceHoles={[
+          { x: 0.1, y: 0.2, width: 0.3, height: 0.2, fill: "transparent" },
+          { x: 0.5, y: 0.1, width: 0.2, height: 0.4, fill: "black" },
+          { x: 0.7, y: 0.5, width: 0.2, height: 0.1, fill: "white" },
+          { x: 0, y: 0, width: 1, height: 1, fill: "preserve" },
+        ]}
+      />,
+    );
+
+    await waitFor(() => expect(clearRect).toHaveBeenCalledWith(10, 20, 30, 20));
+    expect(fillRect).toHaveBeenCalledWith(50, 10, 20, 40);
+    expect(fillRect).toHaveBeenCalledWith(70, 50, expect.closeTo(20, 8), 10);
+    expect(context.fillStyle).toBe("#fff");
+  });
+
+  test("keeps source holes when restoring cached effect pixels", async () => {
+    const sourcePixels = new ImageData(
+      new Uint8ClampedArray([120, 80, 40, 255]), 1, 1,
+    );
+    const fillRect = vi.fn();
+    const getImageData = vi.fn(() => sourcePixels);
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      getImageData,
+      putImageData: vi.fn(),
+      fillRect,
+      fillStyle: "",
+    });
+    vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+    const effectStack = [{
+      id: "brightness-1", type: "brightness", name: "亮度", visible: true,
+      opacity: 1, settings: { amount: 1.1 },
+    }];
+    const props = {
+      image: { width: 1, height: 1 },
+      canvasSize: { width: 1, height: 1 },
+      filters: {},
+      effectStack,
+    };
+    const { rerender } = render(<BackgroundLayer {...props} sourceHoles={[]} />);
+    await waitFor(() => expect(getImageData).toHaveBeenCalledTimes(1));
+
+    rerender(
+      <BackgroundLayer
+        {...props}
+        sourceHoles={[{ x: 0, y: 0, width: 1, height: 1, fill: "black" }]}
+      />,
+    );
+
+    await waitFor(() => expect(fillRect).toHaveBeenCalledWith(0, 0, 1, 1));
+    expect(getImageData).toHaveBeenCalledTimes(1);
+  });
+
   test("renders the supplied effect stack with the same pixels used by static export", async () => {
     const sourcePixels = new ImageData(
       new Uint8ClampedArray([100, 150, 200, 255]), 1, 1,

@@ -278,6 +278,20 @@ export function Workbench({
         onPatch={updateSelected}
         onBatchLabel={batchLabel}
         onApplyStyle={applyStyle}
+        onExtract={() => {
+          if (selectedLayer) {
+            dispatch({ type: "fragment/create", markerId: selectedLayer.id });
+          }
+        }}
+        onRelink={() => {
+          if (selectedLayer?.type === "extractedFragment") {
+            dispatch({
+              type: "fragment/update",
+              id: selectedLayer.id,
+              patch: { linkedToMarker: true },
+            });
+          }
+        }}
         onDelete={() => selectedLayer && dispatch({ type: "layer/remove", id: selectedLayer.id })}
       />
       {selectedLayer ? (
