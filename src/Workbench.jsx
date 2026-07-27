@@ -23,6 +23,7 @@ import { PresetStrip } from "./features/tools/PresetStrip.jsx";
 import { ToolRail } from "./features/tools/ToolRail.jsx";
 import { TOOL_DEFINITIONS } from "./features/tools/toolDefinitions.js";
 import { useResizablePanels } from "./hooks/useResizablePanels.js";
+import { publicAsset } from "./publicAsset.js";
 
 const PREVIEW_FRAME_INTERVAL_MS = 1000 / 30;
 
@@ -507,7 +508,7 @@ export function Workbench({
       >
         <img
           className="canvas-brand-mark"
-          src="/brand/reki-character-mark.png"
+          src={publicAsset("brand/reki-character-mark.png")}
           alt=""
           aria-hidden="true"
         />

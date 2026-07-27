@@ -86,10 +86,10 @@ describe("Reki CSS contracts", () => {
   });
 
   test("uses the dedicated hand-drawn Reki mark and favicon assets", () => {
-    expect(indexHtml).toContain('href="/favicon.svg"');
-    expect(indexHtml).toContain('<link rel="icon" type="image/png" href="/brand/reki-character-mark.png" />');
+    expect(indexHtml).toContain('href="%BASE_URL%favicon.svg"');
+    expect(indexHtml).toContain('<link rel="icon" type="image/png" href="%BASE_URL%brand/reki-character-mark.png" />');
     expect(indexHtml).toContain('<meta name="theme-color" content="#efe4d4" />');
-    expect(markSvg).toContain("reki-character-mark.png");
+    expect(markSvg).toContain('href="brand/reki-character-mark.png"');
     expect(fs.existsSync("public/brand/reki-character.png")).toBe(true);
     expect(fs.existsSync("public/brand/reki-character-mark.png")).toBe(true);
     expect(brandCharacter.length).toBeGreaterThan(100);

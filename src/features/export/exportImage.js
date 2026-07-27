@@ -10,6 +10,7 @@ import {
   sanitizeAnimation,
 } from "../motion/animationRuntime.js";
 import { composeProjectFrameToContext } from "../fragments/fragmentComposite.js";
+import { publicAsset } from "../../publicAsset.js";
 
 const MAX_SCALE = 4;
 const DEFAULT_DEVICE_MEMORY = 4;
@@ -510,7 +511,7 @@ export async function decodeOriginalSource(image) {
         const candidate = new Image();
         candidate.onload = () => resolve(candidate);
         candidate.onerror = () => reject(new Error("无法读取演示底图"));
-        candidate.src = "/cosplay-reference.png";
+        candidate.src = publicAsset("cosplay-reference.png");
       });
       return { source: decoded, dispose: () => {} };
     } catch (error) {

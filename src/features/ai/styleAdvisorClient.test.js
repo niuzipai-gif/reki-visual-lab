@@ -75,6 +75,19 @@ describe("style advisor client", () => {
     expect(result.error).toBe("timeout");
   });
 
+  test("can use local recommendations without making a network request", async () => {
+    const fetchImpl = vi.fn();
+    const result = await getStyleAdvice({ width: 10 }, {
+      fetchImpl,
+      preferOffline: true,
+    });
+
+    expect(result.source).toBe("offline");
+    expect(result.recommendations).toHaveLength(3);
+    expect(result.error).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   test("composes caller abort with the internal timeout signal", async () => {
     const caller = new AbortController();
     let upstreamSignal;

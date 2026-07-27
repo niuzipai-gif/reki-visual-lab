@@ -5,6 +5,7 @@ Reki 是面向 coser 的静态图片视觉标注工作台，使用银雾毛玻�
 ## 在线使用
 
 - 公开网址：<https://reki-visual-lab.kunxin.chatgpt.site>
+- GitHub 备用网址：<https://niuzipai-gif.github.io/reki-visual-lab/>
 - GitHub：<https://github.com/niuzipai-gif>
 
 打开网址后可以直接导入 JPG、PNG 或 WebP。图片、滤镜、AI 扫描和项目草稿默认只在当前浏览器本地处理与保存。
@@ -49,3 +50,7 @@ git diff --check
 ### MiniMax 风格建议代理
 
 Worker 通过官方 OpenAI-compatible 文本接口请求建议。部署时仅在 Worker secret 中配置 `MINIMAX_API_KEY`；可选配置 `MINIMAX_API_URL` 和 `MINIMAX_MODEL`（默认 `https://api.minimaxi.com/v1/chat/completions` 与 `MiniMax-M2.7`）。密钥不会进入浏览器代码、请求正文或日志。
+
+## 备用网址与交接
+
+GitHub Pages 会在每次推送 `main` 后自动更新，作为不依赖 Codex/Sites 账号的静态备用入口。它保留所有浏览器本地编辑与导出能力；AI 建议会自动改用本机离线推荐，密钥不会进入前端。完整迁移方式见 [部署与恢复说明](docs/deployment-recovery.md)。

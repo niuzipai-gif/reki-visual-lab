@@ -4,6 +4,7 @@ import {
   applyEffectStack,
   legacyFiltersToEffectStack,
 } from "../filters/effectStack.js";
+import { publicAsset } from "../../publicAsset.js";
 
 const EMPTY_EFFECT_STACK = Object.freeze([]);
 
@@ -49,7 +50,7 @@ function imageResource(image) {
   // The renderer only borrows decoded resources; import/project code owns disposal.
   if (!image) return null;
   if (image.demo) {
-    return { kind: "url", source: "/cosplay-reference.png" };
+    return { kind: "url", source: publicAsset("cosplay-reference.png") };
   }
 
   if (typeof image === "string") {

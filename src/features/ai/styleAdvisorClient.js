@@ -140,6 +140,16 @@ export async function requestStyleAdvice(features, options = {}) {
 
 /** Remote-first advice with a deterministic local fallback for offline use. */
 export async function getStyleAdvice(features, options = {}) {
+  if (
+    options.preferOffline === true ||
+    import.meta.env.VITE_STATIC_BACKUP === "true"
+  ) {
+    return {
+      source: "offline",
+      recommendations: getOfflineRecommendations(sanitizeFeatureSummary(features)),
+      error: null,
+    };
+  }
   const remote = await requestStyleAdvice(features, options);
   if (remote.ok) {
     return { source: "remote", recommendations: remote.recommendations, error: null };
