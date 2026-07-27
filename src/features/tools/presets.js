@@ -49,7 +49,7 @@ export const PRESETS = Object.freeze([
   {
     id: "neural-nodes",
     name: "神经节点",
-    filters: { contrast: 1.08, saturation: 0.76 },
+    filters: {},
     createLayers: build("neural-nodes", ({ create, landmark }) => [
       create("nodeCloud", [landmark(0), landmark(1), landmark(2)]),
       create("path", [landmark(0), landmark(1), landmark(2)], {
@@ -64,7 +64,7 @@ export const PRESETS = Object.freeze([
   {
     id: "archive-scan",
     name: "档案扫描",
-    filters: { contrast: 1.18, grain: 0.12 },
+    filters: {},
     createLayers: build("archive-scan", ({ create, random }) => [
       create("stackBox", [
         point(random, 0.14, 0.18),
@@ -79,7 +79,7 @@ export const PRESETS = Object.freeze([
   {
     id: "sacred-orbit",
     name: "圣像轨道",
-    filters: { brightness: 0.92, saturation: 0.82 },
+    filters: {},
     createLayers: build("sacred-orbit", ({ create, random }) => [
       create("orbit", [
         point(random, 0.5, 0.46),
@@ -96,7 +96,7 @@ export const PRESETS = Object.freeze([
   {
     id: "mechanical-label",
     name: "机械标注",
-    filters: { contrast: 1.12, sharpness: 0.18 },
+    filters: {},
     createLayers: build("mechanical-label", ({ create, random }) => [
       create("box", [
         point(random, 0.22, 0.2),
@@ -112,7 +112,7 @@ export const PRESETS = Object.freeze([
   {
     id: "anomaly-signal",
     name: "异常信号",
-    filters: { grain: 0.24, rgbOffset: 3 },
+    filters: {},
     createLayers: build("anomaly-signal", ({ create, random }) => [
       create("path", [
         point(random, 0.12, 0.6),
@@ -130,7 +130,7 @@ export const PRESETS = Object.freeze([
   {
     id: "visual-measure",
     name: "视觉测量",
-    filters: { contrast: 1.04, brightness: 1.03 },
+    filters: {},
     createLayers: build("visual-measure", ({ create, random }) => [
       create("leader", [
         point(random, 0.24, 0.72),

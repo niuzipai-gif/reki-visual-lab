@@ -30,7 +30,7 @@ export function createDemoProject() {
     id: "reki-demo",
     name: "银黄实验 04",
     image: { demo: true },
-    filters: { saturation: 0.76, contrast: 1.08 },
+    filters: {},
     layers: [
       createAnnotation("path", [
         { x: 0.2, y: 0.6 },

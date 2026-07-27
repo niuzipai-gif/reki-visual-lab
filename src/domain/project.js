@@ -4,6 +4,31 @@ import {
 } from "../features/filters/effectStack.js";
 import { DEFAULT_ANIMATION, sanitizeAnimation } from "../features/motion/animationRuntime.js";
 
+const SOURCE_FILL_TYPES = new Set(["transparent", "black", "white", "preserve"]);
+
+function normalizeFragmentRect(rect) {
+  if (!rect || typeof rect !== "object" || Array.isArray(rect)) return null;
+  const x = Number(rect.x);
+  const y = Number(rect.y);
+  const width = Number(rect.width);
+  const height = Number(rect.height);
+  if (
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    x < 0 ||
+    y < 0 ||
+    width < 0.01 ||
+    height < 0.01 ||
+    x + width > 1 ||
+    y + height > 1
+  ) {
+    return null;
+  }
+  return { x, y, width, height };
+}
+
 export const DEFAULT_STYLE = Object.freeze({
   lineColor: "#e5484d",
   textColor: "#fff7ed",
@@ -77,11 +102,29 @@ export function normalizeProject(project) {
     effectStack,
     motion: sanitizeMotion(project.motion),
     layers: Array.isArray(project.layers)
-      ? project.layers.map((layer) => ({
-          ...layer,
-          animation: sanitizeAnimation(layer?.animation),
-        }))
+      ? project.layers.map((layer) => normalizeLayer(layer))
       : [],
+  };
+}
+
+function normalizeLayer(layer) {
+  const normalized = {
+    ...layer,
+    animation: sanitizeAnimation(layer?.animation),
+  };
+  if (layer?.type !== "extractedFragment") return normalized;
+
+  const sourceRect = normalizeFragmentRect(layer.sourceRect);
+  const transform = normalizeFragmentRect(layer.transform);
+  return {
+    ...normalized,
+    sourceMarkerId:
+      typeof layer.sourceMarkerId === "string" ? layer.sourceMarkerId : "",
+    sourceRect: sourceRect ?? { x: 0, y: 0, width: 0.01, height: 0.01 },
+    transform: transform ?? sourceRect ?? { x: 0, y: 0, width: 0.01, height: 0.01 },
+    linkedToMarker: layer.linkedToMarker !== false,
+    sourceFill: SOURCE_FILL_TYPES.has(layer.sourceFill) ? layer.sourceFill : "preserve",
+    effects: normalizeEffectStack(layer.effects ?? []),
   };
 }
 

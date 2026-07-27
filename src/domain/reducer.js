@@ -11,6 +11,13 @@ import {
   normalizeEffectStack,
 } from "../features/filters/effectStack.js";
 import { sanitizeAnimation } from "../features/motion/animationRuntime.js";
+import {
+  createExtractedFragment,
+  isSourceFill,
+  isSpatialMarker,
+  markerSourceRect,
+  normalizeSourceRect,
+} from "../features/fragments/fragmentDomain.js";
 
 export const MAX_HISTORY_ENTRIES = 100;
 
@@ -104,6 +111,109 @@ function patchLegacyEffects(effectStack, patch, { reset = false } = {}) {
 
 function hasLayer(project, id) {
   return project.layers.some((layer) => layer.id === id);
+}
+
+function plainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function syncLinkedFragments(project, markerId) {
+  const marker = project.layers.find((layer) => layer.id === markerId);
+  if (!isSpatialMarker(marker)) return project;
+  const sourceRect = markerSourceRect(marker, project.canvas);
+  if (!sourceRect) return project;
+
+  let changed = false;
+  const layers = project.layers.map((layer) => {
+    if (
+      layer.type !== "extractedFragment" ||
+      layer.sourceMarkerId !== markerId ||
+      layer.linkedToMarker === false
+    ) {
+      return layer;
+    }
+    if (
+      valuesEqual(layer.sourceRect, sourceRect) &&
+      valuesEqual(layer.transform, sourceRect)
+    ) {
+      return layer;
+    }
+    changed = true;
+    return {
+      ...layer,
+      sourceRect: { ...sourceRect },
+      transform: { ...sourceRect },
+      linkedToMarker: true,
+    };
+  });
+  return changed ? { ...project, layers } : project;
+}
+
+function fragmentPatch(layer, candidate) {
+  if (!plainObject(candidate)) return null;
+  const patch = {};
+  if (Object.hasOwn(candidate, "transform")) {
+    const transform = normalizeSourceRect(candidate.transform);
+    if (!transform) return null;
+    patch.transform = transform;
+    patch.linkedToMarker = false;
+  }
+  if (Object.hasOwn(candidate, "sourceRect")) {
+    const sourceRect = normalizeSourceRect(candidate.sourceRect);
+    if (!sourceRect) return null;
+    patch.sourceRect = sourceRect;
+  }
+  if (Object.hasOwn(candidate, "sourceFill")) {
+    if (!isSourceFill(candidate.sourceFill)) return null;
+    patch.sourceFill = candidate.sourceFill;
+  }
+  if (Object.hasOwn(candidate, "effects")) {
+    if (!Array.isArray(candidate.effects)) return null;
+    patch.effects = normalizeEffectStack(candidate.effects);
+  }
+  if (Object.hasOwn(candidate, "animation")) {
+    patch.animation = sanitizeAnimation(candidate.animation);
+  }
+  if (Object.hasOwn(candidate, "opacity")) {
+    const opacity = Number(candidate.opacity);
+    if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) return null;
+    patch.opacity = opacity;
+  }
+  if (Object.hasOwn(candidate, "name")) {
+    if (typeof candidate.name !== "string") return null;
+    patch.name = candidate.name.slice(0, 160);
+  }
+  if (Object.hasOwn(candidate, "visible")) {
+    if (typeof candidate.visible !== "boolean") return null;
+    patch.visible = candidate.visible;
+  }
+  if (Object.hasOwn(candidate, "locked")) {
+    if (typeof candidate.locked !== "boolean") return null;
+    patch.locked = candidate.locked;
+  }
+  if (Object.hasOwn(candidate, "linkedToMarker")) {
+    if (typeof candidate.linkedToMarker !== "boolean") return null;
+    patch.linkedToMarker = candidate.linkedToMarker;
+  }
+  return patch;
+}
+
+function updateFragment(project, id, candidate) {
+  const source = project.layers.find((layer) => layer.id === id);
+  if (source?.type !== "extractedFragment") return project;
+  const patch = fragmentPatch(source, candidate);
+  if (!patch || !hasEffectivePatch(source, patch)) return project;
+
+  let next = {
+    ...project,
+    layers: project.layers.map((layer) =>
+      layer.id === id ? { ...layer, ...patch } : layer,
+    ),
+  };
+  if (patch.linkedToMarker === true) {
+    next = syncLinkedFragments(next, source.sourceMarkerId);
+  }
+  return next;
 }
 
 function valuesEqual(first, second) {
@@ -220,6 +330,47 @@ export function editorReducer(state, action) {
     );
   }
 
+  if (action.type === "fragment/create") {
+    const marker = state.present.layers.find(
+      (layer) => layer.id === action.markerId,
+    );
+    const fragment = createExtractedFragment({
+      marker,
+      canvas: state.present.canvas,
+      sourceFill: action.sourceFill ?? "preserve",
+    });
+    if (!fragment || hasLayer(state.present, fragment.id)) return state;
+    return commit(
+      state,
+      {
+        ...state.present,
+        layers: [...state.present.layers, fragment],
+      },
+      fragment.id,
+    );
+  }
+
+  if (action.type === "fragment/update") {
+    const nextPresent = updateFragment(state.present, action.id, action.patch);
+    if (nextPresent === state.present) return state;
+    return commit(state, nextPresent);
+  }
+
+  if (action.type === "fragment/sourceFill") {
+    if (!isSourceFill(action.sourceFill)) return state;
+    const nextPresent = updateFragment(state.present, action.id, {
+      sourceFill: action.sourceFill,
+    });
+    if (nextPresent === state.present) return state;
+    return commit(state, nextPresent);
+  }
+
+  if (action.type === "marker/boundsChanged") {
+    const nextPresent = syncLinkedFragments(state.present, action.markerId);
+    if (nextPresent === state.present) return state;
+    return commit(state, nextPresent);
+  }
+
   if (action.type === "layer/add") {
     if (hasLayer(state.present, action.layer.id)) {
       return state;
@@ -237,17 +388,27 @@ export function editorReducer(state, action) {
       return state;
     }
 
+    if (source.type === "extractedFragment") {
+      const nextPresent = updateFragment(state.present, action.id, action.patch);
+      if (nextPresent === state.present) return state;
+      return commit(state, nextPresent);
+    }
+
     const { id: _ignoredId, ...patch } = action.patch ?? {};
     if (!hasEffectivePatch(source, patch)) {
       return state;
     }
 
-    return commit(state, {
+    let nextPresent = {
       ...state.present,
       layers: state.present.layers.map((layer) =>
         layer.id === action.id ? { ...layer, ...patch } : layer,
       ),
-    });
+    };
+    if (isSpatialMarker(source)) {
+      nextPresent = syncLinkedFragments(nextPresent, action.id);
+    }
+    return commit(state, nextPresent);
   }
 
   if (action.type === "layer/animation") {
@@ -281,7 +442,13 @@ export function editorReducer(state, action) {
     });
     if (!changed) return state;
 
-    return commit(state, { ...state.present, layers });
+    let nextPresent = { ...state.present, layers };
+    for (const layer of layers) {
+      if (updates.has(layer.id) && isSpatialMarker(layer)) {
+        nextPresent = syncLinkedFragments(nextPresent, layer.id);
+      }
+    }
+    return commit(state, nextPresent);
   }
 
   if (action.type === "preset/apply") {

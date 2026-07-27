@@ -113,8 +113,8 @@ export const STYLE_PRESETS = Object.freeze([
   Object.freeze({
     id: "redline-archive",
     name: "红线档案",
-    description: "以红色轨迹和档案式颗粒强调服装轮廓。",
-    filters: Object.freeze({ contrast: 1.16, saturation: 0.82, grain: 0.12 }),
+    description: "以红色轨迹和档案式标记强调服装轮廓。",
+    filters: Object.freeze({}),
     annotationType: "path",
     density: 68,
     labelMode: "single",
@@ -123,8 +123,8 @@ export const STYLE_PRESETS = Object.freeze([
   Object.freeze({
     id: "silver-mist-portrait",
     name: "银雾肖像",
-    description: "压低饱和度，用柔和轨道突出人物主体。",
-    filters: Object.freeze({ brightness: 1.04, contrast: 1.08, saturation: 0.74 }),
+    description: "用柔和轨道与红色标签突出人物主体。",
+    filters: Object.freeze({}),
     annotationType: "orbit",
     density: 52,
     labelMode: "single",
@@ -133,12 +133,12 @@ export const STYLE_PRESETS = Object.freeze([
   Object.freeze({
     id: "mechanical-nodes",
     name: "机械节点",
-    description: "用高对比节点和框线建立机械感构图。",
-    filters: Object.freeze({ contrast: 1.22, saturation: 0.68, grain: 0.18 }),
+    description: "用节点和框线建立机械感构图。",
+    filters: Object.freeze({}),
     annotationType: "nodeCloud",
     density: 76,
     labelMode: "single",
-    risk: "高对比会放大皮肤或布料噪点。",
+    risk: "节点过密会遮挡服装纹理，请按画面留白调整。",
   }),
 ]);
 

@@ -145,7 +145,7 @@ function validFilterPatch(filters) {
     if (number < range[0] || number > range[1]) return null;
     output[key] = number;
   }
-  return Object.keys(output).length ? output : null;
+  return output;
 }
 
 const SAFE_STYLE_KEYS = Object.freeze({
@@ -314,9 +314,9 @@ export function createRecommendation(name, filters, annotationType, options = {}
 
 export function getOfflineRecommendations(_features = {}) {
   return [
-    createRecommendation("红线档案", { contrast: 1.16, saturation: 0.82, grain: 0.12 }, "path"),
-    createRecommendation("银雾肖像", { brightness: 1.04, contrast: 1.08, saturation: 0.74 }, "orbit"),
-    createRecommendation("机械节点", { contrast: 1.22, saturation: 0.68, grain: 0.18 }, "nodeCloud"),
+    createRecommendation("红线档案", {}, "path"),
+    createRecommendation("银雾肖像", {}, "orbit"),
+    createRecommendation("机械节点", {}, "nodeCloud"),
   ];
 }
 

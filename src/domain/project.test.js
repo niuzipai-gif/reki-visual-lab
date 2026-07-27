@@ -146,6 +146,34 @@ describe("project factories", () => {
     expect(legacy.layers[0].animation.durationMs).toBe(20);
   });
 
+  test("normalizes persisted extracted fragments without adding default effects", () => {
+    const saved = {
+      ...createProject(),
+      layers: [
+        createAnnotation("extractedFragment", [], {
+          id: "fragment-1",
+          sourceMarkerId: "marker-1",
+          sourceRect: { x: 0.2, y: 0.2, width: 0.3, height: 0.2 },
+          transform: { x: 0.24, y: 0.25, width: 0.3, height: 0.2 },
+          linkedToMarker: false,
+          sourceFill: "white",
+          effects: [],
+        }),
+      ],
+    };
+
+    const normalized = normalizeProject(saved);
+
+    expect(normalized.layers[0]).toMatchObject({
+      type: "extractedFragment",
+      sourceMarkerId: "marker-1",
+      sourceFill: "white",
+      linkedToMarker: false,
+      effects: [],
+    });
+    expect(normalized.layers[0]).not.toBe(saved.layers[0]);
+  });
+
   test("keeps the exported defaults frozen and applies annotation overrides last", () => {
     const annotation = createAnnotation("box", [], {
       name: "portrait",

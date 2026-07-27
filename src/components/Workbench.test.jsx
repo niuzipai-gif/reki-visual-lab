@@ -2,7 +2,7 @@ import React from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
-import { Workbench } from "../Workbench.jsx";
+import { createDemoProject, Workbench } from "../Workbench.jsx";
 import { createAnnotation, createProject } from "../domain/project.js";
 import { TOOL_DEFINITIONS } from "../features/tools/toolDefinitions.js";
 
@@ -96,6 +96,13 @@ vi.mock("../features/canvas/EditorCanvas.jsx", async () => {
 function renderDemo() {
   return render(<Workbench initialDemoProject />);
 }
+
+test("starts the demo with no implicit image effects", () => {
+  const project = createDemoProject();
+
+  expect(project.filters).toEqual({});
+  expect(project.effectStack).toEqual([]);
+});
 
 async function openAdvancedSettings(user) {
   await user.click(screen.getByRole("button", { name: "高级设置" }));
@@ -275,7 +282,7 @@ describe("responsive Reki workbench", () => {
     ]);
   });
 
-  test("wires zoom, grid, preset effects, and demo comparison to visible canvas props", async () => {
+  test("wires zoom, grid, effect-free presets, and demo comparison to visible canvas props", async () => {
     const user = userEvent.setup();
     renderDemo();
     const canvas = screen.getByRole("application", { name: "标注画布" });
@@ -290,7 +297,7 @@ describe("responsive Reki workbench", () => {
 
     const beforeEffects = canvas.dataset.effectStack;
     await user.click(screen.getByRole("button", { name: /档案扫描/ }));
-    expect(canvas.dataset.effectStack).not.toBe(beforeEffects);
+    expect(canvas.dataset.effectStack).toBe(beforeEffects);
 
     expect(document.querySelector(".canvas-stage-wrap")).toHaveClass(
       "demo-canvas",

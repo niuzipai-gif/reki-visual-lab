@@ -58,6 +58,7 @@ describe("offline style advisor", () => {
 
     expect(first).toHaveLength(3);
     expect(first).toEqual(second);
+    expect(first.every(({ filters }) => Object.keys(filters).length === 0)).toBe(true);
     expect(first.every((item) => validateStyleAdvice({ recommendations: [item] }).ok)).toBe(true);
   });
 

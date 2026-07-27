@@ -204,6 +204,84 @@ describe("editor history", () => {
 });
 
 describe("layer actions", () => {
+  test("creates a marker fragment as one undoable selected layer", () => {
+    const marker = createAnnotation("box", [
+      { x: 0.2, y: 0.2 },
+      { x: 0.7, y: 0.75 },
+    ], { id: "marker" });
+    const start = addLayer(createEditorState(), marker);
+    const extracted = editorReducer(start, {
+      type: "fragment/create",
+      markerId: marker.id,
+      sourceFill: "black",
+    });
+    const undone = editorReducer(extracted, { type: "history/undo" });
+
+    expect(extracted.present.layers).toHaveLength(2);
+    expect(extracted.present.layers[1]).toMatchObject({
+      type: "extractedFragment",
+      sourceMarkerId: marker.id,
+      sourceFill: "black",
+      linkedToMarker: true,
+      effects: [],
+    });
+    expect(extracted.selectedLayerId).toBe(extracted.present.layers[1].id);
+    expect(extracted.past).toHaveLength(start.past.length + 1);
+    expect(undone.present.layers).toEqual([marker]);
+  });
+
+  test("updates a linked fragment when its source marker bounds change", () => {
+    const marker = createAnnotation("box", [
+      { x: 0.2, y: 0.2 },
+      { x: 0.5, y: 0.5 },
+    ], { id: "marker" });
+    const withMarker = addLayer(createEditorState(), marker);
+    const withFragment = editorReducer(withMarker, {
+      type: "fragment/create",
+      markerId: marker.id,
+    });
+    const fragment = withFragment.present.layers[1];
+    const updated = editorReducer(withFragment, {
+      type: "layer/update",
+      id: marker.id,
+      patch: { points: [{ x: 0.35, y: 0.3 }, { x: 0.8, y: 0.75 }] },
+    });
+
+    expect(updated.present.layers[1].sourceRect).not.toEqual(fragment.sourceRect);
+    expect(updated.present.layers[1].transform).toEqual(updated.present.layers[1].sourceRect);
+    expect(updated.present.layers[1].linkedToMarker).toBe(true);
+  });
+
+  test("unlinks a fragment on direct transform changes and validates source fill", () => {
+    const marker = createAnnotation("box", [
+      { x: 0.2, y: 0.2 },
+      { x: 0.5, y: 0.5 },
+    ], { id: "marker" });
+    const withFragment = editorReducer(
+      addLayer(createEditorState(), marker),
+      { type: "fragment/create", markerId: marker.id },
+    );
+    const fragment = withFragment.present.layers[1];
+    const moved = editorReducer(withFragment, {
+      type: "fragment/update",
+      id: fragment.id,
+      patch: { transform: { ...fragment.transform, x: 0.7 } },
+    });
+    const invalidFill = editorReducer(moved, {
+      type: "fragment/sourceFill",
+      id: fragment.id,
+      sourceFill: "gradient",
+    });
+    const whiteFill = editorReducer(moved, {
+      type: "fragment/sourceFill",
+      id: fragment.id,
+      sourceFill: "white",
+    });
+
+    expect(moved.present.layers[1]).toMatchObject({ linkedToMarker: false, transform: { x: 0.7 } });
+    expect(invalidFill).toBe(moved);
+    expect(whiteFill.present.layers[1].sourceFill).toBe("white");
+  });
   test("updates the persisted global motion duration as one undoable commit", () => {
     const start = createEditorState(createProject());
     const updated = editorReducer(start, {
