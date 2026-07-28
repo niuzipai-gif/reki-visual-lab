@@ -560,6 +560,7 @@ describe("responsive Reki workbench", () => {
 
     await user.click(screen.getByRole("button", { name: "打开样式面板" }));
     expect(screen.getByRole("dialog", { name: "移动端编辑面板" })).toBeInTheDocument();
+    expect(screen.getByRole("separator", { name: "调整移动端面板高度" })).toBeInTheDocument();
     expect(
       screen.getByRole("tab", { name: "样式", selected: true }),
     ).toBeInTheDocument();
@@ -579,7 +580,50 @@ describe("responsive Reki workbench", () => {
     ).toBeInTheDocument();
   });
 
-  test("routes every mobile dock entry to its matching sheet content", async () => {
+  test("uses a fitted 100 percent starting zoom on a mobile viewport", () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+    try {
+      renderDemo();
+      expect(screen.getByRole("application", { name: "标注画布" })).toHaveAttribute("data-zoom", "100");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("returns to selection and closes a mobile tool sheet in one action", async () => {
+    const user = userEvent.setup();
+    renderDemo();
+
+    await user.click(screen.getByRole("button", { name: "打开工具面板" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "移动端编辑面板" })).getByRole(
+        "button",
+        { name: "点框工具" },
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "打开图层面板" }));
+    expect(screen.getByRole("dialog", { name: "移动端编辑面板" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "移动端返回选择模式" }));
+
+    expect(screen.getByRole("application", { name: "标注画布" })).toHaveAttribute("data-active-tool", "select");
+    expect(screen.queryByRole("dialog", { name: "移动端编辑面板" })).not.toBeInTheDocument();
+  });
+
+  test("keeps the tool picker compact on mobile", async () => {
+    const user = userEvent.setup();
+    renderDemo();
+
+    await user.click(screen.getByRole("button", { name: "打开工具面板" }));
+
+    expect(screen.getByRole("dialog", { name: "移动端编辑面板" })).toHaveAttribute("data-compact", "true");
+    expect(screen.queryByRole("separator", { name: "调整移动端面板高度" })).not.toBeInTheDocument();
+  });
+
+  test("routes the concise mobile dock to its matching sheet content", async () => {
     const user = userEvent.setup();
     renderDemo();
 
@@ -587,9 +631,8 @@ describe("responsive Reki workbench", () => {
     expect(screen.getByRole("heading", { name: "工具" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "关闭面板" }));
 
-    await user.click(screen.getByRole("button", { name: "打开预设面板" }));
-    expect(screen.getByRole("heading", { name: "预设" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "关闭面板" }));
+    expect(screen.getByRole("region", { name: "快速预设" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开预设面板" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "打开 AI 扫描面板" }));
     expect(screen.getByRole("heading", { name: "AI 扫描" })).toBeInTheDocument();

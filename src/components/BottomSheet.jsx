@@ -10,6 +10,7 @@ export function BottomSheet({
   layers,
   specialTitle,
   specialContent,
+  compact = false,
   height = 62,
   resizeHandleProps,
 }) {
@@ -22,11 +23,14 @@ export function BottomSheet({
       role="dialog"
       aria-label="移动端编辑面板"
       aria-modal="false"
+      data-compact={compact ? "true" : undefined}
       style={{ "--reki-sheet-height": `${height}vh` }}
     >
-      <div className="sheet-resize-handle" {...resizeHandleProps}>
-        <span className="sheet-handle" aria-hidden="true" />
-      </div>
+      {!compact ? (
+        <div className="sheet-resize-handle" {...resizeHandleProps}>
+          <span className="sheet-handle" aria-hidden="true" />
+        </div>
+      ) : null}
       <div className="sheet-header">
         {specialTitle ? (
           <h2>{specialTitle}</h2>

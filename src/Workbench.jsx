@@ -26,6 +26,11 @@ import { useResizablePanels } from "./hooks/useResizablePanels.js";
 import { publicAsset } from "./publicAsset.js";
 
 const PREVIEW_FRAME_INTERVAL_MS = 1000 / 30;
+const MOBILE_BREAKPOINT_QUERY = "(max-width: 759px)";
+
+function initialWorkbenchZoom() {
+  return globalThis.matchMedia?.(MOBILE_BREAKPOINT_QUERY).matches ? 100 : 72;
+}
 
 const StableTopBar = React.memo(TopBar, (previous, next) => (
   previous.canUndo === next.canUndo &&
@@ -65,6 +70,7 @@ const StableStatusBar = React.memo(StatusBar, (previous, next) => (
 ));
 const StableBottomDock = React.memo(BottomDock, (previous, next) => (
   previous.activeSheet === next.activeSheet &&
+  previous.activeTool === next.activeTool &&
   previous.canCompare === next.canCompare &&
   previous.comparisonVisible === next.comparisonVisible
 ));
@@ -131,7 +137,7 @@ export function Workbench({
   );
   const [activeTool, setActiveTool] = useState("select");
   const [mobileSheet, setMobileSheet] = useState(null);
-  const [zoom, setZoom] = useState(72);
+  const [zoom, setZoom] = useState(initialWorkbenchZoom);
   const [grid, setGrid] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
@@ -443,11 +449,11 @@ export function Workbench({
     </div>
   );
 
-  const specialSheet = ["tools", "presets", "ai", "filter"].includes(mobileSheet)
+  const specialSheet = ["tools", "ai", "filter"].includes(mobileSheet)
     ? {
+        compact: mobileSheet === "tools",
         title: {
           tools: "工具",
-          presets: "预设",
           ai: "AI 扫描",
           filter: "底图效果",
         }[mobileSheet],
@@ -463,8 +469,6 @@ export function Workbench({
                 </button>
               ))}
             </div>
-          ) : mobileSheet === "presets" ? (
-            <PresetStrip activePreset={activePreset} onApply={(preset) => { applyPreset(preset); setMobileSheet(null); }} />
           ) : mobileSheet === "filter" ? (
             filterPanel
           ) : (
@@ -592,9 +596,14 @@ export function Workbench({
       <StableStatusBar zoom={zoom} grid={grid} canvas={state.present.canvas} saveStatus={saveStatus} onZoomChange={setZoom} onToggleGrid={() => setGrid((value) => !value)} />
       <StableBottomDock
         activeSheet={mobileSheet}
+        activeTool={activeTool}
         canCompare={Boolean(state.present.image)}
         comparisonVisible={comparisonVisible}
         onOpen={(sheet) => setMobileSheet(sheet)}
+        onSelect={() => {
+          setActiveTool("select");
+          setMobileSheet(null);
+        }}
         onExport={() => setExportOpen(true)}
         onToggleComparison={() => setComparisonVisible((visible) => !visible)}
       />
@@ -606,6 +615,7 @@ export function Workbench({
         layers={layersPanel}
         specialTitle={specialSheet?.title}
         specialContent={specialSheet?.content}
+        compact={specialSheet?.compact}
         height={sheetHeight}
         resizeHandleProps={sheetSeparatorProps}
       />

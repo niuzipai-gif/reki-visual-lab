@@ -322,6 +322,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
   .bottom-dock button span { font-size: .52rem; font-weight: 720; }
   .bottom-dock button:hover, .bottom-dock button[aria-pressed="true"] { color: #6f1f2c; background: rgba(176,47,62,.22); }
   .bottom-sheet { position: fixed; z-index: 55; right: 10px; bottom: 83px; left: 10px; display: block; height: min(var(--reki-sheet-height, 62vh), calc(100dvh - 100px)); padding: 10px 12px 14px; overflow: hidden; background: var(--reki-surface-strong); }
+  .bottom-sheet[data-compact="true"] { height: min(44vh, calc(100dvh - 100px)); }
   .sheet-resize-handle { display: grid; height: 15px; margin: -4px 0 1px; place-items: start center; cursor: ns-resize; touch-action: none; }
   .sheet-handle { width: 34px; height: 3px; border-radius: 999px; background: #c1bcaf; }
   .sheet-resize-handle:hover .sheet-handle, .sheet-resize-handle:focus-visible .sheet-handle { background: var(--reki-yolk); }
