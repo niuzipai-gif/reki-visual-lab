@@ -18,6 +18,14 @@ Reki Visual Annotation Lab は、コスプレ写真、レタッチ指示、ビ�
 
 打开网址后可以直接导入 JPG、PNG 或 WebP。图片、滤镜、AI 扫描和项目草稿默认只在当前浏览器本地处理与保存。
 
+## Anitabi 圣地巡礼 Skill / アニメ聖地巡礼スキル / Anime Pilgrimage Skill
+
+- **中文：** 查询动漫圣地、现实取景地、附近巡礼点、地图链接和对应截图；每个点严格按“地点 → Google 地图链接 → 对应图片”逐点发送。
+- **日本語：** アニメの聖地・実在のロケ地・周辺スポット・地図リンク・対応する画像を検索します。各スポットは「場所 → Google マップリンク → 対応画像」の順に一件ずつ送信します。
+- **English:** Find anime pilgrimage sites, real-world filming spots, nearby landmarks, map links, and matching screenshots. Deliver each point one at a time in the order: place → Google Maps link → matching image.
+
+Skill 文件 / スキルファイル / Skill file：<skills/anitabi-pilgrimage/SKILL.md>
+
 ## 主要功能
 
 - 点框、叠框、节点路径、单侧引线、全局节点、随机节点、轨道圆环和标签文字。
