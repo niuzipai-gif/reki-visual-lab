@@ -1,0 +1,4 @@
+interface:
+  display_name: "Anitabi 圣地巡礼"
+  short_description: "Find anime filming spots, maps, and nearby pilgrimage points"
+  default_prompt: "Use $anitabi-pilgrimage to find verified anime pilgrimage locations and map links."
