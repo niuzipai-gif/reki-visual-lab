@@ -2,6 +2,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -26,11 +27,36 @@ class AnitabiSkillSmokeTests(unittest.TestCase):
     def test_package_contract_and_unique_library_ids(self):
         skill_text = (PACKAGE / "SKILL.md").read_text(encoding="utf-8")
         self.assertTrue((PACKAGE / "agents" / "openai.yaml").is_file())
-        for forbidden in (".claude\\skills", "cc-connect", "mmx", "Administrator", "reki-visual-lab"):
+        for forbidden in (".claude\\skills", "cc-connect", "Administrator", "reki-visual-lab"):
             self.assertNotIn(forbidden.lower(), skill_text.lower())
         works = json.loads((PACKAGE / "works_library.json").read_text(encoding="utf-8"))["works"]
         ids = [work["id"] for work in works]
         self.assertEqual(len(ids), len(set(ids)))
+        self.assertTrue((SCRIPTS / "vision_preflight.py").is_file())
+        self.assertIn("multimodal", skill_text.lower())
+        self.assertIn("vision_preflight.py", skill_text)
+        self.assertIn("--vision-mode native", skill_text)
+        self.assertIn("--vision-mode mmx", skill_text)
+
+    def test_native_preflight_does_not_need_mmx(self):
+        preflight = load_script("vision_preflight")
+        with patch.object(preflight, "find_mmx", side_effect=AssertionError("native must skip mmx")):
+            result = preflight.check_mode("native")
+        self.assertTrue(result["ready"])
+        self.assertFalse(result["requires_mmx"])
+
+    def test_non_multimodal_preflight_requires_mmx(self):
+        preflight = load_script("vision_preflight")
+        with patch.object(preflight, "find_mmx", return_value=None):
+            result = preflight.check_mode("mmx")
+        self.assertFalse(result["ready"])
+        self.assertTrue(result["requires_mmx"])
+
+    def test_missing_configured_mmx_path_is_blocked(self):
+        preflight = load_script("vision_preflight")
+        with patch.dict(os.environ, {"ANITABI_MMX_COMMAND": r"F:\missing\mmx.exe"}), \
+             patch.object(preflight.shutil, "which", return_value=None):
+            self.assertIsNone(preflight.find_mmx())
 
     def test_query_json_mode_is_stdout_only(self):
         query = load_script("anitabi_query")
@@ -88,6 +114,41 @@ class AnitabiSkillSmokeTests(unittest.TestCase):
             points.write_text(json.dumps([{"id": "point", "name": "测试点"}], ensure_ascii=False), encoding="utf-8")
             self.assertEqual(scan.build_manifest(images, points, labels=None)[0]["has_char"], None)
             self.assertEqual(scan.build_manifest(images, points, labels={"01-point.jpg": False})[0]["has_char"], False)
+
+    def test_native_scan_never_calls_mmx(self):
+        scan = load_script("scan_characters")
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            images = root / "images"
+            images.mkdir()
+            (images / "01-point.jpg").write_bytes(b"fixture")
+            points = root / "points.json"
+            points.write_text(json.dumps([{"id": "point", "name": "测试点"}], ensure_ascii=False), encoding="utf-8")
+            with patch.object(scan, "classify_image_with_mmx", side_effect=AssertionError("native must skip mmx")), \
+                 patch.object(sys, "argv", ["scan_characters.py", "--vision-mode", "native", "--images-dir", str(images), "--points-file", str(points), "--json"]), \
+                 contextlib.redirect_stdout(output):
+                self.assertEqual(scan.main(), 0)
+        self.assertIsNone(json.loads(output.getvalue())[0]["has_char"])
+
+    def test_mmx_scan_invokes_mmx_after_preflight(self):
+        scan = load_script("scan_characters")
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            images = root / "images"
+            images.mkdir()
+            (images / "01-point.jpg").write_bytes(b"fixture")
+            points = root / "points.json"
+            points.write_text(json.dumps([{"id": "point", "name": "测试点"}], ensure_ascii=False), encoding="utf-8")
+            ready = {"ready": True, "mode": "mmx", "requires_mmx": True, "command": "fake-mmx"}
+            with patch.object(scan, "check_mode", return_value=ready), \
+                 patch.object(scan, "classify_image_with_mmx", return_value=True) as classify, \
+                 patch.object(sys, "argv", ["scan_characters.py", "--vision-mode", "mmx", "--images-dir", str(images), "--points-file", str(points), "--json"]), \
+                 contextlib.redirect_stdout(output):
+                self.assertEqual(scan.main(), 0)
+        classify.assert_called_once()
+        self.assertTrue(json.loads(output.getvalue())[0]["has_char"])
 
 
 if __name__ == "__main__":
