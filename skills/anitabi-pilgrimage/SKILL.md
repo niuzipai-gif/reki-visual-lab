@@ -42,6 +42,26 @@ Use `--json` when another tool or agent will consume the result. JSON mode is de
 4. For a screenshot, use `--img N`. Deliver the resulting local file through the host agent’s supported image/file channel; do not call a hard-coded messenger command.
 5. Keep attribution with screenshots: Anitabi data and images are subject to the source page’s license, commonly CC BY-NC-SA 4.0. Do not imply that a screenshot is safe to redistribute commercially.
 
+## 固定逐点交付顺序
+
+对用户要求发送图片的巡礼查询，必须把每个巡礼点作为一个独立交付单元，也就是一个点一个点地发；按以下顺序完成一个点后再发送下一个点：
+
+1. 发送地点名称。
+2. 立即发送该点的 `Google 地图链接`。
+3. 紧接着发送该点对应的图片；图片必须来自该点的 `image` 字段或 `--img N` 下载结果，并通过宿主支持的图片/文件通道发送。
+
+固定格式：
+
+```text
+地点：<巡礼点名称>
+Google 地图链接：<该点坐标对应的链接>
+对应图片：<该点的本地绝对路径或宿主图片附件>
+```
+
+严格禁止：不要先集中发送全部地图链接；不要把图片单独集中发送；不要把一个点的图片放到另一个点的链接下面；不要先发图片再发该点的地图链接。反查结果按距离排序时，也必须逐点完成“地点 → Google 地图链接 → 对应图片”后再继续。
+
+如果点没有坐标，明确写 `Google 地图链接：缺失（无坐标）`；如果图片获取失败，明确写 `对应图片：未获取（说明失败原因）`，不得用其他点的图片替代或声称已发送。
+
 ## Area and reverse lookup boundaries
 
 - `anitabi_nearby.py --radius` is an approximate latitude/longitude radius. For a precise distance from an address, use `anitabi_reverse.py --radius` in meters.

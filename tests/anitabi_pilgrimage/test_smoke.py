@@ -38,6 +38,18 @@ class AnitabiSkillSmokeTests(unittest.TestCase):
         self.assertIn("--vision-mode native", skill_text)
         self.assertIn("--vision-mode mmx", skill_text)
 
+    def test_point_delivery_is_map_link_then_image_one_point_at_a_time(self):
+        skill_text = (PACKAGE / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("固定逐点交付顺序", skill_text)
+        self.assertIn("一个点一个点", skill_text)
+        map_marker = skill_text.find("Google 地图链接")
+        image_marker = skill_text.find("对应图片")
+        self.assertGreaterEqual(map_marker, 0)
+        self.assertGreaterEqual(image_marker, 0)
+        self.assertLess(map_marker, image_marker)
+        self.assertIn("不要先集中发送全部地图链接", skill_text)
+        self.assertIn("不要把图片单独集中发送", skill_text)
+
     def test_native_preflight_does_not_need_mmx(self):
         preflight = load_script("vision_preflight")
         with patch.object(preflight, "find_mmx", side_effect=AssertionError("native must skip mmx")):
