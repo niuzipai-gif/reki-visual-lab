@@ -184,9 +184,7 @@ class TaskService:
                 )
 
             try:
-                existing = self.repository.get_idempotency(
-                    parsed_id, "analyze", key
-                )
+                existing = self.repository.get_idempotency(parsed_id, "analyze", key)
                 if existing is not None:
                     self._require_same_request(existing, request_hash)
                     if existing.result_status is TaskStatus.FAILED:
@@ -241,22 +239,16 @@ class TaskService:
                 ) from exc
             except ProviderError as exc:
                 self._fail_task(task)
-                self._mark_provider_failed(
-                    parsed_id, "analyze", key, request_hash
-                )
+                self._mark_provider_failed(parsed_id, "analyze", key, request_hash)
                 raise self._provider_failure(exc) from exc
             except TaskServiceError:
                 raise
             except Exception as exc:
                 self._fail_task(task)
-                self._mark_provider_failed(
-                    parsed_id, "analyze", key, request_hash
-                )
+                self._mark_provider_failed(parsed_id, "analyze", key, request_hash)
                 raise self._provider_failure(None) from exc
 
-    def _poll_analysis(
-        self, task: TaskRecord, entry: IdempotencyEntry
-    ) -> TaskRecord:
+    def _poll_analysis(self, task: TaskRecord, entry: IdempotencyEntry) -> TaskRecord:
         if entry.provider_job_id is None:
             return task
         for _attempt in range(self.MAX_POLL_ATTEMPTS):
@@ -358,9 +350,7 @@ class TaskService:
 
         with self._lock:
             try:
-                existing = self.repository.get_idempotency(
-                    parsed_id, "generate", key
-                )
+                existing = self.repository.get_idempotency(parsed_id, "generate", key)
                 if existing is not None:
                     self._require_same_request(existing, request_hash)
                     if existing.result_status is TaskStatus.FAILED:
@@ -394,11 +384,13 @@ class TaskService:
                             status_code=409,
                         )
                     self._advance(task, TaskStatus.GENERATING)
-                    existing = self.repository.reserve_generation_and_mark_task_generating(
-                        parsed_id,
-                        key,
-                        request_hash,
-                        provider_idempotency_key,
+                    existing = (
+                        self.repository.reserve_generation_and_mark_task_generating(
+                            parsed_id,
+                            key,
+                            request_hash,
+                            provider_idempotency_key,
+                        )
                     )
 
                 # A prior worker may have durably prepared the version UUID
@@ -419,20 +411,52 @@ class TaskService:
                         self._persist_task(task)
 
                 if existing.provider_job_id is None:
+                    # Claim the durable reservation before the potentially
+                    # long provider call.  If a reclaimer won the race, the
+                    # generation check makes this worker reacquire the slot
+                    # instead of submitting against a released position.
+                    existing = self.repository.begin_provider_submission(
+                        parsed_id,
+                        key,
+                        request_hash,
+                        existing.reservation_generation,
+                    )
+                    if (
+                        existing.provider_job_id is None
+                        and existing.provider_status == "stale_reservation"
+                    ):
+                        existing = self.repository.reacquire_generation_slot(
+                            parsed_id,
+                            key,
+                            request_hash,
+                            provider_idempotency_key,
+                        )
+                        task = self.get_task(parsed_id)
+                        existing = self.repository.begin_provider_submission(
+                            parsed_id,
+                            key,
+                            request_hash,
+                            existing.reservation_generation,
+                        )
+                    if (
+                        existing.provider_job_id is None
+                        and existing.candidate_position is None
+                    ):
+                        return self.get_task(parsed_id)
+                if existing.provider_job_id is None:
                     job = self.provider.submit_edit(task.original_asset_url.url, plan)
                     provider_job_id = self._provider_job_id(job)
-                    existing = self.repository.update_idempotency(
+                    existing = self.repository.record_provider_submission(
                         parsed_id,
-                        "generate",
                         key,
-                        request_hash=request_hash,
+                        request_hash,
+                        existing.reservation_generation,
                         provider_job_id=provider_job_id,
+                        provider_status=self._provider_status(job),
                         provider_idempotency_key=(
                             existing.provider_idempotency_key
                             or provider_idempotency_key
                         ),
-                        provider_status=self._provider_status(job),
-                        result_status=TaskStatus.GENERATING,
                     )
                 return self._poll_generation(task, existing)
             except CandidateLimitError as exc:
@@ -449,17 +473,13 @@ class TaskService:
                 ) from exc
             except ProviderError as exc:
                 self._fail_task(task)
-                self._mark_provider_failed(
-                    parsed_id, "generate", key, request_hash
-                )
+                self._mark_provider_failed(parsed_id, "generate", key, request_hash)
                 raise self._provider_failure(exc) from exc
             except TaskServiceError:
                 raise
             except Exception as exc:
                 self._fail_task(task)
-                self._mark_provider_failed(
-                    parsed_id, "generate", key, request_hash
-                )
+                self._mark_provider_failed(parsed_id, "generate", key, request_hash)
                 raise self._provider_failure(None) from exc
 
     def _poll_generation(
@@ -489,9 +509,7 @@ class TaskService:
                     task, entry, entry.request_hash
                 )
         if entry.version_id is not None:
-            return self._finalize_prepared_generation(
-                task, entry, entry.request_hash
-            )
+            return self._finalize_prepared_generation(task, entry, entry.request_hash)
         if entry.provider_job_id is None:
             return task
         for _attempt in range(self.MAX_POLL_ATTEMPTS):
@@ -561,9 +579,7 @@ class TaskService:
                     candidate_position=None,
                 )
                 raise
-            return self._finalize_prepared_generation(
-                task, entry, entry.request_hash
-            )
+            return self._finalize_prepared_generation(task, entry, entry.request_hash)
         return self.get_task(task.id)
 
     def _finalize_prepared_generation(
@@ -576,7 +592,9 @@ class TaskService:
 
         result_asset = entry.result_asset_url
         if result_asset is None and entry.version_id is not None:
-            recovered = self.repository.get_version(task.id, version_id=entry.version_id)
+            recovered = self.repository.get_version(
+                task.id, version_id=entry.version_id
+            )
             if recovered is not None:
                 result_asset = recovered.asset_url
         if entry.version_id is None or result_asset is None:
@@ -695,7 +713,9 @@ class TaskService:
         try:
             return UUID(str(value))
         except (ValueError, TypeError, AttributeError) as exc:
-            raise TaskServiceError("NOT_FOUND", "任务不存在。", status_code=404) from exc
+            raise TaskServiceError(
+                "NOT_FOUND", "任务不存在。", status_code=404
+            ) from exc
 
     @staticmethod
     def _plan_hash_payload(plan: EditPlan) -> dict[str, Any]:
@@ -716,9 +736,7 @@ class TaskService:
         return value
 
     @staticmethod
-    def _require_same_request(
-        existing: IdempotencyEntry, request_hash: str
-    ) -> None:
+    def _require_same_request(existing: IdempotencyEntry, request_hash: str) -> None:
         if existing.request_hash != request_hash:
             raise TaskServiceError(
                 "IDEMPOTENCY_CONFLICT",
@@ -729,7 +747,11 @@ class TaskService:
     @staticmethod
     def _provider_status(value: Any) -> str:
         status = getattr(value, "status", None)
-        return status if status in {"queued", "running", "succeeded", "failed"} else "queued"
+        return (
+            status
+            if status in {"queued", "running", "succeeded", "failed"}
+            else "queued"
+        )
 
     @classmethod
     def _result_status(cls, value: Any) -> str:
@@ -738,9 +760,7 @@ class TaskService:
     def _sleep_before_poll(self, attempt: int) -> None:
         if attempt <= 0 or self.poll_delay_seconds <= 0:
             return
-        delay = self.poll_delay_seconds * (
-            self.poll_backoff_factor ** (attempt - 1)
-        )
+        delay = self.poll_delay_seconds * (self.poll_backoff_factor ** (attempt - 1))
         time.sleep(delay)
 
     @staticmethod

@@ -320,9 +320,7 @@ def test_analysis_transitions_to_confirmation_and_is_idempotent(api_context):
     assert first.json()["analysis"]
     assert fetched.json()["analysis"] == first.json()["analysis"]
     assert provider.analysis_submissions == 1
-    assert repository.get_task(UUID(task_id)).status.value == (
-        "awaiting_confirmation"
-    )
+    assert repository.get_task(UUID(task_id)).status.value == ("awaiting_confirmation")
 
 
 def test_plan_and_generate_enforce_confirmation_and_enabled_operation(api_context):
@@ -366,9 +364,9 @@ def test_generate_is_idempotent_original_is_untouched_and_candidates_are_bounded
 ):
     client, repository, _storage, provider = api_context
     task_id = _prepare_confirmation(client)
-    original = client.get(
-        f"/api/v1/tasks/{task_id}", headers=INVITE_HEADERS
-    ).json()["original_asset_url"]
+    original = client.get(f"/api/v1/tasks/{task_id}", headers=INVITE_HEADERS).json()[
+        "original_asset_url"
+    ]
     client.post(
         f"/api/v1/tasks/{task_id}/plan",
         json=_plan_payload(),
@@ -419,9 +417,7 @@ def test_rebuilt_task_service_uses_persisted_idempotency_without_resubmitting(
         settings=Settings(invite_tokens=["invite-demo"], asset_ttl_hours=1),
     )
     retried = rebuilt.generate(UUID(task_id), "generate-rebuild")
-    record = repository.get_idempotency(
-        UUID(task_id), "generate", "generate-rebuild"
-    )
+    record = repository.get_idempotency(UUID(task_id), "generate", "generate-rebuild")
 
     assert retried.status is TaskStatus.SUCCEEDED
     assert len(retried.versions) == 1
@@ -471,9 +467,7 @@ def test_provider_idempotency_recovers_after_crash_before_job_id_write(
 
     assert recovered.status is TaskStatus.AWAITING_CONFIRMATION
     assert provider.submissions == 1
-    record = repository.get_idempotency(
-        task.id, "analyze", "analysis-crash-window"
-    )
+    record = repository.get_idempotency(task.id, "analyze", "analysis-crash-window")
     assert record is not None
     assert record.provider_job_id == "stable-analysis-job-1"
 
@@ -508,9 +502,7 @@ def test_generate_rebuild_recovers_after_crash_before_atomic_finalize(
     with pytest.raises(SimulatedProcessCrash):
         service.generate(task.id, "generate-recovery")
 
-    prepared = repository.get_idempotency(
-        task.id, "generate", "generate-recovery"
-    )
+    prepared = repository.get_idempotency(task.id, "generate", "generate-recovery")
     assert prepared is not None
     assert prepared.version_id is not None
     assert prepared.result_asset_url is not None
@@ -527,9 +519,12 @@ def test_generate_rebuild_recovers_after_crash_before_atomic_finalize(
     assert len(recovered.versions) == 1
     assert recovered.versions[0].id == prepared.version_id
     assert provider.submissions == 2  # one analysis job and one edit job
-    assert repository.get_idempotency(
-        task.id, "generate", "generate-recovery"
-    ).result_status is TaskStatus.SUCCEEDED
+    assert (
+        repository.get_idempotency(
+            task.id, "generate", "generate-recovery"
+        ).result_status
+        is TaskStatus.SUCCEEDED
+    )
 
 
 def test_generate_rebuild_reconciles_a_version_written_before_final_state(
@@ -605,7 +600,7 @@ def test_same_key_recovers_after_stale_reservation_reclaim(repository, monkeypat
     provider_key = service._provider_idempotency_key(
         "edit", task.original_asset_url.url, plan
     )
-    entry = repository.reserve_generation_and_mark_task_generating(
+    repository.reserve_generation_and_mark_task_generating(
         task.id, "generate-stale-retry", request_hash, provider_key
     )
     row = repository.session.scalar(
@@ -657,7 +652,7 @@ def test_reclaim_reopens_task_for_new_key_and_old_key_recovery(repository):
         "edit", task.original_asset_url.url, plan
     )
     old_key = "generate-reclaimed-old"
-    old_entry = repository.reserve_generation_and_mark_task_generating(
+    repository.reserve_generation_and_mark_task_generating(
         task.id, old_key, request_hash, provider_key
     )
     accepted_job = provider.submit_edit(task.original_asset_url.url, plan)
@@ -681,15 +676,21 @@ def test_reclaim_reopens_task_for_new_key_and_old_key_recovery(repository):
     assert new_result.status is TaskStatus.SUCCEEDED
     assert old_result.status is TaskStatus.SUCCEEDED
     assert len(old_result.versions) == 2
-    assert {item.position for item in (
-        repository.session.scalars(
-            select(VersionRow).where(VersionRow.task_id == task.id)
-        ).all()
-    )} == {0, 1}
+    assert {
+        item.position
+        for item in (
+            repository.session.scalars(
+                select(VersionRow).where(VersionRow.task_id == task.id)
+            ).all()
+        )
+    } == {0, 1}
     assert provider.submissions == 2
-    assert repository.get_idempotency(
-        task.id, "generate", old_key
-    ).provider_idempotency_key == provider_key
+    assert (
+        repository.get_idempotency(
+            task.id, "generate", old_key
+        ).provider_idempotency_key
+        == provider_key
+    )
 
 
 def test_follow_up_task_endpoints_require_header_without_leaking_existence(
@@ -764,9 +765,7 @@ def test_default_app_scopes_sessions_per_request_and_closes_adapters(tmp_path):
         created = _create(client)
         assert created.status_code == 200
         task_id = created.json()["task_id"]
-        fetched = client.get(
-            f"/api/v1/tasks/{task_id}", headers=INVITE_HEADERS
-        )
+        fetched = client.get(f"/api/v1/tasks/{task_id}", headers=INVITE_HEADERS)
         assert fetched.status_code == 200
         assert not hasattr(app.state, "task_service")
 
@@ -800,9 +799,7 @@ def test_queued_jobs_poll_until_success_with_one_persisted_provider_job(
         f"/api/v1/tasks/{task_id}/generate",
         headers=_authenticated_headers(**{"Idempotency-Key": "generate-queued"}),
     )
-    record = repository.get_idempotency(
-        UUID(task_id), "generate", "generate-queued"
-    )
+    record = repository.get_idempotency(UUID(task_id), "generate", "generate-queued")
 
     assert generated.status_code == 200
     assert generated.json()["status"] == "succeeded"
@@ -827,9 +824,7 @@ def test_queued_job_poll_limit_returns_retryable_task_and_reuses_job_on_retry(
         f"/api/v1/tasks/{task_id}/analyze",
         headers=_authenticated_headers(**{"Idempotency-Key": "analysis-timeout"}),
     )
-    record = repository.get_idempotency(
-        UUID(task_id), "analyze", "analysis-timeout"
-    )
+    record = repository.get_idempotency(UUID(task_id), "analyze", "analysis-timeout")
 
     assert first.status_code == retry.status_code == 200
     assert first.headers.get("Retry-After") == "1"
@@ -931,9 +926,7 @@ def test_download_is_only_available_for_successful_unexpired_task(api_context):
     client, repository, _storage, _provider = api_context
     task_id = _create(client).json()["task_id"]
 
-    not_ready = client.get(
-        f"/api/v1/tasks/{task_id}/download", headers=INVITE_HEADERS
-    )
+    not_ready = client.get(f"/api/v1/tasks/{task_id}/download", headers=INVITE_HEADERS)
     assert not_ready.status_code == 409
     assert not_ready.json()["error"]["code"] == "TASK_NOT_READY"
 
@@ -949,9 +942,7 @@ def test_download_is_only_available_for_successful_unexpired_task(api_context):
     )
     assert generated.status_code == 200
 
-    available = client.get(
-        f"/api/v1/tasks/{task_id}/download", headers=INVITE_HEADERS
-    )
+    available = client.get(f"/api/v1/tasks/{task_id}/download", headers=INVITE_HEADERS)
     assert available.status_code == 200
     assert available.json()["url"].startswith("https://")
     assert available.json()["expires_at"]
@@ -997,7 +988,9 @@ def test_provider_failure_is_safe_and_never_returns_raw_upstream_body(api_contex
         )
         response = failing_client.post(
             f"/api/v1/tasks/{task_id}/generate",
-            headers=_authenticated_headers(**{"Idempotency-Key": "generate-provider-error"}),
+            headers=_authenticated_headers(
+                **{"Idempotency-Key": "generate-provider-error"}
+            ),
         )
 
     assert response.status_code == 502

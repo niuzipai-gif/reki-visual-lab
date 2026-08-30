@@ -253,9 +253,12 @@ def test_add_version_reraises_integrity_error_and_allows_a_clean_retry(
         repository.add_version(task.id, version)
 
     assert repository.get_task(task.id).versions == ()
-    assert db_session.scalar(
-        select(func.count(AssetRow.id)).where(AssetRow.task_id == task.id)
-    ) == 0
+    assert (
+        db_session.scalar(
+            select(func.count(AssetRow.id)).where(AssetRow.task_id == task.id)
+        )
+        == 0
+    )
 
     monkeypatch.setattr(db_session, "commit", real_commit)
     repository.add_version(task.id, version)
@@ -549,11 +552,14 @@ def test_two_stage_migration_supports_old_data_repeat_upgrade_and_downgrade(
             for item in idempotency_constraints
         )
         with engine.connect() as connection:
-            assert connection.execute(
-                select(func.count()).select_from(VersionRow.__table__).where(
-                    VersionRow.__table__.c.task_id == old_task_id
-                )
-            ).scalar_one() == 1
+            assert (
+                connection.execute(
+                    select(func.count())
+                    .select_from(VersionRow.__table__)
+                    .where(VersionRow.__table__.c.task_id == old_task_id)
+                ).scalar_one()
+                == 1
+            )
     finally:
         engine.dispose()
 
@@ -661,6 +667,80 @@ def test_idempotency_key_is_rejected_by_the_database_when_reused(repository):
     with pytest.raises(IntegrityError):
         repository.session.commit()
     repository.session.rollback()
+
+
+def test_db_module_does_not_create_an_engine_during_import():
+    import app.db as db
+
+    assert db.engine is None
+    assert db.SessionLocal is not None
+
+
+def test_submit_race_preserves_reservation_generation_and_rejects_late_worker(
+    repository,
+):
+    task = TaskRecord.new()
+    repository.create_task(task)
+    reserved = repository.reserve_generation_and_mark_task_generating(
+        task.id, "submit-race", "hash-race", "provider-key-race"
+    )
+
+    # A worker captured generation 1 but timed out before claiming the
+    # external submit.  Reclaiming must advance the reservation generation.
+    row = repository.session.scalar(
+        select(IdempotencyRow).where(
+            IdempotencyRow.task_id == task.id,
+            IdempotencyRow.key == "submit-race",
+        )
+    )
+    row.updated_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    repository.session.commit()
+    assert (
+        repository.reclaim_stale_generation_reservations(
+            task.id, datetime.now(timezone.utc) - timedelta(minutes=5)
+        )
+        == 1
+    )
+
+    late = repository.record_provider_submission(
+        task.id,
+        "submit-race",
+        "hash-race",
+        reserved.reservation_generation,
+        provider_job_id="late-job-must-not-win",
+        provider_status="queued",
+    )
+    assert late.provider_job_id is None
+    assert late.provider_status == "stale_reservation"
+    assert late.reservation_generation > reserved.reservation_generation
+
+    recovered = repository.reacquire_generation_slot(
+        task.id, "submit-race", "hash-race", "provider-key-race"
+    )
+    assert recovered.provider_status == "reserved"
+    assert recovered.candidate_position is not None
+    claimed = repository.begin_provider_submission(
+        task.id,
+        "submit-race",
+        "hash-race",
+        recovered.reservation_generation,
+    )
+    assert claimed.provider_status == "submitting"
+    assert (
+        repository.reclaim_stale_generation_reservations(
+            task.id, datetime.now(timezone.utc) - timedelta(minutes=5)
+        )
+        == 0
+    )
+    accepted = repository.record_provider_submission(
+        task.id,
+        "submit-race",
+        "hash-race",
+        recovered.reservation_generation,
+        provider_job_id="recovered-job",
+        provider_status="queued",
+    )
+    assert accepted.provider_job_id == "recovered-job"
 
 
 def test_stale_unsubmitted_generation_reservation_can_be_reclaimed(repository):

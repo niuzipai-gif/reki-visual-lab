@@ -61,6 +61,12 @@ def upgrade() -> None:
             sa.Column("provider_job_id", sa.String(length=255), nullable=True),
             sa.Column("provider_idempotency_key", sa.String(length=128), nullable=True),
             sa.Column("provider_status", sa.String(length=32), nullable=True),
+            sa.Column(
+                "reservation_generation",
+                sa.Integer(),
+                nullable=False,
+                server_default="1",
+            ),
             sa.Column("candidate_position", sa.Integer(), nullable=True),
             sa.Column("version_id", task_id, nullable=True),
             sa.Column("result_asset_url", _json_payload(), nullable=True),
@@ -102,12 +108,20 @@ def upgrade() -> None:
             "provider_idempotency_key": sa.Column(
                 "provider_idempotency_key", sa.String(length=128), nullable=True
             ),
+            "reservation_generation": sa.Column(
+                "reservation_generation",
+                sa.Integer(),
+                nullable=False,
+                server_default="1",
+            ),
             "version_id": sa.Column("version_id", task_id, nullable=True),
             "result_asset_url": sa.Column(
                 "result_asset_url", _json_payload(), nullable=True
             ),
         }
-        missing = [column for name, column in additions.items() if name not in existing_columns]
+        missing = [
+            column for name, column in additions.items() if name not in existing_columns
+        ]
         if missing:
             with op.batch_alter_table("idempotency_records") as batch_op:
                 for column in missing:
@@ -135,7 +149,9 @@ def downgrade() -> None:
         with op.batch_alter_table("versions") as batch_op:
             batch_op.drop_constraint("uq_versions_task_position", type_="unique")
     if "idempotency_records" in inspector.get_table_names():
-        current_indexes = {item["name"] for item in inspector.get_indexes("idempotency_records")}
+        current_indexes = {
+            item["name"] for item in inspector.get_indexes("idempotency_records")
+        }
         if "ix_idempotency_task_operation" in current_indexes:
             op.drop_index(
                 "ix_idempotency_task_operation", table_name="idempotency_records"

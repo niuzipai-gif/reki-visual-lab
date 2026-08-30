@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import TypeAdapter
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -61,6 +61,7 @@ class IdempotencyEntry:
     provider_job_id: str | None = None
     provider_idempotency_key: str | None = None
     provider_status: str | None = None
+    reservation_generation: int = 1
     candidate_position: int | None = None
     version_id: UUID | None = None
     result_asset_url: AssetURL | None = None
@@ -236,6 +237,7 @@ class TaskRepository:
             provider_job_id=row.provider_job_id,
             provider_idempotency_key=row.provider_idempotency_key,
             provider_status=row.provider_status,
+            reservation_generation=row.reservation_generation,
             candidate_position=row.candidate_position,
             version_id=row.version_id,
             result_asset_url=(
@@ -354,9 +356,7 @@ class TaskRepository:
             task_row = self._task_row(task_id)
             occupied_versions = set(
                 self.session.scalars(
-                    select(VersionRow.position).where(
-                        VersionRow.task_id == task_id
-                    )
+                    select(VersionRow.position).where(VersionRow.task_id == task_id)
                 ).all()
             )
             occupied_reservations = {
@@ -392,6 +392,8 @@ class TaskRepository:
                 request_hash=request_hash,
                 result_status=TaskStatus.GENERATING.value,
                 provider_idempotency_key=provider_idempotency_key,
+                provider_status="reserved",
+                reservation_generation=1,
                 candidate_position=position,
                 created_at=now,
                 updated_at=now,
@@ -434,6 +436,10 @@ class TaskRepository:
             IdempotencyRow.result_status == TaskStatus.GENERATING.value,
             IdempotencyRow.provider_job_id.is_(None),
             IdempotencyRow.updated_at < cutoff,
+            or_(
+                IdempotencyRow.provider_status.is_(None),
+                IdempotencyRow.provider_status == "reserved",
+            ),
         ]
         if keep_key is not None:
             conditions.append(IdempotencyRow.key != keep_key)
@@ -444,20 +450,26 @@ class TaskRepository:
             .values(
                 result_status=TaskStatus.GENERATING.value,
                 provider_status="stale_reservation",
+                reservation_generation=IdempotencyRow.reservation_generation + 1,
                 candidate_position=None,
                 updated_at=now,
             )
+            .execution_options(synchronize_session=False)
         )
-        if result.rowcount and self.session.scalar(
-            select(IdempotencyRow.id)
-            .where(
-                IdempotencyRow.task_id == task_id,
-                IdempotencyRow.operation == "generate",
-                IdempotencyRow.result_status != TaskStatus.FAILED.value,
-                IdempotencyRow.candidate_position.is_not(None),
+        if (
+            result.rowcount
+            and self.session.scalar(
+                select(IdempotencyRow.id)
+                .where(
+                    IdempotencyRow.task_id == task_id,
+                    IdempotencyRow.operation == "generate",
+                    IdempotencyRow.result_status != TaskStatus.FAILED.value,
+                    IdempotencyRow.candidate_position.is_not(None),
+                )
+                .limit(1)
             )
-            .limit(1)
-        ) is None:
+            is None
+        ):
             task_row = self._task_row(task_id)
             if task_row.status in {
                 TaskStatus.GENERATING.value,
@@ -466,6 +478,10 @@ class TaskRepository:
                 task_row.status = TaskStatus.FAILED.value
                 task_row.updated_at = now
         self._commit()
+        # The bulk UPDATE intentionally bypasses ORM evaluation (SQLite
+        # stores timezone-aware datetimes as naive values).  Main's factory
+        # uses expire_on_commit=False, so explicitly clear stale ORM state.
+        self.session.expire_all()
         return int(result.rowcount or 0)
 
     def reacquire_generation_slot(
@@ -524,7 +540,7 @@ class TaskRepository:
             raise CandidateLimitError("a task may have at most two candidate versions")
         row.candidate_position = position
         row.result_status = TaskStatus.GENERATING.value
-        row.provider_status = None
+        row.provider_status = "reserved"
         if provider_idempotency_key is not None:
             row.provider_idempotency_key = provider_idempotency_key
         now = utc_now()
@@ -538,6 +554,122 @@ class TaskRepository:
             task_row.updated_at = now
         self._commit()
         return self._as_idempotency(row)
+
+    def begin_provider_submission(
+        self,
+        task_id: UUID,
+        key: str,
+        request_hash: str,
+        reservation_generation: int,
+    ) -> IdempotencyEntry:
+        """Conditionally mark one reservation as being submitted.
+
+        The generation check makes a worker that captured an old reservation
+        harmless after a reclaimer has released that reservation.  A
+        ``submitting`` row is intentionally left owned by its current worker;
+        a same-key retry may reconcile it through the provider's stable
+        idempotency key, while a different key cannot steal the slot.
+        """
+
+        row = self.session.scalar(
+            select(IdempotencyRow)
+            .where(
+                IdempotencyRow.task_id == task_id,
+                IdempotencyRow.operation == "generate",
+                IdempotencyRow.key == key,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise ValueError("idempotency record does not exist")
+        existing = self._as_idempotency(row)
+        self._require_idempotency_hash(existing, request_hash)
+        if (
+            existing.provider_job_id is not None
+            or existing.reservation_generation != reservation_generation
+            or existing.candidate_position is None
+            or existing.provider_status == "stale_reservation"
+        ):
+            return existing
+        if existing.provider_status not in {None, "reserved", "submitting"}:
+            return existing
+        if existing.provider_status == "submitting":
+            return existing
+
+        result = self.session.execute(
+            update(IdempotencyRow)
+            .where(
+                IdempotencyRow.id == row.id,
+                IdempotencyRow.reservation_generation == reservation_generation,
+                IdempotencyRow.provider_job_id.is_(None),
+                IdempotencyRow.candidate_position.is_not(None),
+                or_(
+                    IdempotencyRow.provider_status.is_(None),
+                    IdempotencyRow.provider_status == "reserved",
+                ),
+            )
+            .values(provider_status="submitting", updated_at=utc_now())
+        )
+        if result.rowcount:
+            self._commit()
+        return self.get_idempotency(task_id, "generate", key)  # type: ignore[return-value]
+
+    def record_provider_submission(
+        self,
+        task_id: UUID,
+        key: str,
+        request_hash: str,
+        reservation_generation: int,
+        *,
+        provider_job_id: str,
+        provider_status: str,
+        provider_idempotency_key: str | None = None,
+    ) -> IdempotencyEntry:
+        """Persist a provider job only if the reservation is still ours."""
+
+        row = self.session.scalar(
+            select(IdempotencyRow)
+            .where(
+                IdempotencyRow.task_id == task_id,
+                IdempotencyRow.operation == "generate",
+                IdempotencyRow.key == key,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise ValueError("idempotency record does not exist")
+        existing = self._as_idempotency(row)
+        self._require_idempotency_hash(existing, request_hash)
+        if existing.provider_job_id is not None:
+            return existing
+        if (
+            existing.reservation_generation != reservation_generation
+            or existing.provider_status != "submitting"
+            or existing.candidate_position is None
+        ):
+            return existing
+
+        values: dict[str, Any] = {
+            "provider_job_id": provider_job_id,
+            "provider_status": provider_status,
+            "updated_at": utc_now(),
+        }
+        if provider_idempotency_key is not None:
+            values["provider_idempotency_key"] = provider_idempotency_key
+        result = self.session.execute(
+            update(IdempotencyRow)
+            .where(
+                IdempotencyRow.id == row.id,
+                IdempotencyRow.reservation_generation == reservation_generation,
+                IdempotencyRow.provider_status == "submitting",
+                IdempotencyRow.provider_job_id.is_(None),
+                IdempotencyRow.candidate_position.is_not(None),
+            )
+            .values(**values)
+        )
+        if result.rowcount:
+            self._commit()
+        return self.get_idempotency(task_id, "generate", key)  # type: ignore[return-value]
 
     def reserve_generation_and_mark_task_generating(
         self,
@@ -601,9 +733,7 @@ class TaskRepository:
             row.version_id = version_id  # type: ignore[assignment]
         if result_asset_url is not _UNSET:
             row.result_asset_url = (
-                _payload(result_asset_url)
-                if result_asset_url is not None
-                else None
+                _payload(result_asset_url) if result_asset_url is not None else None
             )
         row.updated_at = utc_now()
         try:
@@ -788,9 +918,7 @@ class TaskRepository:
         task_row = self._task_row(task_id)
         validated_plan = EditPlan.model_validate(plan)
         self.session.execute(delete(EditPlanRow).where(EditPlanRow.task_id == task_id))
-        self.session.add(
-            EditPlanRow(task_id=task_id, payload=_payload(validated_plan))
-        )
+        self.session.add(EditPlanRow(task_id=task_id, payload=_payload(validated_plan)))
         task_row.updated_at = utc_now()
         self._commit()
 

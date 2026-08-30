@@ -61,9 +61,7 @@ def upgrade() -> None:
         ),
     )
     op.create_index("ix_assets_task_id", "assets", ["task_id"], unique=False)
-    op.create_index(
-        "ix_assets_task_kind", "assets", ["task_id", "kind"], unique=False
-    )
+    op.create_index("ix_assets_task_kind", "assets", ["task_id", "kind"], unique=False)
 
     op.create_table(
         "analysis_cards",
@@ -109,6 +107,7 @@ def upgrade() -> None:
     op.create_index(
         "ix_versions_task_position", "versions", ["task_id", "position"], unique=False
     )
+
 
 def downgrade() -> None:
     op.drop_index("ix_versions_task_position", table_name="versions")

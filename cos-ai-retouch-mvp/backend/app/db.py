@@ -71,16 +71,16 @@ TASK_ID = Uuid(as_uuid=True)
 
 class TaskRow(Base):
     __tablename__ = "tasks"
-    __table_args__ = (
-        Index("ix_tasks_status_created_at", "status", "created_at"),
-    )
+    __table_args__ = (Index("ix_tasks_status_created_at", "status", "created_at"),)
 
     id: Mapped[UUID] = mapped_column(TASK_ID, primary_key=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
     )
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     idempotency_key: Mapped[str | None] = mapped_column(
         String(128), nullable=True, index=True
     )
@@ -118,9 +118,7 @@ class AssetRow(Base):
 
 class AnalysisCardRow(Base):
     __tablename__ = "analysis_cards"
-    __table_args__ = (
-        Index("ix_analysis_cards_task_position", "task_id", "position"),
-    )
+    __table_args__ = (Index("ix_analysis_cards_task_position", "task_id", "position"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     task_id: Mapped[UUID] = mapped_column(
@@ -206,6 +204,12 @@ class IdempotencyRow(Base):
         String(128), nullable=True
     )
     provider_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Incremented whenever a pre-submit reservation is reclaimed.  A worker
+    # holding an older generation may not write its late provider response
+    # into the newly available slot.
+    reservation_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
     candidate_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # This is intentionally not an FK: the UUID is written before the version
     # row so a crash between durable result preparation and finalization can be
@@ -222,8 +226,6 @@ class IdempotencyRow(Base):
     )
 
 
-
-
 # Short aliases are useful to callers that prefer model names without the
 # persistence-specific Row suffix.
 TaskModel = TaskRow
@@ -234,9 +236,67 @@ VersionModel = VersionRow
 IdempotencyModel = IdempotencyRow
 
 
+def create_session_factory(
+    engine: Engine | None = None,
+    database_url: str | SecretStr | None = None,
+):
+    """Create a caller-owned SQLAlchemy session factory.
+
+    The application owns the engine and its lifecycle.  Keeping engine
+    construction inside this explicit factory prevents importing ``app.db``
+    from opening a database connection or creating an unrelated engine.
+    """
+
+    bound_engine = engine or create_db_engine(
+        database_url or get_settings().database_url
+    )
+    return sessionmaker(
+        bind=bound_engine,
+        autoflush=False,
+        expire_on_commit=False,
+    )
+
+
+class _LazySessionFactory:
+    """Compatibility wrapper for legacy ``SessionLocal()`` callers.
+
+    New application code must use :func:`create_session_factory` and own the
+    resulting engine.  This wrapper is deliberately inert until a legacy
+    caller invokes it, so importing this module has no database side effect.
+    """
+
+    def __init__(self) -> None:
+        self._engine: Engine | None = None
+        self._factory = None
+
+    def _get_factory(self):
+        if self._factory is None:
+            self._engine = create_db_engine(get_settings().database_url)
+            self._factory = create_session_factory(self._engine)
+        return self._factory
+
+    def __call__(self, *args: Any, **kwargs: Any):
+        return self._get_factory()(*args, **kwargs)
+
+    def __getattr__(self, name: str):
+        return getattr(self._get_factory(), name)
+
+    @property
+    def initialized(self) -> bool:
+        return self._factory is not None
+
+    def dispose(self) -> None:
+        if self._engine is not None:
+            self._engine.dispose()
+            self._engine = None
+            self._factory = None
+
+
+# Compatibility names remain importable, but no engine is created here.  The
+# production FastAPI app uses its own explicit engine/session factory.
 settings = get_settings()
-engine = create_db_engine(settings.get_database_url())
-SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+engine: Engine | None = None
+SessionLocal = _LazySessionFactory()
 
 
 def utc_now() -> datetime:
