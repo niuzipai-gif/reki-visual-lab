@@ -55,6 +55,7 @@ test("completes the invite-only single-photo workflow with the mock provider", a
   let planBody: Record<string, unknown> | null = null;
   let analysisStarted = false;
   let generationStarted = false;
+  let taskGetRequests = 0;
   let uploadBody: Buffer | null = null;
 
   await page.route("**/api/v1/tasks", async (route) => {
@@ -70,10 +71,11 @@ test("completes the invite-only single-photo workflow with the mock provider", a
     uploadBody = route.request().postDataBuffer();
     await route.fulfill({ status: 200, body: "" });
   });
-  await page.route(/\/api\/v1\/tasks\/[^/]+\/(?:analyze|plan|generate|download)$/, async (route) => {
+  await page.route(/\/api\/v1\/tasks\/[^/]+(?:\/(?:analyze|plan|generate|download))?$/, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    const action = url.pathname.split("/").at(-1);
+    const pathSegments = url.pathname.split("/").filter(Boolean);
+    const action = pathSegments.length === 5 ? pathSegments.at(-1) : undefined;
     if (request.method() === "POST" && action === "analyze") {
       analysisStarted = true;
       expect(request.headers()["x-invite-token"]).toBe("invite-demo");
@@ -99,7 +101,8 @@ test("completes the invite-only single-photo workflow with the mock provider", a
       await route.fulfill({ json: { url: `https://mock-storage.test/download.png?expires=${encodeURIComponent(expiry)}`, expires_at: expiry } });
       return;
     }
-    if (request.method() === "GET") {
+    if (request.method() === "GET" && action === undefined) {
+      taskGetRequests += 1;
       if (generationStarted) {
         await route.fulfill({ json: taskPayload("succeeded", { plan: planBody, versions: [{ id: "version-1", asset_url: versionAsset, created_at: "2026-08-31T00:02:00Z", validation: { face_identity: "pass", hands_and_costume: "review" }, selected: true }] }) });
       } else if (analysisStarted) {
@@ -107,7 +110,7 @@ test("completes the invite-only single-photo workflow with the mock provider", a
       }
       return;
     }
-    await route.continue();
+    await route.abort();
   });
 
   await page.goto("/");
@@ -150,4 +153,5 @@ test("completes the invite-only single-photo workflow with the mock provider", a
   await page.getByRole("button", { name: "下载当前结果" }).click();
   const popup = await popupPromise;
   await expect.poll(() => popup.url()).toContain("expires=");
+  expect(taskGetRequests).toBeGreaterThan(0);
 });
