@@ -1,4 +1,5 @@
 import json
+import inspect
 
 import httpx
 import pytest
@@ -147,3 +148,35 @@ def test_external_provider_redacts_non_2xx_upstream_body_and_secrets():
     assert "server-only-secret" not in message
     assert "upstream stack" not in message
     assert "customer prompt" not in message
+
+
+def test_provider_submit_boundary_never_accepts_a_frontend_api_key():
+    providers = (
+        MockImageModelProvider(),
+        ExternalImageModelProvider(Settings()),
+    )
+
+    for provider in providers:
+        for method_name in ("submit_analysis", "submit_edit"):
+            parameters = inspect.signature(
+                getattr(provider, method_name)
+            ).parameters.values()
+            assert "api_key" not in {
+                parameter.name for parameter in parameters
+            }
+            assert not any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters
+            )
+
+        with pytest.raises(TypeError):
+            provider.submit_analysis(
+                "https://assets.example.test/original.png",
+                api_key="frontend-secret",
+            )
+        with pytest.raises(TypeError):
+            provider.submit_edit(
+                "https://assets.example.test/original.png",
+                EditPlan(),
+                api_key="frontend-secret",
+            )
