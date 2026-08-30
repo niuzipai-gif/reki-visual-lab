@@ -1,0 +1,562 @@
+"""Server-side image-provider adapters and normalized provider results."""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timedelta, timezone
+from hashlib import sha256
+from typing import Any, Literal, Protocol
+from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+
+try:
+    import httpx
+except ImportError:  # pragma: no cover - exercised only in minimal production installs
+    httpx = None
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.config import Settings, get_settings
+from app.domain.models import AnalysisCard, AssetURL, EditPlan, Region
+
+
+ProviderStatus = Literal["queued", "running", "succeeded", "failed"]
+ProviderOperation = Literal["analysis", "edit"]
+
+
+class ProviderError(RuntimeError):
+    """A typed, safe provider error that never contains upstream response data."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "PROVIDER_ERROR",
+        retryable: bool = True,
+        status_code: int | None = None,
+    ):
+        super().__init__(message)
+        self.code = code
+        self.retryable = retryable
+        self.status_code = status_code
+
+
+class ProviderJob(BaseModel):
+    """Normalized provider job metadata returned from a submission."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    job_id: str = Field(min_length=1)
+    operation: ProviderOperation
+    status: ProviderStatus = "queued"
+
+    @property
+    def id(self) -> str:
+        return self.job_id
+
+
+class ProviderResult(BaseModel):
+    """Normalized provider output for polling and task-service persistence."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    job_id: str = Field(min_length=1)
+    status: ProviderStatus
+    analysis: tuple[AnalysisCard, ...] = Field(default_factory=tuple)
+    asset_url: AssetURL | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def analysis_cards(self) -> tuple[AnalysisCard, ...]:
+        return self.analysis
+
+    @property
+    def asset(self) -> AssetURL | None:
+        return self.asset_url
+
+
+class ImageModelProvider(Protocol):
+    """Provider boundary consumed by the task service."""
+
+    def submit_analysis(self, source_url: str) -> ProviderJob: ...
+
+    def submit_edit(self, source_url: str, plan: EditPlan) -> ProviderJob: ...
+
+    def poll(self, job_id: str) -> ProviderResult: ...
+
+
+_MOCK_ANALYSIS_FIXTURE = (
+    AnalysisCard(
+        id="card-face-1",
+        category="face",
+        title="Face detail",
+        summary="Minor skin detail near the cheek.",
+        confidence=0.92,
+        risk="Keep face identity unchanged.",
+        enabled=False,
+        regions=(
+            Region(
+                id="face-1",
+                label="face",
+                x=0.25,
+                y=0.20,
+                width=0.30,
+                height=0.40,
+            ),
+        ),
+    ),
+)
+
+
+def _source_identity(source_url: str) -> str:
+    if not isinstance(source_url, str) or not source_url.strip():
+        raise ProviderError(
+            "source URL is required",
+            code="INVALID_SOURCE",
+            retryable=False,
+        )
+    source_url = source_url.strip()
+    parsed = urlsplit(source_url)
+    if parsed.scheme and parsed.netloc:
+        return urlunsplit(
+            (
+                parsed.scheme.lower(),
+                parsed.netloc.lower(),
+                parsed.path,
+                "",
+                "",
+            )
+        )
+    return source_url.split("?", 1)[0].split("#", 1)[0]
+
+
+def _operation_key(
+    operation: ProviderOperation,
+    source_url: str,
+    plan: EditPlan | None = None,
+) -> str:
+    material: dict[str, Any] = {
+        "operation": operation,
+        "source": _source_identity(source_url),
+    }
+    if plan is not None:
+        material["plan"] = plan.model_dump(mode="json")
+    canonical = json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _expires_at(settings: Settings) -> datetime:
+    ttl_hours = max(settings.asset_ttl_hours, 1)
+    return datetime.now(timezone.utc) + timedelta(hours=ttl_hours)
+
+
+def _normalize_status(value: Any) -> ProviderStatus:
+    normalized = str(value or "queued").lower()
+    aliases: dict[str, ProviderStatus] = {
+        "pending": "queued",
+        "processing": "running",
+        "complete": "succeeded",
+        "completed": "succeeded",
+        "success": "succeeded",
+        "error": "failed",
+        "failure": "failed",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in {"queued", "running", "succeeded", "failed"}:
+        return "queued"
+    return normalized  # type: ignore[return-value]
+
+
+def _safe_metadata(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    allowed_keys = {
+        "provider",
+        "model",
+        "label",
+        "demo",
+        "provider_request_id",
+        "request_id",
+    }
+    safe: dict[str, Any] = {}
+    for key, item in value.items():
+        if key in allowed_keys and isinstance(item, (bool, int, float, str)):
+            safe[key] = item
+    return safe
+
+
+class MockImageModelProvider:
+    """Deterministic provider used by local development and browser tests."""
+
+    analysis_fixture = _MOCK_ANALYSIS_FIXTURE
+
+    def __init__(self, settings: Settings | None = None):
+        self.settings = settings or get_settings()
+        self.jobs: dict[str, ProviderJob] = {}
+        self._results: dict[str, ProviderResult] = {}
+        self._operation_jobs: dict[str, str] = {}
+
+    def _submit(
+        self,
+        operation: ProviderOperation,
+        source_url: str,
+        plan: EditPlan | None = None,
+    ) -> ProviderJob:
+        operation_key = _operation_key(operation, source_url, plan)
+        existing_job_id = self._operation_jobs.get(operation_key)
+        if existing_job_id is not None:
+            return self.jobs[existing_job_id]
+
+        job_id = f"mock-{operation}-{operation_key[:16]}"
+        job = ProviderJob(job_id=job_id, operation=operation, status="queued")
+        if operation == "analysis":
+            result = ProviderResult(
+                job_id=job_id,
+                status="succeeded",
+                analysis=self.analysis_fixture,
+                metadata={
+                    "provider": "mock",
+                    "model": "demo",
+                    "demo": True,
+                },
+            )
+        else:
+            marker = quote("演示模型结果", safe="")
+            result_url = (
+                f"https://mock.image-provider.local/results/{job_id}.png"
+                f"?provider=mock&demo=true&label={marker}"
+            )
+            result = ProviderResult(
+                job_id=job_id,
+                status="succeeded",
+                asset_url=AssetURL(
+                    kind="version",
+                    url=result_url,
+                    expires_at=_expires_at(self.settings),
+                ),
+                metadata={
+                    "provider": "mock",
+                    "model": "demo",
+                    "demo": True,
+                    "label": "演示模型结果",
+                },
+            )
+        self.jobs[job_id] = job
+        self._results[job_id] = result
+        self._operation_jobs[operation_key] = job_id
+        return job
+
+    def submit_analysis(self, source_url: str) -> ProviderJob:
+        return self._submit("analysis", source_url)
+
+    def submit_edit(self, source_url: str, plan: EditPlan) -> ProviderJob:
+        if not isinstance(plan, EditPlan):
+            raise ProviderError(
+                "edit plan must be structured",
+                code="INVALID_EDIT_PLAN",
+                retryable=False,
+            )
+        return self._submit("edit", source_url, plan)
+
+    def poll(self, job_id: str) -> ProviderResult:
+        result = self._results.get(job_id)
+        if result is None:
+            raise ProviderError(
+                "provider job was not found",
+                code="JOB_NOT_FOUND",
+                retryable=False,
+            )
+        return result
+
+
+class _UrllibResponse:
+    def __init__(self, status_code: int, payload: Any):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self) -> Any:
+        return self._payload
+
+
+class ExternalImageModelProvider:
+    """HTTP adapter for a server-side image provider."""
+
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        http_client: Any = None,
+        transport: Any = None,
+    ):
+        self.settings = settings or get_settings()
+        self.http_client = http_client
+        self._owns_http_client = False
+        if self.http_client is None and transport is not None:
+            if httpx is None:
+                raise ProviderError(
+                    "HTTP transport is unavailable",
+                    code="PROVIDER_CONFIGURATION_ERROR",
+                    retryable=False,
+                )
+            self.http_client = httpx.Client(transport=transport)
+            self._owns_http_client = True
+        self._jobs: dict[str, ProviderJob] = {}
+        self._operation_jobs: dict[str, str] = {}
+
+    def close(self) -> None:
+        if self._owns_http_client and self.http_client is not None:
+            self.http_client.close()
+            self.http_client = None
+
+    def _configuration(self) -> tuple[str, str]:
+        base_url = (self.settings.image_provider_base_url or "").strip().rstrip("/")
+        api_key = self.settings.get_image_provider_api_key()
+        if not base_url or not api_key:
+            raise ProviderError(
+                "external image provider is not configured",
+                code="PROVIDER_CONFIGURATION_ERROR",
+                retryable=False,
+            )
+        return base_url, api_key
+
+    def _request(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        api_key: str,
+        payload: dict[str, Any] | None = None,
+        operation_key: str | None = None,
+    ) -> dict[str, Any]:
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+        if operation_key is not None:
+            headers["Idempotency-Key"] = f"cos-retouch-{operation_key}"
+        try:
+            if self.http_client is not None:
+                response = self.http_client.request(
+                    method,
+                    endpoint,
+                    headers=headers,
+                    json=payload,
+                )
+            else:
+                response = self._urllib_request(
+                    method,
+                    endpoint,
+                    headers=headers,
+                    payload=payload,
+                )
+        except ProviderError:
+            raise
+        except Exception as exc:
+            raise ProviderError(
+                "image provider is unavailable",
+                code="UPSTREAM_UNAVAILABLE",
+                retryable=True,
+            ) from exc
+
+        status_code = getattr(response, "status_code", None)
+        if not isinstance(status_code, int):
+            raise ProviderError(
+                "image provider returned an invalid response",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            )
+        if not 200 <= status_code < 300:
+            raise ProviderError(
+                "image provider request failed",
+                code="UPSTREAM_ERROR",
+                retryable=status_code == 429 or status_code >= 500,
+                status_code=status_code,
+            )
+        try:
+            data = response.json()
+        except Exception as exc:
+            raise ProviderError(
+                "image provider returned invalid JSON",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            ) from exc
+        if not isinstance(data, dict):
+            raise ProviderError(
+                "image provider returned an invalid response",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            )
+        nested = data.get("data")
+        if isinstance(nested, dict):
+            return nested
+        return data
+
+    @staticmethod
+    def _urllib_request(
+        method: str,
+        endpoint: str,
+        *,
+        headers: dict[str, str],
+        payload: dict[str, Any] | None,
+    ) -> _UrllibResponse:
+        body = None
+        request_headers = dict(headers)
+        if payload is not None:
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            request_headers["Content-Type"] = "application/json"
+        request = Request(
+            endpoint,
+            data=body,
+            headers=request_headers,
+            method=method,
+        )
+        try:
+            with urlopen(request, timeout=30) as response:  # noqa: S310 - configured server URL
+                raw = response.read()
+                return _UrllibResponse(response.status, json.loads(raw))
+        except HTTPError as exc:
+            return _UrllibResponse(exc.code, None)
+
+    def _submit(
+        self,
+        operation: ProviderOperation,
+        source_url: str,
+        plan: EditPlan | None = None,
+    ) -> ProviderJob:
+        base_url, api_key = self._configuration()
+        operation_key = _operation_key(operation, source_url, plan)
+        existing_job_id = self._operation_jobs.get(operation_key)
+        if existing_job_id is not None:
+            return self._jobs[existing_job_id]
+
+        payload: dict[str, Any] = {
+            "model": self.settings.image_provider_model,
+            "source_url": source_url,
+        }
+        if plan is not None:
+            payload["plan"] = plan.model_dump(mode="json")
+        endpoint = f"{base_url}/{operation}"
+        data = self._request(
+            "POST",
+            endpoint,
+            api_key=api_key,
+            payload=payload,
+            operation_key=operation_key,
+        )
+        raw_job_id = data.get("job_id", data.get("id"))
+        if not isinstance(raw_job_id, str) or not raw_job_id.strip():
+            raise ProviderError(
+                "image provider returned an invalid job",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            )
+        job = ProviderJob(
+            job_id=raw_job_id,
+            operation=operation,
+            status=_normalize_status(data.get("status")),
+        )
+        self._jobs[raw_job_id] = job
+        self._operation_jobs[operation_key] = raw_job_id
+        return job
+
+    def submit_analysis(self, source_url: str) -> ProviderJob:
+        return self._submit("analysis", source_url)
+
+    def submit_edit(self, source_url: str, plan: EditPlan) -> ProviderJob:
+        if not isinstance(plan, EditPlan):
+            raise ProviderError(
+                "edit plan must be structured",
+                code="INVALID_EDIT_PLAN",
+                retryable=False,
+            )
+        return self._submit("edit", source_url, plan)
+
+    @staticmethod
+    def _asset_from_payload(value: Any) -> AssetURL | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            if not value:
+                raise ValueError("empty asset URL")
+            return AssetURL(
+                kind="version",
+                url=value,
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+            )
+        if not isinstance(value, dict):
+            raise ValueError("invalid asset payload")
+        asset = dict(value)
+        asset.setdefault("kind", "version")
+        asset.setdefault(
+            "expires_at",
+            datetime.now(timezone.utc) + timedelta(hours=24),
+        )
+        return AssetURL.model_validate(asset)
+
+    def poll(self, job_id: str) -> ProviderResult:
+        if not isinstance(job_id, str) or not job_id:
+            raise ProviderError(
+                "provider job was not found",
+                code="JOB_NOT_FOUND",
+                retryable=False,
+            )
+        base_url, api_key = self._configuration()
+        endpoint = f"{base_url}/jobs/{quote(job_id, safe='')}"
+        data = self._request("GET", endpoint, api_key=api_key)
+        try:
+            raw_analysis = data.get("analysis", data.get("analysis_cards", ()))
+            if raw_analysis is None:
+                raw_analysis = ()
+            if not isinstance(raw_analysis, (list, tuple)):
+                raise ValueError("invalid analysis payload")
+            analysis = tuple(AnalysisCard.model_validate(card) for card in raw_analysis)
+            asset_url = self._asset_from_payload(
+                data.get("asset_url", data.get("asset"))
+            )
+        except Exception as exc:
+            raise ProviderError(
+                "image provider returned an invalid result",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            ) from exc
+        return ProviderResult(
+            job_id=job_id,
+            status=_normalize_status(data.get("status")),
+            analysis=analysis,
+            asset_url=asset_url,
+            metadata=_safe_metadata(data.get("metadata", data.get("provider_metadata"))),
+        )
+
+
+ImageProvider = ImageModelProvider
+
+
+def create_image_provider(
+    settings: Settings | None = None,
+    *,
+    http_client: Any = None,
+    transport: Any = None,
+) -> ImageModelProvider:
+    """Build the configured provider without exposing credentials to callers."""
+
+    resolved = settings or get_settings()
+    if resolved.image_provider_mode == "mock":
+        return MockImageModelProvider(resolved)
+    return ExternalImageModelProvider(
+        resolved,
+        http_client=http_client,
+        transport=transport,
+    )
+
+
+__all__ = [
+    "ExternalImageModelProvider",
+    "ImageModelProvider",
+    "ImageProvider",
+    "MockImageModelProvider",
+    "ProviderError",
+    "ProviderJob",
+    "ProviderResult",
+    "create_image_provider",
+]
