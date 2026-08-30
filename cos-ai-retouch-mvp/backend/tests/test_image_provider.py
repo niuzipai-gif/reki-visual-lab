@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from app.config import Settings
-from app.domain.models import EditPlan, Goal, MaskStroke, Operation
+from app.domain.models import AssetURL, EditPlan, Goal, MaskStroke, Operation
 from app.services.image_provider import (
     ExternalImageModelProvider,
     MockImageModelProvider,
@@ -235,6 +235,40 @@ def test_external_provider_uses_settings_ttl_for_result_asset_urls():
 
     after = datetime.now(timezone.utc) + timedelta(hours=3)
     assert before <= result.asset_url.expires_at <= after
+
+
+def test_external_provider_downloads_png_result_bytes_without_forwarding_provider_auth():
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            content=b"generated-png",
+            headers={"content-type": "image/png"},
+        )
+
+    settings = Settings(
+        image_provider_mode="external",
+        image_provider_base_url="https://provider.example.test/v1",
+        image_provider_api_key="server-only-secret",
+    )
+    provider = ExternalImageModelProvider(
+        settings,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    asset = AssetURL(
+        kind="version",
+        url="https://provider.example.test/results/job-42.png",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+
+    body, content_type = provider.download_result(asset)
+
+    assert body == b"generated-png"
+    assert content_type == "image/png"
+    assert requests[0].method == "GET"
+    assert "authorization" not in requests[0].headers
 
 
 def test_external_provider_canonicalizes_equivalent_plans_without_operation_ids():

@@ -120,6 +120,31 @@ describe("ResultPanel", () => {
     expect(screen.getByTestId("comparison-after")).toHaveStyle({ transform: "scale(1.25)" });
   });
 
+  it("moves the comparison divider with direct pointer dragging while keeping the original layer first", () => {
+    const task = taskWithVersions([version("v1", "候选 1")]);
+    render(
+      <ResultPanel
+        task={task}
+        originalUrl={originalUrl}
+        inviteToken="invite-demo"
+        apiClient={client()}
+        onTaskUpdate={vi.fn()}
+      />,
+    );
+
+    const comparison = screen.getByTestId("before-after-comparison");
+    Object.defineProperty(comparison, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, width: 400, top: 0, height: 300, right: 400, bottom: 300 }),
+    });
+    fireEvent.pointerDown(comparison, { clientX: 80, pointerId: 1, button: 0 });
+    fireEvent.mouseMove(window, { clientX: 320 });
+    fireEvent.mouseUp(window);
+
+    expect(comparison).toHaveStyle({ "--comparison-position": "80%" });
+    expect(comparison.firstElementChild).toHaveAttribute("data-asset-kind", "original");
+  });
+
   it("keeps, regenerates, restores the original, and downloads through the task API", async () => {
     const user = userEvent.setup();
     const api = client();

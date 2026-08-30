@@ -335,6 +335,45 @@ describe("COS retouch app", () => {
     );
   });
 
+  it("syncs a provider failure task back into App and shows retryable progress", async () => {
+    const user = userEvent.setup();
+    const failedTask: TaskView = {
+      ...plannedTask,
+      status: "failed",
+      error: {
+        code: "PROVIDER_ERROR",
+        message: "图像服务暂时不可用，请稍后重试。",
+        retryable: true,
+      },
+    };
+    const client = makeClient(plannedTask);
+    client.getTask
+      .mockResolvedValueOnce(plannedTask)
+      .mockResolvedValueOnce(plannedTask)
+      .mockResolvedValueOnce(failedTask);
+    client.startGeneration.mockRejectedValueOnce(new Error("provider rejected"));
+    render(<App apiClient={client} />);
+
+    await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
+    await user.click(screen.getByRole("button", { name: "进入工作台" }));
+    await user.upload(
+      screen.getByLabelText("选择 JPG 或 PNG 原图"),
+      new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
+    );
+    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await screen.findByRole("heading", { name: "AI 分析" });
+
+    const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
+    if (!(faceSwitch as HTMLInputElement).checked) await user.click(faceSwitch);
+    await user.click(screen.getByRole("button", { name: "确认并生成候选图" }));
+
+    await waitFor(() => expect(screen.getAllByText("处理失败").length).toBeGreaterThan(0));
+    expect(
+      screen.getAllByText("图像服务暂时不可用，请稍后重试。").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "重试生成" })).toBeEnabled();
+  });
+
   it("disables plan saving for a failed task that already has a plan", async () => {
     const user = userEvent.setup();
     const client = makeClient({

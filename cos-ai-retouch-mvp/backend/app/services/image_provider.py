@@ -86,6 +86,8 @@ class ImageModelProvider(Protocol):
 
     def poll(self, job_id: str) -> ProviderResult: ...
 
+    def download_result(self, asset_url: AssetURL) -> tuple[bytes, str]: ...
+
 
 _MOCK_ANALYSIS_FIXTURE = (
     AnalysisCard(
@@ -195,6 +197,10 @@ class MockImageModelProvider:
     """Deterministic provider used by local development and browser tests."""
 
     analysis_fixture = _MOCK_ANALYSIS_FIXTURE
+    result_fixture = bytes.fromhex(
+        "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+        "0000000d49444154789c6360000000020001e221bc330000000049454e44ae426082"
+    )
 
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
@@ -275,6 +281,17 @@ class MockImageModelProvider:
                 retryable=False,
             )
         return result
+
+    def download_result(self, asset_url: AssetURL) -> tuple[bytes, str]:
+        """Return deterministic local bytes; no mock URL is exposed to clients."""
+
+        if asset_url.kind != "version":
+            raise ProviderError(
+                "provider result is not a version asset",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            )
+        return self.result_fixture, "image/png"
 
 
 class _UrllibResponse:
@@ -560,6 +577,86 @@ class ExternalImageModelProvider:
                 data.get("metadata", data.get("provider_metadata"))
             ),
         )
+
+    def download_result(self, asset_url: AssetURL) -> tuple[bytes, str]:
+        """Fetch provider bytes server-side so the provider URL stays private."""
+
+        if asset_url.kind != "version":
+            raise ProviderError(
+                "provider result is not a version asset",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            )
+        try:
+            parsed = urlsplit(asset_url.url)
+            hostname = parsed.hostname
+        except ValueError as exc:
+            raise ProviderError(
+                "image provider returned an invalid result URL",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            ) from exc
+        if (
+            parsed.scheme.lower() not in {"http", "https"}
+            or not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or any(character.isspace() for character in asset_url.url)
+        ):
+            raise ProviderError(
+                "image provider returned an invalid result URL",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            )
+
+        try:
+            if self.http_client is not None:
+                response = self.http_client.request(
+                    "GET",
+                    asset_url.url,
+                    headers={"Accept": "image/png,image/*"},
+                )
+                status_code = getattr(response, "status_code", None)
+                body = getattr(response, "content", None)
+                headers = getattr(response, "headers", {})
+                content_type = headers.get("content-type", "image/png")
+            else:
+                request = Request(
+                    asset_url.url,
+                    headers={"Accept": "image/png,image/*"},
+                    method="GET",
+                )
+                with urlopen(request, timeout=30) as response:  # noqa: S310 - provider URL
+                    status_code = response.status
+                    body = response.read(self.settings.max_upload_bytes + 1)
+                    content_type = response.headers.get_content_type() or "image/png"
+        except Exception as exc:
+            raise ProviderError(
+                "image provider result is unavailable",
+                code="UPSTREAM_UNAVAILABLE",
+                retryable=True,
+            ) from exc
+
+        if not isinstance(status_code, int) or not 200 <= status_code < 300:
+            raise ProviderError(
+                "image provider result is unavailable",
+                code="UPSTREAM_ERROR",
+                retryable=isinstance(status_code, int) and status_code >= 500,
+                status_code=status_code if isinstance(status_code, int) else None,
+            )
+        if not isinstance(body, bytes) or not body or len(body) > self.settings.max_upload_bytes:
+            raise ProviderError(
+                "image provider returned an invalid result body",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            )
+        if not isinstance(content_type, str) or content_type.split(";", 1)[0].strip().lower() != "image/png":
+            raise ProviderError(
+                "image provider returned a non-PNG result",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            )
+        return body, "image/png"
 
 
 ImageProvider = ImageModelProvider

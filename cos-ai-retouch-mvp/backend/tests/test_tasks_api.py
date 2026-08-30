@@ -52,6 +52,9 @@ class CountingProvider:
     def poll(self, job_id: str):
         return self.delegate.poll(job_id)
 
+    def download_result(self, asset_url: AssetURL):
+        return self.delegate.download_result(asset_url)
+
 
 class FailingProvider(CountingProvider):
     def submit_edit(self, source_url: str, plan: EditPlan):
@@ -114,6 +117,10 @@ class ScriptedProvider:
             )
         return ProviderResult(job_id=job_id, status=status)
 
+    def download_result(self, asset_url: AssetURL):
+        assert asset_url.kind == "version"
+        return b"scripted-generated-png", "image/png"
+
 
 class SimulatedProcessCrash(BaseException):
     """Crash injected after provider acceptance and before local persistence."""
@@ -158,6 +165,10 @@ class StableProvider:
             ),
         )
 
+    def download_result(self, asset_url: AssetURL):
+        assert asset_url.kind == "version"
+        return b"stable-generated-png", "image/png"
+
 
 class LateFailureProvider:
     """Return a stale failure for the first edit job and success for the next."""
@@ -193,6 +204,10 @@ class LateFailureProvider:
                 expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
             ),
         )
+
+    def download_result(self, asset_url: AssetURL):
+        assert asset_url.kind == "version"
+        return b"late-generated-png", "image/png"
 
 
 class FixedValidationAdapter:
@@ -415,6 +430,49 @@ def test_plan_and_generate_enforce_confirmation_and_enabled_operation(api_contex
     assert generated.json()["status"] == "succeeded"
     assert len(generated.json()["versions"]) == 1
     assert provider.edit_submissions == 1
+
+
+def test_generation_stores_provider_external_result_and_downloads_only_signed_storage_url(
+    scripted_context,
+):
+    client, _repository, storage, _provider, _settings = scripted_context
+    task_id = _prepare_confirmation(client)
+    saved = client.post(
+        f"/api/v1/tasks/{task_id}/plan",
+        json=_plan_payload(),
+        headers=INVITE_HEADERS,
+    )
+    assert saved.status_code == 200
+
+    signer_calls: list[str] = []
+    original_signer = storage.create_download_url
+
+    def recording_signer(object_key: str) -> str:
+        signer_calls.append(object_key)
+        return original_signer(object_key)
+
+    storage.create_download_url = recording_signer
+    generated = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-storage"}),
+    )
+
+    assert generated.status_code == 200
+    version_url = generated.json()["versions"][0]["asset_url"]["url"]
+    result_key = f"tasks/{task_id}/versions/0.png"
+    assert result_key in storage.objects
+    assert result_key in version_url
+    assert "storage.example.test" not in version_url
+
+    downloaded = client.get(
+        f"/api/v1/tasks/{task_id}/download",
+        headers=INVITE_HEADERS,
+    )
+
+    assert downloaded.status_code == 200
+    assert downloaded.json()["url"] != "https://storage.example.test/edit-job-1.png"
+    assert result_key in downloaded.json()["url"]
+    assert signer_calls[-1] == result_key
 
 
 def test_mock_generation_returns_deterministic_validation_checks(api_context):

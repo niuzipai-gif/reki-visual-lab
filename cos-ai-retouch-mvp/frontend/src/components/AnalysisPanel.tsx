@@ -306,17 +306,32 @@ export default function AnalysisPanel({
     setBusy(true);
     setError(null);
     try {
-      await apiClient.startGeneration(
-        task.taskId,
-        inviteToken,
-        getOperationKey?.(task.taskId, "generate") || createIdempotencyKey(),
-      );
-      const generated = await apiClient.getTask(task.taskId, inviteToken);
-      onTaskUpdate(generated);
-      setGenerationRetryable(false);
-    } catch (caught) {
-      setError(getUserSafeErrorMessage(caught));
-      setGenerationRetryable(true);
+      try {
+        await apiClient.startGeneration(
+          task.taskId,
+          inviteToken,
+          getOperationKey?.(task.taskId, "generate") || createIdempotencyKey(),
+        );
+      } catch (caught) {
+        setError(getUserSafeErrorMessage(caught));
+        try {
+          const refreshed = await apiClient.getTask(task.taskId, inviteToken);
+          onTaskUpdate(refreshed);
+          if (refreshed.status === "failed") setError(null);
+        } catch {
+          // Keep the local retry affordance when the status refresh is also unavailable.
+        }
+        setGenerationRetryable(true);
+        return;
+      }
+      try {
+        const generated = await apiClient.getTask(task.taskId, inviteToken);
+        onTaskUpdate(generated);
+        setGenerationRetryable(false);
+      } catch (caught) {
+        setError(getUserSafeErrorMessage(caught));
+        setGenerationRetryable(true);
+      }
     } finally {
       setBusy(false);
     }

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 import os
@@ -41,7 +41,12 @@ from app.services.image_provider import (
     ProviderResult,
 )
 from app.services.cleanup import cleanup_expired_assets
-from app.services.storage import SignedAsset, StorageAdapter, StorageError
+from app.services.storage import (
+    SignedAsset,
+    StorageAdapter,
+    StorageError,
+    version_position_object_key,
+)
 
 
 ValidationValue = Literal["pass", "review"]
@@ -674,6 +679,11 @@ class TaskService:
 
             try:
                 validation = self._validation_checks(result, task.plan)
+                result_asset = self._store_provider_result(
+                    task.id,
+                    result_asset,
+                    entry.candidate_position,
+                )
                 if task.status is TaskStatus.GENERATING:
                     self._advance(task, TaskStatus.VALIDATING)
                     self._persist_task(task)
@@ -783,18 +793,24 @@ class TaskService:
             )
 
         object_key = self._version_keys.get((parsed_id, version.id))
-        if object_key is not None:
-            try:
-                url = self.storage.create_download_url(object_key)
-            except StorageError as exc:
-                raise TaskServiceError(
-                    "PROVIDER_ERROR",
-                    "结果暂时不可下载，请稍后重试。",
-                    status_code=502,
-                ) from exc
-        else:
-            url = version.asset_url.url
-        self._require_safe_url(url)
+        if object_key is None:
+            object_key = self._object_key_for_asset(parsed_id, version.asset_url)
+        if object_key is None:
+            raise TaskServiceError(
+                "PROVIDER_ERROR",
+                "结果暂时不可下载，请稍后重试。",
+                status_code=502,
+                retryable=True,
+            )
+        try:
+            url = self.storage.create_download_url(object_key)
+        except StorageError as exc:
+            raise TaskServiceError(
+                "PROVIDER_ERROR",
+                "结果暂时不可下载，请稍后重试。",
+                status_code=502,
+                retryable=True,
+            ) from exc
         return AssetURL(
             kind="version",
             url=url,
@@ -1063,6 +1079,74 @@ class TaskService:
                 retryable=True,
             )
         return {key: checks[key] for key in _VALIDATION_RESULT}
+
+    def _store_provider_result(
+        self,
+        task_id: UUID,
+        provider_asset: AssetURL,
+        position: int | None,
+    ) -> AssetURL:
+        if position not in (0, 1):
+            raise ProviderError(
+                "provider result has no candidate slot",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            )
+        download_result = getattr(self.provider, "download_result", None)
+        if not callable(download_result):
+            raise ProviderError(
+                "provider result transfer is unavailable",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            )
+        try:
+            payload = download_result(provider_asset)
+        except ProviderError:
+            raise
+        except Exception as exc:
+            raise ProviderError(
+                "provider result transfer failed",
+                code="UPSTREAM_UNAVAILABLE",
+                retryable=True,
+            ) from exc
+        if (
+            not isinstance(payload, tuple)
+            or len(payload) != 2
+            or not isinstance(payload[0], bytes)
+            or not payload[0]
+            or not isinstance(payload[1], str)
+            or payload[1].split(";", 1)[0].strip().lower() != "image/png"
+            or len(payload[0]) > self.settings.max_upload_bytes
+        ):
+            raise ProviderError(
+                "provider returned an invalid PNG result",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            )
+
+        object_key = version_position_object_key(task_id, position)
+        try:
+            self.storage.put_object(
+                object_key,
+                payload[0],
+                content_type="image/png",
+            )
+            signed_url = self.storage.create_download_url(object_key)
+        except StorageError as exc:
+            try:
+                self.storage.delete_object(object_key)
+            except Exception:
+                pass
+            raise ProviderError(
+                "result storage is unavailable",
+                code="STORAGE_ERROR",
+                retryable=True,
+            ) from exc
+        return AssetURL(
+            kind="version",
+            url=signed_url,
+            expires_at=utc_now() + timedelta(hours=self.settings.asset_ttl_hours),
+        )
 
     @staticmethod
     def _require_safe_url(url: Any) -> None:

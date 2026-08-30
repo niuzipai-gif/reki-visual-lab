@@ -47,6 +47,8 @@ class StorageAdapter(Protocol):
 
     def create_download_url(self, object_key: str) -> str: ...
 
+    def put_object(self, object_key: str, body: bytes, *, content_type: str) -> None: ...
+
     def delete_object(self, object_key: str) -> None: ...
 
 
@@ -103,6 +105,14 @@ def version_object_key(task_id: UUID, version_id: UUID | str) -> str:
         f"tasks/{_safe_component(task_id, 'task_id')}/versions/"
         f"{_safe_component(version_id, 'version_id')}.png"
     )
+
+
+def version_position_object_key(task_id: UUID, position: int) -> str:
+    """Build the stable task-scoped key used for a candidate slot."""
+
+    if isinstance(position, bool) or position not in (0, 1):
+        raise StorageError("version position must be 0 or 1")
+    return f"tasks/{_safe_component(task_id, 'task_id')}/versions/{position}.png"
 
 
 def _validate_upload(
@@ -325,6 +335,22 @@ class S3StorageAdapter:
         url, _ = self._presign("get_object", object_key)
         return url
 
+    def put_object(self, object_key: str, body: bytes, *, content_type: str) -> None:
+        object_key = _validate_object_key(object_key)
+        if not isinstance(body, bytes) or not body:
+            raise StorageError("storage object body must not be empty")
+        if not isinstance(content_type, str) or not content_type:
+            raise StorageError("storage object content type is required")
+        try:
+            self.client.put_object(
+                Bucket=self.bucket,
+                Key=object_key,
+                Body=body,
+                ContentType=content_type,
+            )
+        except Exception as exc:
+            raise StorageError("storage object upload failed") from exc
+
     def delete_object(self, object_key: str) -> None:
         object_key = _validate_object_key(object_key)
         try:
@@ -348,4 +374,5 @@ __all__ = [
     "mask_object_key",
     "original_object_key",
     "version_object_key",
+    "version_position_object_key",
 ]

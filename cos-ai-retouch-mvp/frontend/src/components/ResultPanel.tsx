@@ -1,4 +1,13 @@
-import { useMemo, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type TouchEvent as ReactTouchEvent,
+} from "react";
 
 import {
   apiClient as defaultApiClient,
@@ -51,10 +60,75 @@ export default function ResultPanel({
   const [zoom, setZoom] = useState(100);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const comparisonRef = useRef<HTMLDivElement | null>(null);
 
   const selectedVersion = candidates.find((version) => version.id === selectedVersionId) ?? null;
   const comparisonAfterUrl =
     isOriginalRestored ? originalUrl : selectedVersion?.assetUrl.url || originalUrl;
+
+  function updateComparisonPosition(clientX: number) {
+    const element = comparisonRef.current;
+    if (!element || !Number.isFinite(clientX)) return;
+    const rect = element.getBoundingClientRect();
+    if (!rect.width) return;
+    const next = Math.round(((clientX - rect.left) / rect.width) * 100);
+    setComparisonPosition(Math.min(95, Math.max(5, next)));
+  }
+
+  function beginDragging(clientX: number, button?: number) {
+    if (button !== undefined && button !== 0) return;
+    updateComparisonPosition(clientX);
+    setDragging(true);
+  }
+
+  function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    beginDragging(event.clientX, event.button);
+  }
+
+  function handleMouseDown(event: ReactMouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    beginDragging(event.clientX, event.button);
+  }
+
+  function handleTouchStart(event: ReactTouchEvent<HTMLDivElement>) {
+    const clientX = event.touches[0]?.clientX;
+    if (clientX === undefined) return;
+    event.preventDefault();
+    beginDragging(clientX);
+  }
+
+  useEffect(() => {
+    if (!dragging) return undefined;
+    const handleMove = (event: PointerEvent | MouseEvent | TouchEvent) => {
+      const clientX = "touches" in event
+        ? event.touches[0]?.clientX ?? event.changedTouches[0]?.clientX
+        : event.clientX;
+      if (clientX === undefined) return;
+      event.preventDefault();
+      updateComparisonPosition(clientX);
+    };
+    const stopDragging = () => setDragging(false);
+    window.addEventListener("pointermove", handleMove, { passive: false });
+    window.addEventListener("pointerup", stopDragging);
+    window.addEventListener("pointercancel", stopDragging);
+    window.addEventListener("mousemove", handleMove, { passive: false });
+    window.addEventListener("mouseup", stopDragging);
+    window.addEventListener("touchmove", handleMove, { passive: false });
+    window.addEventListener("touchend", stopDragging);
+    window.addEventListener("touchcancel", stopDragging);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", stopDragging);
+      window.removeEventListener("pointercancel", stopDragging);
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", stopDragging);
+      window.removeEventListener("touchmove", handleMove);
+      window.removeEventListener("touchend", stopDragging);
+      window.removeEventListener("touchcancel", stopDragging);
+    };
+  }, [dragging]);
 
   function selectVersion(version: VersionView) {
     setSelectedVersionId(version.id);
@@ -125,6 +199,10 @@ export default function ResultPanel({
       <div
         className="before-after-comparison"
         data-testid="before-after-comparison"
+        ref={comparisonRef}
+        onPointerDown={handlePointerDown}
+        onMouseDown={handleMouseDown}
+        onTouchStart={handleTouchStart}
         style={{ "--comparison-position": `${comparisonPosition}%` } as CSSProperties}
       >
         <img
