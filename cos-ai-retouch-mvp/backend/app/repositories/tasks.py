@@ -8,6 +8,7 @@ from uuid import UUID
 
 from pydantic import TypeAdapter
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db import (
@@ -29,6 +30,10 @@ from app.domain.models import (
 
 
 _CARDS_ADAPTER = TypeAdapter(tuple[AnalysisCard, ...])
+
+
+class VersionConflictError(ValueError):
+    """Raised when a version UUID is reused with a different asset payload."""
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -63,13 +68,28 @@ class TaskRepository:
             raise ValueError(f"Task {task_id} does not exist")
         return row
 
-    def _save_asset(self, task_id: UUID, asset: AssetURL) -> None:
-        self.session.add(
-            AssetRow(
-                task_id=task_id,
-                kind=asset.kind,
-                payload=_payload(asset),
+    def _ensure_asset(self, task_id: UUID, asset: AssetURL) -> None:
+        asset_payload = _payload(asset)
+        if any(
+            isinstance(pending, AssetRow)
+            and pending.task_id == task_id
+            and pending.kind == asset.kind
+            and pending.payload == asset_payload
+            for pending in self.session.new
+        ):
+            return
+
+        existing_assets = self.session.scalars(
+            select(AssetRow).where(
+                AssetRow.task_id == task_id,
+                AssetRow.kind == asset.kind,
             )
+        ).all()
+        if any(existing.payload == asset_payload for existing in existing_assets):
+            return
+
+        self.session.add(
+            AssetRow(task_id=task_id, kind=asset.kind, payload=asset_payload)
         )
 
     def _save_initial_children(self, task: TaskRecord) -> None:
@@ -85,6 +105,7 @@ class TaskRepository:
         if task.plan is not None:
             self.session.add(EditPlanRow(task_id=task.id, payload=_payload(task.plan)))
         for position, version in enumerate(task.versions):
+            self._ensure_asset(task.id, version.asset_url)
             self.session.add(
                 VersionRow(
                     id=version.id,
@@ -117,7 +138,7 @@ class TaskRepository:
         self.session.add(row)
         for asset in (validated.original_asset_url, validated.mask_asset_url):
             if asset is not None:
-                self._save_asset(validated.id, asset)
+                self._ensure_asset(validated.id, asset)
         self._save_initial_children(validated)
         self.session.commit()
         return validated
@@ -185,32 +206,84 @@ class TaskRepository:
         self.session.commit()
 
     def add_version(self, task_id: UUID, version: VersionRecord) -> None:
-        task_row = self._task_row(task_id)
         validated_version = VersionRecord.model_validate(version)
+        version_payload = _payload(validated_version)
+        task_row = self._task_row(task_id)
         existing = self.session.get(VersionRow, validated_version.id)
         if existing is not None:
             if existing.task_id != task_id:
                 raise ValueError(
                     f"Version {validated_version.id} belongs to another task"
                 )
-            existing.payload = _payload(validated_version)
-        else:
-            last_position = self.session.scalar(
-                select(func.max(VersionRow.position)).where(
-                    VersionRow.task_id == task_id
+            stored_version = VersionRecord.model_validate(existing.payload)
+            if stored_version.asset_url != validated_version.asset_url:
+                raise VersionConflictError(
+                    f"Version {validated_version.id} asset payload conflict: "
+                    "existing asset differs from retry"
                 )
+            existing.payload = version_payload
+            self._ensure_asset(task_id, validated_version.asset_url)
+            task_row.updated_at = utc_now()
+            try:
+                self.session.commit()
+            except IntegrityError as error:
+                self.session.rollback()
+                self._retry_existing_version(task_id, validated_version, error)
+            return
+
+        last_position = self.session.scalar(
+            select(func.max(VersionRow.position)).where(
+                VersionRow.task_id == task_id
             )
-            self.session.add(
-                VersionRow(
-                    id=validated_version.id,
-                    task_id=task_id,
-                    position=(last_position + 1 if last_position is not None else 0),
-                    payload=_payload(validated_version),
-                )
+        )
+        self._ensure_asset(task_id, validated_version.asset_url)
+        self.session.add(
+            VersionRow(
+                id=validated_version.id,
+                task_id=task_id,
+                position=(last_position + 1 if last_position is not None else 0),
+                payload=version_payload,
             )
-            self._save_asset(task_id, validated_version.asset_url)
+        )
         task_row.updated_at = utc_now()
-        self.session.commit()
+        try:
+            self.session.commit()
+        except IntegrityError as error:
+            self.session.rollback()
+            self._retry_existing_version(task_id, validated_version, error)
+
+    def _retry_existing_version(
+        self,
+        task_id: UUID,
+        validated_version: VersionRecord,
+        failure: IntegrityError,
+    ) -> None:
+        """Resolve a concurrent insert after rolling back the losing transaction."""
+
+        existing = self.session.get(VersionRow, validated_version.id)
+        if existing is None:
+            raise failure
+        if existing.task_id != task_id:
+            raise VersionConflictError(
+                f"Version {validated_version.id} asset payload conflict: "
+                "version belongs to another task"
+            )
+
+        stored_version = VersionRecord.model_validate(existing.payload)
+        if stored_version.asset_url != validated_version.asset_url:
+            raise VersionConflictError(
+                f"Version {validated_version.id} asset payload conflict: "
+                "existing asset differs from retry"
+            )
+
+        self._ensure_asset(task_id, validated_version.asset_url)
+        task_row = self._task_row(task_id)
+        task_row.updated_at = utc_now()
+        try:
+            self.session.commit()
+        except IntegrityError as retry_failure:
+            self.session.rollback()
+            raise retry_failure
 
     def mark_expired_before(self, cutoff: datetime) -> int:
         cutoff = _require_utc(cutoff)

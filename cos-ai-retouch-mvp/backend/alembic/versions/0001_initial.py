@@ -53,6 +53,12 @@ def upgrade() -> None:
         sa.Column("payload", payload, nullable=False),
         sa.ForeignKeyConstraint(["task_id"], ["tasks.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint(
+            "task_id",
+            "kind",
+            "payload",
+            name="uq_assets_task_kind_payload",
+        ),
     )
     op.create_index("ix_assets_task_id", "assets", ["task_id"], unique=False)
     op.create_index(

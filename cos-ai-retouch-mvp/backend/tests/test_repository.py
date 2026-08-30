@@ -1,13 +1,17 @@
 from datetime import datetime, timedelta, timezone
+import inspect as python_inspect
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, func, inspect, select
+from sqlalchemy.exc import IntegrityError
 
 from app.config import Settings
-from app.db import AssetRow, Base
+from app.db import AssetRow, Base, VersionRow, _sync_database_url
+from app.repositories.tasks import TaskRepository, VersionConflictError
 from app.domain.models import (
     AnalysisCard,
     AssetURL,
@@ -96,6 +100,9 @@ def test_repository_round_trips_the_full_typed_task_aggregate(repository):
     task, card, plan, version = _aggregate()
 
     created = repository.create_task(task)
+    initial_asset_count = repository.session.scalar(
+        select(func.count(AssetRow.id)).where(AssetRow.task_id == task.id)
+    )
     repository.save_analysis(task.id, [card])
     repository.save_plan(task.id, plan)
     repository.add_version(task.id, version)
@@ -103,6 +110,7 @@ def test_repository_round_trips_the_full_typed_task_aggregate(repository):
     loaded = repository.get_task(task.id)
 
     assert created.id == task.id
+    assert initial_asset_count == 3
     assert loaded is not task
     assert loaded.id == task.id
     assert loaded.status is task.status
@@ -128,6 +136,33 @@ def test_backend_declares_a_sync_postgresql_driver():
     assert '"psycopg[binary]' in pyproject.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize(
+    ("database_url", "expected"),
+    [
+        (
+            "postgresql://retouch:secret@example.test/retouch",
+            "postgresql+psycopg://retouch:secret@example.test/retouch",
+        ),
+        (
+            "postgres://retouch:secret@example.test/retouch",
+            "postgresql+psycopg://retouch:secret@example.test/retouch",
+        ),
+        (
+            "postgresql+psycopg://retouch:secret@example.test/retouch",
+            "postgresql+psycopg://retouch:secret@example.test/retouch",
+        ),
+        (
+            "sqlite+aiosqlite:///./cos-retouch-test.db",
+            "sqlite:///./cos-retouch-test.db",
+        ),
+    ],
+)
+def test_database_url_normalization_selects_psycopg_only_for_unqualified_postgres(
+    database_url, expected
+):
+    assert _sync_database_url(database_url) == expected
+
+
 def test_add_version_is_idempotent_without_duplicate_assets(repository, db_session):
     task = TaskRecord.new()
     version = VersionRecord(asset_url=_asset("version", "version-1.jpg"))
@@ -143,6 +178,88 @@ def test_add_version_is_idempotent_without_duplicate_assets(repository, db_sessi
 
     assert loaded.versions == (version,)
     assert asset_count == 1
+
+
+def test_add_version_repairs_a_historical_version_with_a_missing_asset(
+    repository, db_session
+):
+    task = TaskRecord.new()
+    version = VersionRecord(asset_url=_asset("version", "version-1.jpg"))
+    repository.create_task(task)
+    db_session.add(
+        VersionRow(
+            id=version.id,
+            task_id=task.id,
+            position=0,
+            payload=version.model_dump(mode="json"),
+        )
+    )
+    db_session.commit()
+
+    repository.add_version(task.id, version)
+    repository.add_version(task.id, version)
+
+    asset_count = db_session.scalar(
+        select(func.count(AssetRow.id)).where(AssetRow.task_id == task.id)
+    )
+    assert asset_count == 1
+
+
+def test_add_version_rejects_same_uuid_with_a_changed_asset_and_preserves_state(
+    repository, db_session
+):
+    task = TaskRecord.new()
+    original = VersionRecord(asset_url=_asset("version", "version-1.jpg"))
+    conflicting = VersionRecord(
+        id=original.id,
+        asset_url=_asset("version", "version-2.jpg"),
+    )
+    repository.create_task(task)
+    repository.add_version(task.id, original)
+    before = repository.get_task(task.id)
+
+    with pytest.raises(VersionConflictError, match="asset payload conflict"):
+        repository.add_version(task.id, conflicting)
+
+    after = repository.get_task(task.id)
+    asset_count = db_session.scalar(
+        select(func.count(AssetRow.id)).where(AssetRow.task_id == task.id)
+    )
+    assert after.versions == (original,)
+    assert after.updated_at == before.updated_at
+    assert asset_count == 1
+
+
+def test_add_version_reraises_integrity_error_and_allows_a_clean_retry(
+    repository, db_session, monkeypatch
+):
+    task = TaskRecord.new()
+    version = VersionRecord(asset_url=_asset("version", "version-1.jpg"))
+    repository.create_task(task)
+    real_commit = db_session.commit
+
+    def fail_commit():
+        raise IntegrityError("insert version", {}, RuntimeError("database failure"))
+
+    monkeypatch.setattr(db_session, "commit", fail_commit)
+    with pytest.raises(IntegrityError, match="database failure"):
+        repository.add_version(task.id, version)
+
+    assert repository.get_task(task.id).versions == ()
+    assert db_session.scalar(
+        select(func.count(AssetRow.id)).where(AssetRow.task_id == task.id)
+    ) == 0
+
+    monkeypatch.setattr(db_session, "commit", real_commit)
+    repository.add_version(task.id, version)
+
+    assert repository.get_task(task.id).versions == (version,)
+
+
+def test_integrity_retry_helper_does_not_use_implicit_bare_raise():
+    source = python_inspect.getsource(TaskRepository._retry_existing_version)
+
+    assert "raise\n" not in source
 
 
 def test_child_writes_refresh_task_updated_at_as_utc(repository):

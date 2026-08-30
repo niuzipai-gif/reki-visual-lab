@@ -14,6 +14,7 @@ from sqlalchemy import (
     Integer,
     JSON,
     String,
+    UniqueConstraint,
     Uuid,
     create_engine,
     event,
@@ -26,16 +27,22 @@ from app.config import get_settings
 
 
 def _sync_database_url(database_url: str | SecretStr) -> str:
-    """Adapt the configured SQLite async URL for this synchronous repository."""
+    """Adapt configured URLs for the synchronous SQLAlchemy repository."""
 
     if isinstance(database_url, SecretStr):
         database_url = database_url.get_secret_value()
     if database_url.startswith("sqlite+aiosqlite://"):
         return database_url.replace("sqlite+aiosqlite://", "sqlite://", 1)
+    if database_url.startswith("postgresql://"):
+        return database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    if database_url.startswith("postgres://"):
+        return database_url.replace("postgres://", "postgresql+psycopg://", 1)
     return database_url
 
 
-def create_db_engine(database_url: str | None = None, **kwargs: Any) -> Engine:
+def create_db_engine(
+    database_url: str | SecretStr | None = None, **kwargs: Any
+) -> Engine:
     """Create a SQLAlchemy 2.0 engine from an application or test URL."""
 
     url = _sync_database_url(database_url or get_settings().database_url)
@@ -89,6 +96,12 @@ class TaskRow(Base):
 class AssetRow(Base):
     __tablename__ = "assets"
     __table_args__ = (
+        UniqueConstraint(
+            "task_id",
+            "kind",
+            "payload",
+            name="uq_assets_task_kind_payload",
+        ),
         Index("ix_assets_task_kind", "task_id", "kind"),
     )
 
