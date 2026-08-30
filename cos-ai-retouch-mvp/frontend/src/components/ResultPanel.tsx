@@ -64,6 +64,12 @@ export default function ResultPanel({
   const comparisonRef = useRef<HTMLDivElement | null>(null);
 
   const selectedVersion = candidates.find((version) => version.id === selectedVersionId) ?? null;
+  const canRegenerate =
+    !busy &&
+    task.status !== "generating" &&
+    task.status !== "validating" &&
+    task.status !== "expired" &&
+    task.versions.length < 2;
   const comparisonAfterUrl =
     isOriginalRestored ? originalUrl : selectedVersion?.assetUrl.url || originalUrl;
 
@@ -300,7 +306,7 @@ export default function ResultPanel({
         <button className="secondary-button" type="button" disabled={busy || task.status === "expired"} onClick={restoreOriginal}>
           恢复原图
         </button>
-        <button className="secondary-button" type="button" disabled={busy || task.status === "expired"} onClick={() => void regenerate()}>
+        <button className="secondary-button" type="button" disabled={!canRegenerate} onClick={() => void regenerate()}>
           {busy ? "处理中…" : "重新生成"}
         </button>
         <button className="primary-button" type="button" disabled={busy || task.status !== "succeeded" || !selectedVersion} onClick={() => void downloadCurrentResult()}>

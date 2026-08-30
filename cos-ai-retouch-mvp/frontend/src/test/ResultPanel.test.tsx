@@ -150,7 +150,7 @@ describe("ResultPanel", () => {
     const api = client();
     const onTaskUpdate = vi.fn();
     const onRestoreOriginal = vi.fn();
-    const task = taskWithVersions([version("v1", "候选 1"), version("v2", "候选 2")]);
+    const task = taskWithVersions([version("v1", "候选 1")]);
     vi.mocked(api.getTask).mockResolvedValue(task);
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
 
@@ -185,5 +185,26 @@ describe("ResultPanel", () => {
     await waitFor(() => expect(api.getDownloadUrl).toHaveBeenCalledWith("task-1", "invite-demo"));
     expect(openSpy).toHaveBeenCalledWith("https://download.local/result.png", "_blank", "noopener,noreferrer");
     openSpy.mockRestore();
+  });
+
+  it("does not start a third generation after two candidates exist", async () => {
+    const user = userEvent.setup();
+    const api = client();
+    const task = taskWithVersions([version("v1", "候选 1"), version("v2", "候选 2")]);
+
+    render(
+      <ResultPanel
+        task={task}
+        originalUrl={originalUrl}
+        inviteToken="invite-demo"
+        apiClient={api}
+        onTaskUpdate={vi.fn()}
+      />,
+    );
+
+    const regenerate = screen.getByRole("button", { name: "重新生成" });
+    expect(regenerate).toBeDisabled();
+    await user.click(regenerate);
+    expect(api.startGeneration).not.toHaveBeenCalled();
   });
 });

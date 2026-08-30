@@ -1407,6 +1407,115 @@ def test_generate_rejects_a_task_that_already_has_two_candidates(api_context):
     assert provider.edit_submissions == 0
 
 
+def test_succeeded_task_regenerates_into_the_next_candidate_slot(scripted_context):
+    client, repository, _storage, provider, _settings = scripted_context
+    task_id = _prepare_confirmation(client)
+    saved = client.post(
+        f"/api/v1/tasks/{task_id}/plan",
+        json=_plan_payload(),
+        headers=INVITE_HEADERS,
+    )
+    assert saved.status_code == 200
+
+    first = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-first"}),
+    )
+    assert first.status_code == 200
+    assert first.json()["status"] == "succeeded"
+    assert len(first.json()["versions"]) == 1
+    first_version_id = first.json()["versions"][0]["id"]
+    first_asset_url = first.json()["versions"][0]["asset_url"]["url"]
+
+    provider.edit_statuses = ("queued",)
+    second = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-second"}),
+    )
+    second_record = repository.get_idempotency(
+        UUID(task_id), "generate", "generate-second"
+    )
+
+    assert second.status_code == 200
+    assert second.json()["status"] == "generating"
+    assert [version["asset_url"]["url"] for version in second.json()["versions"]] == [
+        first_asset_url
+    ]
+    assert repository.get_task(UUID(task_id)).status is TaskStatus.GENERATING
+    assert second_record is not None
+    assert second_record.candidate_position == 1
+
+    busy = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-busy"}),
+    )
+    assert busy.status_code == 409
+    assert busy.json()["error"]["code"] == "TASK_NOT_READY"
+
+    provider.edit_statuses = ("succeeded",)
+    completed = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-second"}),
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "succeeded"
+    assert len(completed.json()["versions"]) == 2
+    assert completed.json()["versions"][0]["id"] == first_version_id
+    assert completed.json()["versions"][0]["asset_url"]["url"] == first_asset_url
+    stored_versions = repository.session.scalars(
+        select(VersionRow)
+        .where(VersionRow.task_id == UUID(task_id))
+        .order_by(VersionRow.position)
+    ).all()
+    assert [version.position for version in stored_versions] == [0, 1]
+    assert [version.id for version in stored_versions][0] == UUID(first_version_id)
+
+    third = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-third"}),
+    )
+    assert third.status_code == 409
+    assert third.json()["error"]["code"] == "CANDIDATE_LIMIT"
+    assert provider.edit_submissions == 2
+
+
+@pytest.mark.parametrize(
+    ("status", "error_code"),
+    [
+        (TaskStatus.GENERATING, "TASK_NOT_READY"),
+        (TaskStatus.VALIDATING, "TASK_NOT_READY"),
+        (TaskStatus.EXPIRED, "TASK_EXPIRED"),
+    ],
+)
+def test_generate_rejects_busy_or_expired_tasks(api_context, status, error_code):
+    client, repository, _storage, provider = api_context
+    task_id = _prepare_confirmation(client)
+    client.post(
+        f"/api/v1/tasks/{task_id}/plan",
+        json=_plan_payload(),
+        headers=INVITE_HEADERS,
+    )
+    generated = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-state-base"}),
+    )
+    assert generated.status_code == 200
+
+    task_row = repository.session.get(TaskRow, UUID(task_id))
+    assert task_row is not None
+    task_row.status = status.value
+    repository.session.commit()
+
+    response = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-state-new"}),
+    )
+
+    assert response.status_code in {409, 410}
+    assert response.json()["error"]["code"] == error_code
+    assert provider.edit_submissions == 1
+
+
 def test_download_is_only_available_for_successful_unexpired_task(api_context):
     client, repository, _storage, _provider = api_context
     task_id = _create(client).json()["task_id"]

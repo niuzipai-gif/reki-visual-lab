@@ -73,7 +73,6 @@ def test_asset_url_kind_cannot_be_changed_after_construction():
     [
         (TaskStatus.CREATED, TaskStatus.ANALYZING),
         (TaskStatus.AWAITING_CONFIRMATION, TaskStatus.VALIDATING),
-        (TaskStatus.SUCCEEDED, TaskStatus.GENERATING),
         (TaskStatus.EXPIRED, TaskStatus.SUCCEEDED),
     ],
 )
@@ -101,7 +100,7 @@ def test_transition_table_contains_only_the_supported_edges():
         TaskStatus.FAILED: frozenset(
             {TaskStatus.ANALYZING, TaskStatus.GENERATING, TaskStatus.EXPIRED}
         ),
-        TaskStatus.SUCCEEDED: frozenset({TaskStatus.EXPIRED}),
+        TaskStatus.SUCCEEDED: frozenset({TaskStatus.GENERATING, TaskStatus.EXPIRED}),
         TaskStatus.EXPIRED: frozenset(),
     }
 

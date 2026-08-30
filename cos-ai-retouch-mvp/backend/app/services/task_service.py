@@ -403,6 +403,12 @@ class TaskService:
         parsed_id = self._parse_task_id(task_id)
         key = self._validate_idempotency_key(idempotency_key)
         task = self.get_task(parsed_id)
+        if task.status is TaskStatus.EXPIRED:
+            raise TaskServiceError(
+                "TASK_EXPIRED",
+                "任务已过期，请重新上传图片。",
+                status_code=410,
+            )
         if task.plan is None:
             raise TaskServiceError(
                 "TASK_NOT_READY",
@@ -459,9 +465,20 @@ class TaskService:
                         max_age_seconds=300,
                     )
                     task = self.get_task(parsed_id)
+                    if task.status is TaskStatus.SUCCEEDED:
+                        if len(task.versions) >= 2:
+                            raise CandidateLimitError(
+                                "a task may have at most two candidate versions"
+                            )
+                        allowed_statuses = {TaskStatus.SUCCEEDED}
+                    else:
+                        allowed_statuses = {
+                            TaskStatus.AWAITING_CONFIRMATION,
+                            TaskStatus.FAILED,
+                        }
                     self._require_status(
                         task,
-                        {TaskStatus.AWAITING_CONFIRMATION, TaskStatus.FAILED},
+                        allowed_statuses,
                     )
                     if task.original_asset_url is None:
                         raise TaskServiceError(

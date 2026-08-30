@@ -25,7 +25,7 @@ transition_table: Final[Mapping[TaskStatus, frozenset[TaskStatus]]] = MappingPro
         TaskStatus.FAILED: frozenset(
             {TaskStatus.ANALYZING, TaskStatus.GENERATING, TaskStatus.EXPIRED}
         ),
-        TaskStatus.SUCCEEDED: frozenset({TaskStatus.EXPIRED}),
+        TaskStatus.SUCCEEDED: frozenset({TaskStatus.GENERATING, TaskStatus.EXPIRED}),
         TaskStatus.EXPIRED: frozenset(),
     }
 )

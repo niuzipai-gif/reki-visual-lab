@@ -338,11 +338,15 @@ class TaskRepository:
             existing = self.get_idempotency(task_id, "generate", key)
             if existing is not None:
                 self._require_idempotency_hash(existing, request_hash)
-                if mark_task_generating:
+                if (
+                    mark_task_generating
+                    and existing.result_status is TaskStatus.GENERATING
+                ):
                     task_row = self._task_row(task_id)
                     if task_row.status in {
                         TaskStatus.AWAITING_CONFIRMATION.value,
                         TaskStatus.FAILED.value,
+                        TaskStatus.SUCCEEDED.value,
                     }:
                         task_row.status = TaskStatus.GENERATING.value
                         task_row.updated_at = utc_now()

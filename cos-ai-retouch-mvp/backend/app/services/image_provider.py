@@ -644,13 +644,20 @@ class ExternalImageModelProvider:
                 retryable=isinstance(status_code, int) and status_code >= 500,
                 status_code=status_code if isinstance(status_code, int) else None,
             )
-        if not isinstance(body, bytes) or not body or len(body) > self.settings.max_upload_bytes:
+        if (
+            not isinstance(body, bytes)
+            or not body
+            or len(body) > self.settings.max_upload_bytes
+        ):
             raise ProviderError(
                 "image provider returned an invalid result body",
                 code="INVALID_PROVIDER_RESPONSE",
                 retryable=True,
             )
-        if not isinstance(content_type, str) or content_type.split(";", 1)[0].strip().lower() != "image/png":
+        if (
+            not isinstance(content_type, str)
+            or content_type.split(";", 1)[0].strip().lower() != "image/png"
+        ):
             raise ProviderError(
                 "image provider returned a non-PNG result",
                 code="INVALID_PROVIDER_RESPONSE",
