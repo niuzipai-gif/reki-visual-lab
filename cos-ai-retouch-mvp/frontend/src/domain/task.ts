@@ -14,6 +14,8 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export type Goal = "natural_retouch" | "structure_repair";
 
+export type TaskOperation = "analyze" | "generate";
+
 export type TaskCategory =
   | "face"
   | "hair"

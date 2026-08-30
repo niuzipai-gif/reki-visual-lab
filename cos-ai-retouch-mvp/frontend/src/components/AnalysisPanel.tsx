@@ -15,6 +15,7 @@ import {
   type EditPlanInput,
   type Goal,
   type Region,
+  type TaskOperation,
   type TaskView,
 } from "../domain/task";
 import TaskProgress from "./TaskProgress";
@@ -30,6 +31,7 @@ interface AnalysisPanelProps {
   onTaskUpdate: (task: TaskView) => void;
   apiClient?: ApiClient;
   previewUrl?: string | null;
+  getOperationKey?: (taskId: string, operation: TaskOperation) => string;
   /** Task 7 can mount MaskCanvas here without changing this workflow. */
   renderRegionEditor?: (props: RegionEditorProps) => ReactNode;
 }
@@ -107,6 +109,7 @@ export default function AnalysisPanel({
   onTaskUpdate,
   apiClient = defaultApiClient,
   previewUrl,
+  getOperationKey,
   renderRegionEditor,
 }: AnalysisPanelProps) {
   const cards = useMemo(
@@ -121,6 +124,7 @@ export default function AnalysisPanel({
   const [goal, setGoal] = useState<Goal | "both">("natural_retouch");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [generationRetryable, setGenerationRetryable] = useState(false);
 
   function toggleCard(cardId: string) {
     setEnabledIds((current) => {
@@ -160,7 +164,8 @@ export default function AnalysisPanel({
   }
 
   async function handleGenerate() {
-    const saved = task.plan ? task : await savePlan();
+    setGenerationRetryable(false);
+    const saved = await savePlan();
     if (!saved) return;
     setBusy(true);
     setError(null);
@@ -168,12 +173,14 @@ export default function AnalysisPanel({
       await apiClient.startGeneration(
         task.taskId,
         inviteToken,
-        createIdempotencyKey(),
+        getOperationKey?.(task.taskId, "generate") || createIdempotencyKey(),
       );
       const generated = await apiClient.getTask(task.taskId, inviteToken);
       onTaskUpdate(generated);
+      setGenerationRetryable(false);
     } catch (caught) {
       setError(getUserSafeErrorMessage(caught));
+      setGenerationRetryable(true);
     } finally {
       setBusy(false);
     }
@@ -272,7 +279,7 @@ export default function AnalysisPanel({
           保存修图计划
         </button>
         <button className="primary-button" type="button" disabled={busy} onClick={() => void handleGenerate()}>
-          {busy ? "处理中…" : "确认并生成候选图"}
+          {busy ? "处理中…" : generationRetryable ? "重试生成" : "确认并生成候选图"}
         </button>
       </div>
       {task.status === "generating" || task.status === "validating" || task.status === "succeeded" || task.status === "failed" ? (

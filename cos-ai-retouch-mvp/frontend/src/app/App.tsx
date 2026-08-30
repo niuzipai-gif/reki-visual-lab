@@ -1,14 +1,39 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { getUserSafeErrorMessage, apiClient as defaultApiClient, type ApiClient } from "./api";
-import type { TaskView } from "../domain/task";
+import { createIdempotencyKey, getUserSafeErrorMessage, apiClient as defaultApiClient, type ApiClient } from "./api";
+import type { TaskOperation, TaskView } from "../domain/task";
 import AnalysisPanel from "../components/AnalysisPanel";
 import InviteGate from "../components/InviteGate";
 import TaskProgress from "../components/TaskProgress";
-import UploadPanel from "../components/UploadPanel";
+import UploadPanel, { type PreviewChangeHandler } from "../components/UploadPanel";
 
 interface AppProps {
   apiClient?: ApiClient;
+}
+
+export interface OperationKeyStore {
+  get: (taskId: string, operation: TaskOperation) => string;
+  clearTask: (taskId: string) => void;
+}
+
+export function createOperationKeyStore(
+  generateKey: () => string = createIdempotencyKey,
+): OperationKeyStore {
+  const keys = new Map<string, string>();
+  return {
+    get(taskId, operation) {
+      const scope = `${taskId}:${operation}`;
+      const existing = keys.get(scope);
+      if (existing) return existing;
+      const key = generateKey();
+      keys.set(scope, key);
+      return key;
+    },
+    clearTask(taskId) {
+      keys.delete(`${taskId}:analyze`);
+      keys.delete(`${taskId}:generate`);
+    },
+  };
 }
 
 export default function App({ apiClient = defaultApiClient }: AppProps) {
@@ -16,6 +41,21 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
   const [gateError, setGateError] = useState<string | null>(null);
   const [task, setTask] = useState<TaskView | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [operationKeyStore] = useState(createOperationKeyStore);
+  const previewUrlRef = useRef<string | null>(null);
+  const previewCleanupRef = useRef<(() => void) | null>(null);
+
+  const handlePreviewChange = useCallback<PreviewChangeHandler>((nextUrl, release) => {
+    if (nextUrl !== previewUrlRef.current) previewCleanupRef.current?.();
+    previewUrlRef.current = nextUrl;
+    previewCleanupRef.current = release || null;
+    setPreviewUrl(nextUrl);
+  }, []);
+
+  useEffect(() => () => {
+    previewCleanupRef.current?.();
+    previewCleanupRef.current = null;
+  }, []);
 
   function handleInviteSubmit(token: string) {
     setGateError(null);
@@ -37,7 +77,15 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
     );
   }
 
-  const showAnalysis = task && task.status !== "uploading" && task.status !== "created" && task.taskId !== "local-upload";
+  const showAnalysis = Boolean(
+    task &&
+      task.taskId !== "local-upload" &&
+      (task.status === "awaiting_confirmation" ||
+        task.status === "generating" ||
+        task.status === "validating" ||
+        task.status === "succeeded" ||
+        (task.status === "failed" && Boolean(task.plan))),
+  );
 
   return (
     <main className="app-shell">
@@ -54,8 +102,13 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
             <UploadPanel
               inviteToken={inviteToken}
               apiClient={apiClient}
+              getOperationKey={operationKeyStore.get}
               onTaskUpdate={handleTaskUpdate}
-              onPreviewChange={setPreviewUrl}
+              onPreviewChange={handlePreviewChange}
+              onTaskReset={() => {
+                if (task) operationKeyStore.clearTask(task.taskId);
+                setTask(null);
+              }}
             />
           )}
           {showAnalysis && task && (
@@ -63,6 +116,7 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
               task={task}
               inviteToken={inviteToken}
               apiClient={apiClient}
+              getOperationKey={operationKeyStore.get}
               onTaskUpdate={handleTaskUpdate}
               previewUrl={previewUrl}
             />

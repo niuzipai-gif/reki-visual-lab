@@ -10,13 +10,17 @@ import {
   MAX_UPLOAD_BYTES,
   isSupportedImageType,
 } from "../app/config";
-import type { TaskView } from "../domain/task";
+import type { TaskOperation, TaskView } from "../domain/task";
 import TaskProgress from "./TaskProgress";
+
+export type PreviewChangeHandler = (previewUrl: string | null, release?: () => void) => void;
 
 interface UploadPanelProps {
   inviteToken: string;
   onTaskUpdate: (task: TaskView) => void;
-  onPreviewChange?: (previewUrl: string | null) => void;
+  onPreviewChange?: PreviewChangeHandler;
+  onTaskReset?: () => void;
+  getOperationKey?: (taskId: string, operation: TaskOperation) => string;
   apiClient?: ApiClient;
 }
 
@@ -42,24 +46,40 @@ export default function UploadPanel({
   inviteToken,
   onTaskUpdate,
   onPreviewChange,
+  onTaskReset,
+  getOperationKey,
   apiClient = defaultApiClient,
 }: UploadPanelProps) {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [createdTask, setCreatedTask] = useState<TaskView | null>(null);
+  const [uploadComplete, setUploadComplete] = useState(false);
+  const [retryableAnalysis, setRetryableAnalysis] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progressStatus, setProgressStatus] = useState<TaskView["status"]>("created");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    onPreviewChange?.(previewUrl);
-    return () => {
-      if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
-    };
+    const release = previewUrl?.startsWith("blob:")
+      ? () => URL.revokeObjectURL(previewUrl)
+      : undefined;
+    onPreviewChange?.(previewUrl, release);
   }, [onPreviewChange, previewUrl]);
 
   async function handleFileChange(selected: File | undefined) {
     if (!selected) return;
     const validationError = validateFile(selected);
+    if (
+      !validationError &&
+      createdTask &&
+      file &&
+      (file.name !== selected.name || file.size !== selected.size)
+    ) {
+      setCreatedTask(null);
+      setUploadComplete(false);
+      setRetryableAnalysis(false);
+      onTaskReset?.();
+    }
     setError(validationError);
     setFile(validationError ? null : selected);
     if (validationError) {
@@ -79,37 +99,50 @@ export default function UploadPanel({
     if (!file || busy) return;
     setBusy(true);
     setError(null);
+    let taskForRetry = createdTask;
+    let isUploaded = uploadComplete;
     try {
-      const created = await apiClient.createTask(
-        {
-          filename: file.name,
-          contentType: file.type,
-          byteSize: file.size,
-        },
-        inviteToken,
-      );
-      onTaskUpdate(created);
-      setProgressStatus("uploading");
-      if (!created.uploadUrl) throw new Error("missing upload url");
-      await apiClient.uploadOriginal(created.uploadUrl, file);
+      if (!taskForRetry) {
+        taskForRetry = await apiClient.createTask(
+          {
+            filename: file.name,
+            contentType: file.type,
+            byteSize: file.size,
+          },
+          inviteToken,
+        );
+        setCreatedTask(taskForRetry);
+        onTaskUpdate(taskForRetry);
+        setProgressStatus("uploading");
+      }
+      if (!isUploaded) {
+        if (!taskForRetry.uploadUrl) throw new Error("missing upload url");
+        await apiClient.uploadOriginal(taskForRetry.uploadUrl, file);
+        isUploaded = true;
+        setUploadComplete(true);
+      }
       setProgressStatus("analyzing");
+      setRetryableAnalysis(false);
       await apiClient.startAnalysis(
-        created.taskId,
+        taskForRetry.taskId,
         inviteToken,
-        createIdempotencyKey(),
+        getOperationKey?.(taskForRetry.taskId, "analyze") || createIdempotencyKey(),
       );
-      const analyzed = await apiClient.getTask(created.taskId, inviteToken);
+      const analyzed = await apiClient.getTask(taskForRetry.taskId, inviteToken);
+      setRetryableAnalysis(analyzed.status === "analyzing");
       setProgressStatus(analyzed.status);
       onTaskUpdate(analyzed);
     } catch (caught) {
       const safeMessage = getUserSafeErrorMessage(caught);
       setError(safeMessage);
       setProgressStatus("failed");
+      setRetryableAnalysis(Boolean(taskForRetry && isUploaded));
       onTaskUpdate({
-        taskId: "local-upload",
+        taskId: taskForRetry?.taskId || "local-upload",
         status: "failed",
+        originalAssetUrl: taskForRetry?.originalAssetUrl,
         analysis: [],
-        plan: null,
+        plan: taskForRetry?.plan || null,
         versions: [],
         error: { code: "UPLOAD_FAILED", message: safeMessage, retryable: true },
       });
@@ -148,7 +181,7 @@ export default function UploadPanel({
       )}
       {error && <p className="error-text" role="alert">{error}</p>}
       <button className="primary-button" type="button" disabled={!file || busy} onClick={() => void handleUpload()}>
-        {busy ? "正在准备…" : "上传并开始分析"}
+        {busy ? "正在准备…" : retryableAnalysis ? "重试分析" : "上传并开始分析"}
       </button>
       {busy || progressStatus !== "created" ? <TaskProgress status={progressStatus} /> : null}
     </section>
