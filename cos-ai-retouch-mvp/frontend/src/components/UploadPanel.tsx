@@ -42,6 +42,16 @@ function readPreview(file: File): Promise<string> {
   });
 }
 
+function isNewFileSelection(previous: File, next: File): boolean {
+  return (
+    previous !== next ||
+    previous.name !== next.name ||
+    previous.size !== next.size ||
+    previous.type !== next.type ||
+    previous.lastModified !== next.lastModified
+  );
+}
+
 export default function UploadPanel({
   inviteToken,
   onTaskUpdate,
@@ -68,18 +78,18 @@ export default function UploadPanel({
 
   async function handleFileChange(selected: File | undefined) {
     if (!selected) return;
-    const validationError = validateFile(selected);
-    if (
-      !validationError &&
-      createdTask &&
-      file &&
-      (file.name !== selected.name || file.size !== selected.size)
-    ) {
+    const replacesCreatedTask = Boolean(
+      createdTask && file && isNewFileSelection(file, selected),
+    );
+    if (replacesCreatedTask) {
       setCreatedTask(null);
       setUploadComplete(false);
       setRetryableAnalysis(false);
+      setProgressStatus("created");
+      setPreviewUrl(null);
       onTaskReset?.();
     }
+    const validationError = validateFile(selected);
     setError(validationError);
     setFile(validationError ? null : selected);
     if (validationError) {
@@ -170,7 +180,11 @@ export default function UploadPanel({
           type="file"
           accept="image/jpeg,image/png,.jpg,.jpeg,.png"
           aria-label="选择 JPG 或 PNG 原图"
-          onChange={(event) => void handleFileChange(event.target.files?.[0])}
+          onChange={(event) => {
+            const selected = event.target.files?.[0];
+            event.currentTarget.value = "";
+            void handleFileChange(selected);
+          }}
         />
       </label>
       {previewUrl && (

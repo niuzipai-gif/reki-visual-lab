@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   apiClient as defaultApiClient,
@@ -103,6 +103,36 @@ const GENERATION_ACTIVE_STATUSES = new Set<string>([
   "validating",
 ]);
 
+function goalFromPlan(plan: TaskView["plan"]): Goal | "both" {
+  const goals = new Set(plan?.goals || []);
+  if (goals.has("natural_retouch") && goals.has("structure_repair")) return "both";
+  return goals.has("structure_repair") ? "structure_repair" : "natural_retouch";
+}
+
+function enabledIdsFromTask(task: TaskView, cards: AnalysisCard[]): Set<string> {
+  if (!task.plan) {
+    return new Set(task.analysis.filter((card) => card.enabled).map((card) => card.id));
+  }
+  const enabledKinds = new Set(
+    task.plan.operations
+      .filter((operation) => operation.enabled)
+      .map((operation) => operation.kind),
+  );
+  return new Set(
+    cards
+      .filter((card) => enabledKinds.has(OPERATION_KIND[card.category as TaskCategory]))
+      .map((card) => card.id),
+  );
+}
+
+function generationStartedByTask(task: TaskView): boolean {
+  return (
+    GENERATION_ACTIVE_STATUSES.has(task.status) ||
+    task.status === "succeeded" ||
+    (task.status === "failed" && Boolean(task.plan))
+  );
+}
+
 export function buildEditPlan(
   cards: AnalysisCard[],
   enabledIds: Set<string>,
@@ -149,11 +179,11 @@ export default function AnalysisPanel({
     [task.analysis],
   );
   const initialEnabled = useMemo(
-    () => new Set(task.analysis.filter((card) => card.enabled).map((card) => card.id)),
-    [task.analysis],
+    () => enabledIdsFromTask(task, cards),
+    [cards, task],
   );
   const [enabledIds, setEnabledIds] = useState<Set<string>>(initialEnabled);
-  const [goal, setGoal] = useState<Goal | "both">("natural_retouch");
+  const [goal, setGoal] = useState<Goal | "both">(() => goalFromPlan(task.plan));
   const [intensity, setIntensity] = useState(() => normalizeIntensity(task.plan?.intensity));
   const [strokes, setStrokes] = useState<MaskStroke[]>(task.plan?.maskStrokes ?? []);
   const [notes, setNotes] = useState(task.plan?.notes ?? "");
@@ -161,27 +191,73 @@ export default function AnalysisPanel({
   const [error, setError] = useState<string | null>(null);
   const [generationRetryable, setGenerationRetryable] = useState(false);
   const [generationOperationStarted, setGenerationOperationStarted] = useState(
-    () => GENERATION_ACTIVE_STATUSES.has(task.status) || (task.status === "failed" && Boolean(task.plan)),
+    () => generationStartedByTask(task),
   );
+  const planDirtyRef = useRef(false);
+  const previousTaskIdRef = useRef(task.taskId);
+  const previousStatusRef = useRef(task.status);
   const generationAlreadyStarted =
     generationOperationStarted ||
     generationRetryable ||
-    GENERATION_ACTIVE_STATUSES.has(task.status) ||
-    (task.status === "failed" && Boolean(task.plan));
+    generationStartedByTask(task);
+  const generationButtonLocked =
+    task.status === "succeeded" || GENERATION_ACTIVE_STATUSES.has(task.status);
 
   useEffect(() => {
-    setIntensity(normalizeIntensity(task.plan?.intensity));
-    setStrokes(task.plan?.maskStrokes ?? []);
-    setNotes(task.plan?.notes ?? "");
-  }, [task.taskId]);
+    const isNewTask = previousTaskIdRef.current !== task.taskId;
+    const statusChanged = previousStatusRef.current !== task.status;
+    if (isNewTask) {
+      planDirtyRef.current = false;
+      previousTaskIdRef.current = task.taskId;
+      setGenerationRetryable(false);
+      setError(null);
+    }
+
+    if (isNewTask || !planDirtyRef.current) {
+      setEnabledIds(enabledIdsFromTask(task, cards));
+      setGoal(goalFromPlan(task.plan));
+      setIntensity(normalizeIntensity(task.plan?.intensity));
+      setStrokes(task.plan?.maskStrokes ?? []);
+      setNotes(task.plan?.notes ?? "");
+    }
+
+    if (isNewTask || statusChanged) {
+      setGenerationOperationStarted(generationStartedByTask(task));
+      setGenerationRetryable(false);
+    } else if (generationStartedByTask(task)) {
+      setGenerationOperationStarted(true);
+    }
+    previousStatusRef.current = task.status;
+  }, [cards, task]);
 
   function toggleCard(cardId: string) {
+    planDirtyRef.current = true;
     setEnabledIds((current) => {
       const next = new Set(current);
       if (next.has(cardId)) next.delete(cardId);
       else next.add(cardId);
       return next;
     });
+  }
+
+  function handleGoalChange(nextGoal: Goal | "both") {
+    planDirtyRef.current = true;
+    setGoal(nextGoal);
+  }
+
+  function handleIntensityChange(nextIntensity: number) {
+    planDirtyRef.current = true;
+    setIntensity(nextIntensity);
+  }
+
+  function handleStrokesChange(nextStrokes: MaskStroke[]) {
+    planDirtyRef.current = true;
+    setStrokes(nextStrokes);
+  }
+
+  function handleNotesChange(nextNotes: string) {
+    planDirtyRef.current = true;
+    setNotes(nextNotes.slice(0, 500));
   }
 
   async function savePlan() {
@@ -207,6 +283,7 @@ export default function AnalysisPanel({
     try {
       await apiClient.savePlan(task.taskId, plan, inviteToken);
       const saved = await apiClient.getTask(task.taskId, inviteToken);
+      planDirtyRef.current = false;
       onTaskUpdate(saved);
       return saved;
     } catch (caught) {
@@ -257,7 +334,7 @@ export default function AnalysisPanel({
             originalImageUrl={previewUrl}
             regions={cards.flatMap((card) => card.regions)}
             strokes={strokes}
-            onChange={setStrokes}
+            onChange={handleStrokesChange}
             disabled={generationAlreadyStarted || busy}
           />
           {cards.flatMap((card) => card.regions).map((region) => (
@@ -292,7 +369,7 @@ export default function AnalysisPanel({
               value={value}
               checked={goal === value}
               disabled={generationAlreadyStarted || busy}
-              onChange={() => setGoal(value)}
+              onChange={() => handleGoalChange(value)}
             />
             {label}
           </label>
@@ -312,7 +389,7 @@ export default function AnalysisPanel({
               value={value}
               checked={intensity === value}
               aria-label={label}
-              onChange={() => setIntensity(value)}
+              onChange={() => handleIntensityChange(value)}
             />
             {label} · {value}
           </label>
@@ -374,7 +451,7 @@ export default function AnalysisPanel({
           rows={3}
           aria-label="补充说明"
           disabled={generationAlreadyStarted || busy}
-          onChange={(event) => setNotes(event.target.value.slice(0, 500))}
+          onChange={(event) => handleNotesChange(event.target.value)}
         />
         <span className="muted">{notes.length}/500 · 仅作为结构化修图计划的补充</span>
       </label>
@@ -383,12 +460,17 @@ export default function AnalysisPanel({
         <button
           className="secondary-button"
           type="button"
-          disabled={busy || generationAlreadyStarted}
+          disabled={busy || generationButtonLocked}
           onClick={() => void savePlan()}
         >
           保存修图计划
         </button>
-        <button className="primary-button" type="button" disabled={busy} onClick={() => void handleGenerate()}>
+        <button
+          className="primary-button"
+          type="button"
+          disabled={busy || generationButtonLocked}
+          onClick={() => void handleGenerate()}
+        >
           {busy ? "处理中…" : generationRetryable ? "重试生成" : "确认并生成候选图"}
         </button>
       </div>

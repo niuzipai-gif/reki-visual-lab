@@ -107,6 +107,10 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
               onPreviewChange={handlePreviewChange}
               onTaskReset={() => {
                 if (task) operationKeyStore.clearTask(task.taskId);
+                previewCleanupRef.current?.();
+                previewCleanupRef.current = null;
+                previewUrlRef.current = null;
+                setPreviewUrl(null);
                 setTask(null);
               }}
             />

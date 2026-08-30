@@ -230,6 +230,197 @@ describe("MaskCanvas", () => {
 });
 
 describe("structured edit plan", () => {
+  it("syncs enabled cards and goal from a same-task server plan readback", async () => {
+    const apiClient = {
+      createTask: vi.fn(),
+      uploadOriginal: vi.fn(),
+      startAnalysis: vi.fn(),
+      getTask: vi.fn(),
+      savePlan: vi.fn(),
+      startGeneration: vi.fn(),
+      getDownloadUrl: vi.fn(),
+    };
+    const { rerender } = render(
+      <AnalysisPanel
+        task={makeTask()}
+        inviteToken="invite-in-memory"
+        onTaskUpdate={vi.fn()}
+        apiClient={apiClient}
+      />,
+    );
+    const serverTask = makeTask();
+    serverTask.plan = {
+      goals: ["structure_repair"],
+      preserve: [],
+      regions: serverTask.analysis[0].regions,
+      maskStrokes: [],
+      operations: [
+        {
+          kind: "skin_retouch",
+          goal: "structure_repair",
+          regionIds: ["face-1"],
+          intensity: 55,
+          enabled: true,
+        },
+      ],
+      intensity: 55,
+      integration: [],
+      validation: [],
+    };
+
+    rerender(
+      <AnalysisPanel
+        task={serverTask}
+        inviteToken="invite-in-memory"
+        onTaskUpdate={vi.fn()}
+        apiClient={apiClient}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("switch", { name: "面部处理开关" })).toBeChecked();
+      expect(screen.getByLabelText("结构修复")).toBeChecked();
+    });
+  });
+
+  it("keeps unsaved local card and goal changes when a same-task plan arrives", async () => {
+    const apiClient = {
+      createTask: vi.fn(),
+      uploadOriginal: vi.fn(),
+      startAnalysis: vi.fn(),
+      getTask: vi.fn(),
+      savePlan: vi.fn(),
+      startGeneration: vi.fn(),
+      getDownloadUrl: vi.fn(),
+    };
+    const { rerender } = render(
+      <AnalysisPanel
+        task={makeTask()}
+        inviteToken="invite-in-memory"
+        onTaskUpdate={vi.fn()}
+        apiClient={apiClient}
+      />,
+    );
+    fireEvent.click(screen.getByRole("switch", { name: "面部处理开关" }));
+    fireEvent.click(screen.getByLabelText("结构修复"));
+
+    const serverTask = makeTask();
+    serverTask.plan = {
+      goals: ["natural_retouch"],
+      preserve: [],
+      regions: [],
+      maskStrokes: [],
+      operations: [],
+      intensity: 55,
+      integration: [],
+      validation: [],
+    };
+    rerender(
+      <AnalysisPanel
+        task={serverTask}
+        inviteToken="invite-in-memory"
+        onTaskUpdate={vi.fn()}
+        apiClient={apiClient}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("switch", { name: "面部处理开关" })).toBeChecked();
+      expect(screen.getByLabelText("结构修复")).toBeChecked();
+    });
+  });
+
+  it("locks plan controls and generation after a succeeded task is remounted", async () => {
+    const startGeneration = vi.fn();
+    const task = makeTask();
+    task.status = "succeeded";
+    task.plan = {
+      goals: ["natural_retouch"],
+      preserve: [],
+      regions: task.analysis[0].regions,
+      maskStrokes: [],
+      operations: [
+        {
+          kind: "skin_retouch",
+          goal: "natural_retouch",
+          regionIds: ["face-1"],
+          intensity: 55,
+          enabled: true,
+        },
+      ],
+      intensity: 55,
+      integration: [],
+      validation: [],
+    };
+
+    render(
+      <AnalysisPanel
+        task={task}
+        inviteToken="invite-in-memory"
+        onTaskUpdate={vi.fn()}
+        apiClient={{
+          createTask: vi.fn(),
+          uploadOriginal: vi.fn(),
+          startAnalysis: vi.fn(),
+          getTask: vi.fn(),
+          savePlan: vi.fn(),
+          startGeneration,
+          getDownloadUrl: vi.fn(),
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("switch", { name: "面部处理开关" })).toBeDisabled();
+    expect(screen.getByLabelText("自然修图")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "确认并生成候选图" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "确认并生成候选图" }));
+    expect(startGeneration).not.toHaveBeenCalled();
+  });
+
+  it("clears the previous generation lock when a new task enters confirmation", async () => {
+    const completedTask = makeTask();
+    completedTask.status = "succeeded";
+    const { rerender } = render(
+      <AnalysisPanel
+        task={completedTask}
+        inviteToken="invite-in-memory"
+        onTaskUpdate={vi.fn()}
+        apiClient={{
+          createTask: vi.fn(),
+          uploadOriginal: vi.fn(),
+          startAnalysis: vi.fn(),
+          getTask: vi.fn(),
+          savePlan: vi.fn(),
+          startGeneration: vi.fn(),
+          getDownloadUrl: vi.fn(),
+        }}
+      />,
+    );
+    const freshTask = makeTask();
+    freshTask.taskId = "task-new";
+    rerender(
+      <AnalysisPanel
+        task={freshTask}
+        inviteToken="invite-in-memory"
+        onTaskUpdate={vi.fn()}
+        apiClient={{
+          createTask: vi.fn(),
+          uploadOriginal: vi.fn(),
+          startAnalysis: vi.fn(),
+          getTask: vi.fn(),
+          savePlan: vi.fn(),
+          startGeneration: vi.fn(),
+          getDownloadUrl: vi.fn(),
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("switch", { name: "面部处理开关" })).not.toBeDisabled();
+      expect(screen.getByRole("button", { name: "确认并生成候选图" })).not.toBeDisabled();
+    });
+  });
+
   it.each([
     [25, "自然"],
     [55, "标准"],

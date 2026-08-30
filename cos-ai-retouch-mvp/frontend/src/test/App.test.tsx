@@ -258,7 +258,8 @@ describe("COS retouch app", () => {
     await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
     await screen.findByRole("heading", { name: "AI 分析" });
 
-    await user.click(screen.getByRole("switch", { name: "面部处理开关" }));
+    const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
+    if (!(faceSwitch as HTMLInputElement).checked) await user.click(faceSwitch);
     await user.click(screen.getByRole("button", { name: "确认并生成候选图" }));
 
     await waitFor(() => expect(client.startGeneration).toHaveBeenCalledTimes(1));
@@ -289,7 +290,7 @@ describe("COS retouch app", () => {
     await screen.findByRole("heading", { name: "AI 分析" });
 
     const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
-    await user.click(faceSwitch);
+    if (!(faceSwitch as HTMLInputElement).checked) await user.click(faceSwitch);
     await user.click(screen.getByRole("button", { name: "确认并生成候选图" }));
     const retryButton = await screen.findByRole("button", { name: "重试生成" });
 
@@ -322,7 +323,8 @@ describe("COS retouch app", () => {
     await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
     await screen.findByRole("heading", { name: "AI 分析" });
 
-    await user.click(screen.getByRole("switch", { name: "面部处理开关" }));
+    const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
+    if (!(faceSwitch as HTMLInputElement).checked) await user.click(faceSwitch);
     await user.click(screen.getByRole("button", { name: "确认并生成候选图" }));
     const retryButton = await screen.findByRole("button", { name: "重试生成" });
     await user.click(retryButton);
