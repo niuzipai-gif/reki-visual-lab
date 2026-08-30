@@ -334,4 +334,27 @@ describe("COS retouch app", () => {
       client.startGeneration.mock.calls[1][2],
     );
   });
+
+  it("disables plan saving for a failed task that already has a plan", async () => {
+    const user = userEvent.setup();
+    const client = makeClient({
+      ...plannedTask,
+      status: "failed",
+      error: { code: "GENERATION_FAILED", message: "generation failed", retryable: true },
+    });
+    render(<App apiClient={client} />);
+
+    await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
+    await user.click(screen.getByRole("button", { name: "进入工作台" }));
+    await user.upload(
+      screen.getByLabelText("选择 JPG 或 PNG 原图"),
+      new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
+    );
+    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await screen.findByRole("heading", { name: "AI 分析" });
+
+    expect(screen.getByRole("button", { name: "保存修图计划" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "重试生成" })).toBeEnabled();
+    expect(client.savePlan).not.toHaveBeenCalled();
+  });
 });

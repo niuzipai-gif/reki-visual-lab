@@ -77,7 +77,7 @@ export default function UploadPanel({
   }, [onPreviewChange, previewUrl]);
 
   async function handleFileChange(selected: File | undefined) {
-    if (!selected) return;
+    if (!selected || busy) return;
     const replacesCreatedTask = Boolean(
       createdTask && file && isNewFileSelection(file, selected),
     );
@@ -180,6 +180,7 @@ export default function UploadPanel({
           type="file"
           accept="image/jpeg,image/png,.jpg,.jpeg,.png"
           aria-label="选择 JPG 或 PNG 原图"
+          disabled={busy}
           onChange={(event) => {
             const selected = event.target.files?.[0];
             event.currentTarget.value = "";

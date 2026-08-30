@@ -71,4 +71,53 @@ describe("UploadPanel file identity", () => {
       replaced,
     );
   });
+
+  it("keeps the selected file when a replacement is attempted during upload", async () => {
+    const user = userEvent.setup();
+    const createTask = vi.fn().mockResolvedValue(task("task-old", "uploading"));
+    let resolveUpload: (() => void) | undefined;
+    const uploadOriginal = vi.fn(() => new Promise<void>((resolve) => {
+      resolveUpload = resolve;
+    }));
+    const apiClient = {
+      createTask,
+      uploadOriginal,
+      startAnalysis: vi.fn().mockResolvedValue(undefined),
+      getTask: vi.fn().mockResolvedValue(task("task-old", "awaiting_confirmation")),
+      savePlan: vi.fn(),
+      startGeneration: vi.fn(),
+      getDownloadUrl: vi.fn(),
+    };
+    render(
+      <UploadPanel
+        inviteToken="invite-in-memory"
+        apiClient={apiClient}
+        onTaskUpdate={vi.fn()}
+      />,
+    );
+    const input = screen.getByLabelText("选择 JPG 或 PNG 原图");
+    const original = new File(["old"], "original.jpg", {
+      type: "image/jpeg",
+      lastModified: 1,
+    });
+    const replacement = new File(["new"], "replacement.jpg", {
+      type: "image/jpeg",
+      lastModified: 2,
+    });
+
+    await user.upload(input, original);
+    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await waitFor(() => expect(uploadOriginal).toHaveBeenCalledTimes(1));
+
+    expect(input).toBeDisabled();
+    fireEvent.change(input, { target: { files: [replacement] } });
+    expect(input).toBeDisabled();
+    expect(screen.getByText("original.jpg")).toBeVisible();
+    expect(createTask).toHaveBeenCalledTimes(1);
+
+    resolveUpload?.();
+    await waitFor(() => expect(apiClient.startAnalysis).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("original.jpg")).toBeVisible();
+    expect(screen.queryByText("replacement.jpg")).not.toBeInTheDocument();
+  });
 });

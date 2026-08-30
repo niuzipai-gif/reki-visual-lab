@@ -202,6 +202,10 @@ export default function AnalysisPanel({
     generationStartedByTask(task);
   const generationButtonLocked =
     task.status === "succeeded" || GENERATION_ACTIVE_STATUSES.has(task.status);
+  const planSaveLocked =
+    generationButtonLocked || (task.status === "failed" && Boolean(task.plan));
+  const generationRetryAvailable =
+    generationRetryable || (task.status === "failed" && Boolean(task.plan));
 
   useEffect(() => {
     const isNewTask = previousTaskIdRef.current !== task.taskId;
@@ -460,7 +464,7 @@ export default function AnalysisPanel({
         <button
           className="secondary-button"
           type="button"
-          disabled={busy || generationButtonLocked}
+          disabled={busy || planSaveLocked}
           onClick={() => void savePlan()}
         >
           保存修图计划
@@ -471,7 +475,7 @@ export default function AnalysisPanel({
           disabled={busy || generationButtonLocked}
           onClick={() => void handleGenerate()}
         >
-          {busy ? "处理中…" : generationRetryable ? "重试生成" : "确认并生成候选图"}
+          {busy ? "处理中…" : generationRetryAvailable ? "重试生成" : "确认并生成候选图"}
         </button>
       </div>
       {task.status === "generating" || task.status === "validating" || task.status === "succeeded" || task.status === "failed" ? (
