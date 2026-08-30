@@ -247,7 +247,13 @@ One repository transaction then writes the version row, marks the task
 `succeeded`, and marks the idempotency record `succeeded`. A retry reconciles a
 prepared or already-written version instead of allocating another candidate.
 Unsubmitted stale reservations release their candidate slot while retaining a
-retry record; a retry using the original key can still recover its durable job.
+retry record. The record remains `result_status=generating` with
+`provider_status=stale_reservation` and a null `candidate_position`; it is not
+treated as a permanent provider failure. If no other active generation
+reservation remains, the task is reopened as `failed` so a new key can pass the
+workflow gate. The original key atomically reacquires a slot before provider
+submission and can recover its durable job; if another active reservation
+remains, the task stays `generating`.
 
 Generation reserves candidate positions transactionally in the database. A
 task can have positions `0` and `1` only, so concurrent requests cannot create

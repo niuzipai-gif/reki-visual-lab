@@ -375,6 +375,7 @@ class TaskService:
                             request_hash,
                             provider_idempotency_key,
                         )
+                        task = self.get_task(parsed_id)
                     if existing.result_status is TaskStatus.SUCCEEDED:
                         if existing.version_id is not None:
                             return self._finalize_prepared_generation(

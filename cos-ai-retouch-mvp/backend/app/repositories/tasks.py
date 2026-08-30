@@ -437,6 +437,7 @@ class TaskRepository:
         ]
         if keep_key is not None:
             conditions.append(IdempotencyRow.key != keep_key)
+        now = utc_now()
         result = self.session.execute(
             update(IdempotencyRow)
             .where(*conditions)
@@ -444,9 +445,26 @@ class TaskRepository:
                 result_status=TaskStatus.GENERATING.value,
                 provider_status="stale_reservation",
                 candidate_position=None,
-                updated_at=utc_now(),
+                updated_at=now,
             )
         )
+        if result.rowcount and self.session.scalar(
+            select(IdempotencyRow.id)
+            .where(
+                IdempotencyRow.task_id == task_id,
+                IdempotencyRow.operation == "generate",
+                IdempotencyRow.result_status != TaskStatus.FAILED.value,
+                IdempotencyRow.candidate_position.is_not(None),
+            )
+            .limit(1)
+        ) is None:
+            task_row = self._task_row(task_id)
+            if task_row.status in {
+                TaskStatus.GENERATING.value,
+                TaskStatus.VALIDATING.value,
+            }:
+                task_row.status = TaskStatus.FAILED.value
+                task_row.updated_at = now
         self._commit()
         return int(result.rowcount or 0)
 
@@ -477,6 +495,11 @@ class TaskRepository:
         if existing.provider_status != "stale_reservation":
             return existing
 
+        version_ids = self.session.scalars(
+            select(VersionRow.id).where(VersionRow.task_id == task_id)
+        ).all()
+        if len(version_ids) >= 2:
+            raise CandidateLimitError("a task may have at most two candidate versions")
         occupied = set(
             self.session.scalars(
                 select(VersionRow.position).where(VersionRow.task_id == task_id)
@@ -504,7 +527,15 @@ class TaskRepository:
         row.provider_status = None
         if provider_idempotency_key is not None:
             row.provider_idempotency_key = provider_idempotency_key
-        row.updated_at = utc_now()
+        now = utc_now()
+        row.updated_at = now
+        task_row = self._task_row(task_id)
+        if task_row.status in {
+            TaskStatus.FAILED.value,
+            TaskStatus.SUCCEEDED.value,
+        }:
+            task_row.status = TaskStatus.GENERATING.value
+            task_row.updated_at = now
         self._commit()
         return self._as_idempotency(row)
 

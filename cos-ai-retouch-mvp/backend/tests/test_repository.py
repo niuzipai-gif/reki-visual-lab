@@ -666,7 +666,7 @@ def test_idempotency_key_is_rejected_by_the_database_when_reused(repository):
 def test_stale_unsubmitted_generation_reservation_can_be_reclaimed(repository):
     task = TaskRecord.new()
     repository.create_task(task)
-    first = repository.reserve_generation(
+    first = repository.reserve_generation_and_mark_task_generating(
         task.id, "abandoned-generation", "hash-abandoned", "provider-key"
     )
     row = repository.session.scalar(
@@ -689,3 +689,33 @@ def test_stale_unsubmitted_generation_reservation_can_be_reclaimed(repository):
     assert stale.result_status is TaskStatus.GENERATING
     assert stale.provider_status == "stale_reservation"
     assert stale.candidate_position is None
+    assert repository.get_task(task.id).status is TaskStatus.FAILED
+
+
+def test_reclaim_does_not_downgrade_a_task_with_another_active_reservation(
+    repository,
+):
+    task = TaskRecord.new()
+    repository.create_task(task)
+    stale = repository.reserve_generation_and_mark_task_generating(
+        task.id, "stale-generation", "hash-stale", "provider-stale"
+    )
+    active = repository.reserve_generation(
+        task.id, "active-generation", "hash-active", "provider-active"
+    )
+    stale_row = repository.session.scalar(
+        select(IdempotencyRow).where(
+            IdempotencyRow.task_id == task.id,
+            IdempotencyRow.key == "stale-generation",
+        )
+    )
+    stale_row.updated_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    repository.session.commit()
+
+    reclaimed = repository.reclaim_stale_generation_reservations(
+        task.id, datetime.now(timezone.utc) - timedelta(minutes=5)
+    )
+
+    assert reclaimed == 1
+    assert active.candidate_position != stale.candidate_position
+    assert repository.get_task(task.id).status is TaskStatus.GENERATING

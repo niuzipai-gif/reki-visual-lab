@@ -641,6 +641,57 @@ def test_same_key_recovers_after_stale_reservation_reclaim(repository, monkeypat
     assert provider.submissions == 2
 
 
+def test_reclaim_reopens_task_for_new_key_and_old_key_recovery(repository):
+    settings = Settings(invite_tokens=["invite-demo"], asset_ttl_hours=1)
+    storage = InMemoryStorageAdapter(settings)
+    provider = StableProvider()
+    service = TaskService(repository, storage, provider, settings=settings)
+    task, _signed = service.create_task(
+        "invite-demo", "cos-photo.jpg", "image/jpeg", 1200
+    )
+    service.analyze(task.id, "analysis-before-reopen")
+    plan = EditPlan.model_validate(_plan_payload())
+    service.save_plan(task.id, plan)
+    request_hash = _request_hash(service._plan_hash_payload(plan))
+    provider_key = service._provider_idempotency_key(
+        "edit", task.original_asset_url.url, plan
+    )
+    old_key = "generate-reclaimed-old"
+    old_entry = repository.reserve_generation_and_mark_task_generating(
+        task.id, old_key, request_hash, provider_key
+    )
+    accepted_job = provider.submit_edit(task.original_asset_url.url, plan)
+    assert accepted_job.job_id
+    old_row = repository.session.scalar(
+        select(IdempotencyRow).where(
+            IdempotencyRow.task_id == task.id,
+            IdempotencyRow.key == old_key,
+        )
+    )
+    old_row.updated_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    repository.session.commit()
+    repository.reclaim_stale_generation_reservations(
+        task.id, datetime.now(timezone.utc) - timedelta(minutes=5)
+    )
+    assert repository.get_task(task.id).status is TaskStatus.FAILED
+
+    new_result = service.generate(task.id, "generate-reclaimed-new")
+    old_result = service.generate(task.id, old_key)
+
+    assert new_result.status is TaskStatus.SUCCEEDED
+    assert old_result.status is TaskStatus.SUCCEEDED
+    assert len(old_result.versions) == 2
+    assert {item.position for item in (
+        repository.session.scalars(
+            select(VersionRow).where(VersionRow.task_id == task.id)
+        ).all()
+    )} == {0, 1}
+    assert provider.submissions == 2
+    assert repository.get_idempotency(
+        task.id, "generate", old_key
+    ).provider_idempotency_key == provider_key
+
+
 def test_follow_up_task_endpoints_require_header_without_leaking_existence(
     api_context,
 ):
