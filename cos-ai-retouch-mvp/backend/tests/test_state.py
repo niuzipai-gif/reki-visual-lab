@@ -56,6 +56,17 @@ def test_task_status_cannot_be_changed_by_direct_assignment():
     assert task.status is TaskStatus.UPLOADING
 
 
+def test_asset_url_kind_cannot_be_changed_after_construction():
+    asset = AssetURL(
+        kind="original",
+        url="https://assets.example.test/tasks/task-1/original.jpg",
+        expires_at=datetime(2026, 8, 30, 12, 30, tzinfo=timezone.utc),
+    )
+
+    with pytest.raises(ValidationError):
+        asset.kind = "version"
+
+
 @pytest.mark.parametrize(
     ("current", "requested"),
     [
@@ -152,6 +163,84 @@ def test_transition_table_cannot_be_mutated_at_runtime():
         transition_table[TaskStatus.CREATED] = frozenset()
 
 
+def test_edit_plan_collections_cannot_bypass_structure_repair_validation():
+    region = Region(
+        id="hands-1",
+        label="hands",
+        x=0.1,
+        y=0.2,
+        width=0.2,
+        height=0.2,
+    )
+    invalid_operation = Operation(
+        kind="structure_repair",
+        goal=Goal.STRUCTURE_REPAIR,
+        region_ids=["missing-region"],
+    )
+    plan = EditPlan()
+
+    with pytest.raises(AttributeError):
+        plan.regions.append(region)
+    with pytest.raises(AttributeError):
+        plan.operations.clear()
+    with pytest.raises(ValidationError):
+        plan.operations = (invalid_operation,)
+
+
+def test_version_validation_results_are_immutable_but_serialize_as_a_json_object():
+    asset = AssetURL(
+        kind="version",
+        url="https://assets.example.test/tasks/task-1/version-1.jpg",
+        expires_at=datetime(2026, 8, 30, 12, 30, tzinfo=timezone.utc),
+    )
+    version = VersionRecord(
+        asset_url=asset,
+        validation={"face_identity": "pass", "hands_and_costume": "review"},
+    )
+
+    with pytest.raises(TypeError):
+        version.validation["face_identity"] = "fail"
+    with pytest.raises(AttributeError):
+        version.validation.clear()
+
+    assert version.model_dump(mode="json")["validation"] == {
+        "face_identity": "pass",
+        "hands_and_costume": "review",
+    }
+
+
+def test_task_nested_models_and_collections_cannot_bypass_invariants():
+    expires_at = datetime(2026, 8, 30, 12, 30, tzinfo=timezone.utc)
+    asset = AssetURL(
+        kind="original",
+        url="https://assets.example.test/tasks/task-1/original.jpg",
+        expires_at=expires_at,
+    )
+    error = TaskError(
+        code="ANALYSIS_FAILED",
+        message="Analysis is temporarily unavailable.",
+        retryable=True,
+    )
+    task = TaskRecord(
+        original_asset_url=asset,
+        error=error,
+        plan=EditPlan(),
+    )
+
+    with pytest.raises(ValidationError):
+        task.original_asset_url.kind = "version"
+    with pytest.raises(ValidationError):
+        task.error.retryable = False
+    with pytest.raises(AttributeError):
+        task.plan.preserve.remove("face identity")
+    with pytest.raises(AttributeError):
+        task.analysis.append(
+            AnalysisCard(id="card-1", category="face", title="Face detail")
+        )
+    with pytest.raises(AttributeError):
+        task.versions.clear()
+
+
 def test_domain_models_validate_normalized_regions_and_store_task_shapes():
     region = Region(
         id="face-1",
@@ -191,9 +280,9 @@ def test_domain_models_validate_normalized_regions_and_store_task_shapes():
         validation={"face": "pass"},
     )
     task = TaskRecord.new()
-    task.analysis = [card]
+    task.set_analysis([card])
     task.plan = plan
-    task.versions.append(version)
+    task.add_version(version)
 
     assert task.analysis[0].regions[0].x == 0.25
     assert task.plan.operations[0].goal is Goal.NATURAL_RETOUCH
@@ -278,7 +367,7 @@ def test_enabled_structure_repair_operations_require_existing_regions():
             )
         ],
     )
-    assert plan.operations[0].region_ids == [region.id]
+    assert plan.operations[0].region_ids == (region.id,)
 
 
 def test_version_validation_values_are_limited_to_pass_or_review():

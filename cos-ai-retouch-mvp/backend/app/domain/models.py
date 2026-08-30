@@ -2,6 +2,8 @@
 
 from datetime import datetime, timezone
 from enum import Enum
+from collections.abc import Iterable, Mapping
+from types import MappingProxyType
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
@@ -12,6 +14,7 @@ from pydantic import (
     ConfigDict,
     Field,
     field_validator,
+    field_serializer,
     model_validator,
 )
 
@@ -51,7 +54,7 @@ class Goal(str, Enum):
 class AssetURL(BaseModel):
     """A short-lived URL for an original, mask, or generated asset."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     kind: Literal["original", "mask", "version"]
     url: str = Field(min_length=1)
@@ -61,7 +64,7 @@ class AssetURL(BaseModel):
 class TaskError(BaseModel):
     """A safe, user-facing task error without provider internals."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     code: str = Field(
         min_length=1,
@@ -75,7 +78,7 @@ class TaskError(BaseModel):
 class IdempotencyRecord(BaseModel):
     """A retry record scoped to one task operation."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     task_id: UUID
     operation: Literal["analyze", "generate"]
@@ -88,7 +91,7 @@ class IdempotencyRecord(BaseModel):
 class Region(BaseModel):
     """A normalized rectangular region selected for analysis or editing."""
 
-    model_config = ConfigDict(validate_assignment=True)
+    model_config = ConfigDict(frozen=True)
 
     id: str
     label: str
@@ -110,7 +113,7 @@ class Region(BaseModel):
 class AnalysisCard(BaseModel):
     """A user-facing analysis suggestion with optional normalized regions."""
 
-    model_config = ConfigDict(validate_assignment=True)
+    model_config = ConfigDict(frozen=True)
 
     id: str
     category: str
@@ -119,18 +122,18 @@ class AnalysisCard(BaseModel):
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     risk: str = ""
     enabled: bool = False
-    regions: list[Region] = Field(default_factory=list)
+    regions: tuple[Region, ...] = Field(default_factory=tuple)
 
 
 class Operation(BaseModel):
     """One bounded operation in an edit plan."""
 
-    model_config = ConfigDict(validate_assignment=True)
+    model_config = ConfigDict(frozen=True)
 
     id: UUID = Field(default_factory=uuid4)
     kind: str
     goal: Goal
-    region_ids: list[str] = Field(default_factory=list)
+    region_ids: tuple[str, ...] = Field(default_factory=tuple)
     intensity: int = Field(default=55, ge=0, le=100)
     enabled: bool = True
     instructions: str | None = Field(default=None, max_length=500)
@@ -152,29 +155,29 @@ _DEFAULT_PRESERVE = (
 class EditPlan(BaseModel):
     """The structured, confirmed inputs passed to an image provider."""
 
-    model_config = ConfigDict(validate_assignment=True)
+    model_config = ConfigDict(validate_assignment=True, frozen=True)
 
-    goals: list[Goal] = Field(default_factory=list)
+    goals: tuple[Goal, ...] = Field(default_factory=tuple)
     preserve: tuple[str, ...] = Field(default_factory=lambda: tuple(_DEFAULT_PRESERVE))
-    regions: list[Region] = Field(default_factory=list)
-    operations: list[Operation] = Field(default_factory=list)
+    regions: tuple[Region, ...] = Field(default_factory=tuple)
+    operations: tuple[Operation, ...] = Field(default_factory=tuple)
     intensity: int = Field(default=55, ge=0, le=100)
-    integration: list[str] = Field(
-        default_factory=lambda: [
+    integration: tuple[str, ...] = Field(
+        default_factory=lambda: (
             "original light direction",
             "perspective",
             "depth of field",
             "noise consistency",
-        ]
+        )
     )
-    validation: list[str] = Field(
-        default_factory=lambda: [
+    validation: tuple[str, ...] = Field(
+        default_factory=lambda: (
             "face identity",
             "pose and composition",
             "hands and costume",
             "background geometry",
             "lighting and noise",
-        ]
+        )
     )
     notes: str | None = Field(default=None, max_length=500)
 
@@ -209,13 +212,29 @@ class EditPlan(BaseModel):
 class VersionRecord(BaseModel):
     """A generated candidate and the checks recorded for that candidate."""
 
-    model_config = ConfigDict(validate_assignment=True)
+    model_config = ConfigDict(validate_assignment=True, frozen=True)
 
     id: UUID = Field(default_factory=uuid4)
     asset_url: AssetURL
     created_at: UTCDateTime = Field(default_factory=_utc_now)
-    validation: dict[str, Literal["pass", "review"]] = Field(default_factory=dict)
+    validation: Mapping[str, Literal["pass", "review"]] = Field(
+        default_factory=dict,
+        validate_default=True,
+    )
     selected: bool = False
+
+    @field_validator("validation", mode="after")
+    @classmethod
+    def freeze_validation(
+        cls, value: Mapping[str, Literal["pass", "review"]]
+    ) -> Mapping[str, Literal["pass", "review"]]:
+        return MappingProxyType(dict(value))
+
+    @field_serializer("validation")
+    def serialize_validation(
+        self, value: Mapping[str, Literal["pass", "review"]]
+    ) -> dict[str, Literal["pass", "review"]]:
+        return dict(value)
 
 
 class TaskRecord(BaseModel):
@@ -234,9 +253,9 @@ class TaskRecord(BaseModel):
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
     original_asset_url: AssetURL | None = None
     mask_asset_url: AssetURL | None = None
-    analysis: list[AnalysisCard] = Field(default_factory=list)
+    analysis: tuple[AnalysisCard, ...] = Field(default_factory=tuple)
     plan: EditPlan | None = None
-    versions: list[VersionRecord] = Field(default_factory=list)
+    versions: tuple[VersionRecord, ...] = Field(default_factory=tuple)
     error: TaskError | None = None
 
     @classmethod
@@ -249,6 +268,16 @@ class TaskRecord(BaseModel):
             updated_at=now,
             idempotency_key=idempotency_key,
         )
+
+    def set_analysis(self, cards: Iterable[AnalysisCard]) -> None:
+        """Replace the immutable analysis snapshot with validated cards."""
+
+        self.analysis = tuple(cards)
+
+    def add_version(self, version: VersionRecord) -> None:
+        """Append a validated version through an explicit aggregate operation."""
+
+        self.versions = (*self.versions, version)
 
     def advance(self, next_status: TaskStatus | str) -> None:
         """Move to a valid next status and refresh the record timestamp."""
