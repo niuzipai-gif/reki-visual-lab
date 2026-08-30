@@ -11,10 +11,12 @@ from pydantic import BaseModel, ConfigDict
 
 from app.domain.models import EditPlan, TaskStatus
 from app.repositories.tasks import TaskRepository
+from app.services.cleanup import cleanup_expired_assets
 from app.services.task_service import TaskService, TaskServiceError
 
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
+maintenance_router = APIRouter(prefix="/api/v1/maintenance", tags=["maintenance"])
 
 
 class CreateTaskRequest(BaseModel):
@@ -223,4 +225,24 @@ def download_task(
     }
 
 
-__all__ = ["CreateTaskRequest", "get_task_service", "router"]
+@maintenance_router.post("/cleanup")
+def cleanup_assets(
+    invite_token: str | None = Header(default=None, alias="X-Invite-Token"),
+    service: TaskService = Depends(get_task_service),
+) -> dict[str, int]:
+    _authorize(service, invite_token)
+    return {
+        "cleaned_tasks": cleanup_expired_assets(
+            service.repository,
+            service.storage,
+            ttl_hours=service.settings.asset_ttl_hours,
+        )
+    }
+
+
+__all__ = [
+    "CreateTaskRequest",
+    "get_task_service",
+    "maintenance_router",
+    "router",
+]

@@ -33,7 +33,9 @@ export default function TaskProgress({ status, error }: TaskProgressProps) {
           {error?.message || "处理失败，请稍后重试。"}
         </p>
       )}
-      {status === "expired" && <p className="muted">请重新上传原图开始新的任务。</p>}
+      {status === "expired" && (
+        <p className="muted">任务已过期，下载已失效。请重新上传原图开始新的任务。</p>
+      )}
     </section>
   );
 }

@@ -4,6 +4,7 @@ import { createIdempotencyKey, getUserSafeErrorMessage, apiClient as defaultApiC
 import type { TaskOperation, TaskView } from "../domain/task";
 import AnalysisPanel from "../components/AnalysisPanel";
 import InviteGate from "../components/InviteGate";
+import ResultPanel from "../components/ResultPanel";
 import TaskProgress from "../components/TaskProgress";
 import UploadPanel, { type PreviewChangeHandler } from "../components/UploadPanel";
 
@@ -83,8 +84,10 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
       (task.status === "awaiting_confirmation" ||
         task.status === "generating" ||
         task.status === "validating" ||
-        task.status === "succeeded" ||
         (task.status === "failed" && Boolean(task.plan))),
+  );
+  const showResult = Boolean(
+    task && task.taskId !== "local-upload" && task.status === "succeeded",
   );
 
   return (
@@ -98,7 +101,7 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
       </header>
       <div className="workflow-layout">
         <div className="workflow-main">
-          {!showAnalysis && (
+          {!showAnalysis && !showResult && (
             <UploadPanel
               inviteToken={inviteToken}
               apiClient={apiClient}
@@ -125,6 +128,29 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
               previewUrl={previewUrl ?? task.originalAssetUrl?.url ?? null}
             />
           )}
+          {showResult && task && (
+            <ResultPanel
+              task={task}
+              originalUrl={previewUrl ?? task.originalAssetUrl?.url ?? ""}
+              inviteToken={inviteToken}
+              apiClient={apiClient}
+              createGenerationKey={createIdempotencyKey}
+              onTaskUpdate={handleTaskUpdate}
+              onRestoreOriginal={() => {
+                setTask((current) =>
+                  current
+                    ? {
+                        ...current,
+                        versions: current.versions.map((version) => ({
+                          ...version,
+                          selected: false,
+                        })),
+                      }
+                    : current,
+                );
+              }}
+            />
+          )}
         </div>
         <aside className="workflow-aside">
           <div className="aside-card">
@@ -138,6 +164,9 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
           </div>
           {task?.status === "failed" && task.taskId !== "local-upload" && (
             <TaskProgress status={task.status} error={task.error} />
+          )}
+          {task?.status === "expired" && task.taskId !== "local-upload" && (
+            <TaskProgress status={task.status} />
           )}
         </aside>
       </div>

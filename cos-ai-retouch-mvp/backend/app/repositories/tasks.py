@@ -1129,3 +1129,42 @@ class TaskRepository:
         )
         self._commit()
         return int(result.rowcount or 0)
+
+    def list_tasks_before(self, cutoff: datetime) -> list[TaskRecord]:
+        """Return non-expired task aggregates before an expiry cutoff."""
+
+        cutoff = _require_utc(cutoff)
+        task_ids = self.session.scalars(
+            select(TaskRow.id).where(
+                TaskRow.status != TaskStatus.EXPIRED.value,
+                TaskRow.created_at < cutoff,
+            )
+        ).all()
+        return [
+            task for task_id in task_ids if (task := self.get_task(task_id)) is not None
+        ]
+
+    def clear_expired_assets(self, task_id: UUID) -> None:
+        """Expire a task and remove every persisted asset/download reference."""
+
+        task_row = self._task_row(task_id)
+        task_row.status = TaskStatus.EXPIRED.value
+        task_row.original_asset_url = None
+        task_row.mask_asset_url = None
+        task_row.error = None
+        task_row.updated_at = utc_now()
+        self.session.execute(delete(AssetRow).where(AssetRow.task_id == task_id))
+        self.session.execute(delete(VersionRow).where(VersionRow.task_id == task_id))
+        self.session.execute(
+            update(IdempotencyRow)
+            .where(IdempotencyRow.task_id == task_id)
+            .values(
+                result_status=TaskStatus.EXPIRED.value,
+                provider_status="expired",
+                candidate_position=None,
+                version_id=None,
+                result_asset_url=None,
+                updated_at=task_row.updated_at,
+            )
+        )
+        self._commit()

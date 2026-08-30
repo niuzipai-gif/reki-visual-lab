@@ -195,6 +195,19 @@ class LateFailureProvider:
         )
 
 
+class FixedValidationAdapter:
+    def validate(self, *, result: ProviderResult, plan: EditPlan):
+        assert result.metadata["provider"] == "mock"
+        assert plan.operations
+        return {
+            "face_identity": "review",
+            "pose_and_composition": "review",
+            "hands_and_costume": "pass",
+            "background_geometry": "review",
+            "lighting_and_noise": "pass",
+        }
+
+
 INVITE_HEADERS = {"X-Invite-Token": "invite-demo"}
 
 
@@ -402,6 +415,77 @@ def test_plan_and_generate_enforce_confirmation_and_enabled_operation(api_contex
     assert generated.json()["status"] == "succeeded"
     assert len(generated.json()["versions"]) == 1
     assert provider.edit_submissions == 1
+
+
+def test_mock_generation_returns_deterministic_validation_checks(api_context):
+    client, repository, _storage, _provider = api_context
+    task_id = _prepare_confirmation(client)
+    saved = client.post(
+        f"/api/v1/tasks/{task_id}/plan",
+        json=_plan_payload(),
+        headers=INVITE_HEADERS,
+    )
+    assert saved.status_code == 200
+
+    generated = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-validation"}),
+    )
+
+    assert generated.status_code == 200
+    assert generated.json()["status"] == "succeeded"
+    assert generated.json()["versions"][0]["validation"] == {
+        "face_identity": "pass",
+        "pose_and_composition": "pass",
+        "hands_and_costume": "review",
+        "background_geometry": "pass",
+        "lighting_and_noise": "review",
+    }
+    stored = repository.get_task(UUID(task_id))
+    assert stored is not None
+    assert (
+        stored.versions[0].validation == generated.json()["versions"][0]["validation"]
+    )
+
+
+def test_generation_accepts_a_replacement_validation_adapter(repository):
+    from app.main import create_app
+
+    settings = Settings(
+        invite_tokens=["invite-demo"],
+        max_upload_bytes=1024 * 1024,
+        asset_ttl_hours=1,
+    )
+    storage = InMemoryStorageAdapter(settings)
+    provider = CountingProvider(settings)
+    app = create_app(
+        settings=settings,
+        repository=repository,
+        storage=storage,
+        provider=provider,
+        validation_adapter=FixedValidationAdapter(),
+    )
+    with TestClient(app) as client:
+        task_id = _prepare_confirmation(client)
+        saved = client.post(
+            f"/api/v1/tasks/{task_id}/plan",
+            json=_plan_payload(),
+            headers=INVITE_HEADERS,
+        )
+        assert saved.status_code == 200
+        generated = client.post(
+            f"/api/v1/tasks/{task_id}/generate",
+            headers=_authenticated_headers(**{"Idempotency-Key": "generate-adapter"}),
+        )
+
+    assert generated.status_code == 200
+    assert generated.json()["versions"][0]["validation"] == {
+        "face_identity": "review",
+        "pose_and_composition": "review",
+        "hands_and_costume": "pass",
+        "background_geometry": "review",
+        "lighting_and_noise": "pass",
+    }
 
 
 def test_save_plan_persists_and_returns_mask_strokes(api_context):
@@ -1338,6 +1422,7 @@ def test_provider_failure_is_safe_and_never_returns_raw_upstream_body(api_contex
 
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "PROVIDER_ERROR"
+    assert response.json()["error"]["retryable"] is True
     assert "server-only-secret" not in response.text
     assert "upstream body" not in response.text
 

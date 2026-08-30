@@ -9,7 +9,8 @@ import os
 import secrets
 import time
 from threading import RLock
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID, uuid4
 
@@ -37,18 +38,56 @@ from app.repositories.tasks import (
 from app.services.image_provider import (
     ImageModelProvider,
     ProviderError,
+    ProviderResult,
 )
+from app.services.cleanup import cleanup_expired_assets
 from app.services.storage import SignedAsset, StorageAdapter, StorageError
+
+
+ValidationValue = Literal["pass", "review"]
+ValidationChecks = dict[str, ValidationValue]
+
+
+class ValidationAdapter(Protocol):
+    def validate(
+        self, *, result: ProviderResult, plan: EditPlan
+    ) -> Mapping[str, ValidationValue]: ...
+
+
+class MetadataValidationAdapter:
+    """Deterministic first-pass validator, replaceable by a vision adapter."""
+
+    def validate(
+        self, *, result: ProviderResult, plan: EditPlan
+    ) -> Mapping[str, ValidationValue]:
+        del plan
+        if result.metadata.get("provider") == "mock" and result.metadata.get("demo"):
+            return {
+                "face_identity": "pass",
+                "pose_and_composition": "pass",
+                "hands_and_costume": "review",
+                "background_geometry": "pass",
+                "lighting_and_noise": "review",
+            }
+        return dict(_VALIDATION_RESULT)
 
 
 class TaskServiceError(RuntimeError):
     """A safe error that can be translated into the public API error shape."""
 
-    def __init__(self, code: str, message: str, *, status_code: int = 400):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status_code: int = 400,
+        retryable: bool = False,
+    ):
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.retryable = retryable
 
 
 _ALLOWED_CONTENT_TYPES = frozenset({"image/jpeg", "image/png"})
@@ -99,10 +138,12 @@ class TaskService:
         poll_delay_seconds: float | None = None,
         poll_backoff_factor: float = 1.0,
         retry_after_seconds: int | None = None,
+        validation_adapter: ValidationAdapter | None = None,
     ) -> None:
         self.repository = repository
         self.storage = storage
         self.provider = provider
+        self.validation_adapter = validation_adapter or MetadataValidationAdapter()
         self.settings = settings or get_settings()
         self.poll_delay_seconds = max(
             0.0,
@@ -133,6 +174,11 @@ class TaskService:
     ) -> tuple[TaskRecord, SignedAsset]:
         self._authorize(invite_token)
         self._validate_file(filename, content_type, byte_size)
+        cleanup_expired_assets(
+            self.repository,
+            self.storage,
+            ttl_hours=self.settings.asset_ttl_hours,
+        )
 
         task = TaskRecord.new()
         try:
@@ -627,6 +673,7 @@ class TaskService:
                 raise self._provider_failure(None)
 
             try:
+                validation = self._validation_checks(result, task.plan)
                 if task.status is TaskStatus.GENERATING:
                     self._advance(task, TaskStatus.VALIDATING)
                     self._persist_task(task)
@@ -656,7 +703,12 @@ class TaskService:
                     reservation_generation=reservation_generation,
                 )
                 raise
-            return self._finalize_prepared_generation(task, entry, entry.request_hash)
+            return self._finalize_prepared_generation(
+                task,
+                entry,
+                entry.request_hash,
+                validation=validation,
+            )
         return self.get_task(task.id)
 
     def _finalize_prepared_generation(
@@ -664,22 +716,26 @@ class TaskService:
         task: TaskRecord,
         entry: IdempotencyEntry,
         request_hash: str,
+        *,
+        validation: Mapping[str, ValidationValue] | None = None,
     ) -> TaskRecord:
         """Reconcile a prepared result through the repository atomic method."""
 
         result_asset = entry.result_asset_url
+        recovered_validation: Mapping[str, ValidationValue] | None = None
         if result_asset is None and entry.version_id is not None:
             recovered = self.repository.get_version(
                 task.id, version_id=entry.version_id
             )
             if recovered is not None:
                 result_asset = recovered.asset_url
+                recovered_validation = recovered.validation
         if entry.version_id is None or result_asset is None:
             return self.get_task(task.id)
         version = VersionRecord(
             id=entry.version_id,
             asset_url=result_asset,
-            validation=dict(_VALIDATION_RESULT),
+            validation=dict(validation or recovered_validation or _VALIDATION_RESULT),
         )
         try:
             self.repository.finalize_generation(
@@ -985,7 +1041,28 @@ class TaskService:
             "PROVIDER_ERROR",
             "图像服务暂时不可用，请稍后重试。",
             status_code=502,
+            retryable=True,
         )
+
+    def _validation_checks(
+        self, result: ProviderResult, plan: EditPlan | None
+    ) -> ValidationChecks:
+        if plan is None:
+            raise ProviderError(
+                "validation requires an edit plan",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            )
+        checks = self.validation_adapter.validate(result=result, plan=plan)
+        if set(checks) != set(_VALIDATION_RESULT) or any(
+            value not in {"pass", "review"} for value in checks.values()
+        ):
+            raise ProviderError(
+                "validation adapter returned an invalid result",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            )
+        return {key: checks[key] for key in _VALIDATION_RESULT}
 
     @staticmethod
     def _require_safe_url(url: Any) -> None:
@@ -1070,4 +1147,9 @@ class TaskService:
             save_task(task)
 
 
-__all__ = ["TaskService", "TaskServiceError"]
+__all__ = [
+    "MetadataValidationAdapter",
+    "TaskService",
+    "TaskServiceError",
+    "ValidationAdapter",
+]

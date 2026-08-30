@@ -15,13 +15,17 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import sessionmaker
 
-from app.api.routes_tasks import router as tasks_router
+from app.api.routes_tasks import maintenance_router, router as tasks_router
 from app.config import Settings, get_settings
 from app.db import create_db_engine
 from app.repositories.tasks import TaskRepository
 from app.services.image_provider import create_image_provider
 from app.services.storage import InMemoryStorageAdapter, S3StorageAdapter
-from app.services.task_service import TaskService, TaskServiceError
+from app.services.task_service import (
+    TaskService,
+    TaskServiceError,
+    ValidationAdapter,
+)
 
 
 def _safe_error(code: str, message: str, status_code: int) -> JSONResponse:
@@ -94,6 +98,7 @@ def create_app(
     storage: Any = None,
     provider: Any = None,
     session_factory: sessionmaker | None = None,
+    validation_adapter: ValidationAdapter | None = None,
 ) -> FastAPI:
     """Build an app with injectable adapters and request-scoped DB services."""
 
@@ -139,6 +144,7 @@ def create_app(
             storage,
             provider,
             settings=resolved,
+            validation_adapter=validation_adapter,
         )
 
     app.add_middleware(
@@ -153,7 +159,10 @@ def create_app(
     async def handle_task_service_error(
         _request: Request, exc: TaskServiceError
     ) -> JSONResponse:
-        return _safe_error(exc.code, exc.message, exc.status_code)
+        response = {"error": {"code": exc.code, "message": exc.message}}
+        if exc.retryable:
+            response["error"]["retryable"] = True
+        return JSONResponse(status_code=exc.status_code, content=response)
 
     @app.exception_handler(RequestValidationError)
     async def handle_request_validation_error(
@@ -166,6 +175,7 @@ def create_app(
         return {"status": "ok"}
 
     app.include_router(tasks_router)
+    app.include_router(maintenance_router)
     return app
 
 
