@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -59,8 +59,11 @@ class IdempotencyEntry:
     created_at: datetime
     updated_at: datetime
     provider_job_id: str | None = None
+    provider_idempotency_key: str | None = None
     provider_status: str | None = None
     candidate_position: int | None = None
+    version_id: UUID | None = None
+    result_asset_url: AssetURL | None = None
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -94,6 +97,15 @@ class TaskRepository:
         if row is None:
             raise ValueError(f"Task {task_id} does not exist")
         return row
+
+    def _commit(self) -> None:
+        """Commit a unit of work and always clear a failed transaction."""
+
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
 
     def _ensure_asset(self, task_id: UUID, asset: AssetURL) -> None:
         asset_payload = _payload(asset)
@@ -162,12 +174,19 @@ class TaskRepository:
             ),
             error=_payload(validated.error) if validated.error is not None else None,
         )
-        self.session.add(row)
-        for asset in (validated.original_asset_url, validated.mask_asset_url):
-            if asset is not None:
-                self._ensure_asset(validated.id, asset)
-        self._save_initial_children(validated)
-        self.session.commit()
+        try:
+            self.session.add(row)
+            # SQLite enforces FK order during flush; make the parent visible
+            # before adding initial asset rows while keeping create atomic.
+            self.session.flush()
+            for asset in (validated.original_asset_url, validated.mask_asset_url):
+                if asset is not None:
+                    self._ensure_asset(validated.id, asset)
+            self._save_initial_children(validated)
+            self._commit()
+        except Exception:
+            self.session.rollback()
+            raise
         return validated
 
     def get_task(self, task_id: UUID) -> TaskRecord | None:
@@ -215,8 +234,15 @@ class TaskRepository:
             created_at=_as_utc(row.created_at),
             updated_at=_as_utc(row.updated_at),
             provider_job_id=row.provider_job_id,
+            provider_idempotency_key=row.provider_idempotency_key,
             provider_status=row.provider_status,
             candidate_position=row.candidate_position,
+            version_id=row.version_id,
+            result_asset_url=(
+                AssetURL.model_validate(row.result_asset_url)
+                if row.result_asset_url is not None
+                else None
+            ),
         )
 
     def get_idempotency(
@@ -244,8 +270,11 @@ class TaskRepository:
         result_status: TaskStatus,
         *,
         provider_job_id: str | None = None,
+        provider_idempotency_key: str | None = None,
         provider_status: str | None = None,
         candidate_position: int | None = None,
+        version_id: UUID | None = None,
+        result_asset_url: AssetURL | None = None,
     ) -> IdempotencyEntry:
         """Create or safely recover one durable operation record."""
 
@@ -262,14 +291,19 @@ class TaskRepository:
             request_hash=request_hash,
             result_status=result_status.value,
             provider_job_id=provider_job_id,
+            provider_idempotency_key=provider_idempotency_key,
             provider_status=provider_status,
             candidate_position=candidate_position,
+            version_id=version_id,
+            result_asset_url=(
+                _payload(result_asset_url) if result_asset_url is not None else None
+            ),
             created_at=now,
             updated_at=now,
         )
         self.session.add(row)
         try:
-            self.session.commit()
+            self._commit()
         except IntegrityError:
             self.session.rollback()
             existing = self.get_idempotency(task_id, operation, key)
@@ -286,6 +320,9 @@ class TaskRepository:
         task_id: UUID,
         key: str,
         request_hash: str,
+        provider_idempotency_key: str | None = None,
+        *,
+        mark_task_generating: bool = False,
     ) -> IdempotencyEntry:
         """Reserve one of two candidate slots in the same transaction.
 
@@ -298,7 +335,23 @@ class TaskRepository:
             existing = self.get_idempotency(task_id, "generate", key)
             if existing is not None:
                 self._require_idempotency_hash(existing, request_hash)
+                if mark_task_generating:
+                    task_row = self._task_row(task_id)
+                    if task_row.status in {
+                        TaskStatus.AWAITING_CONFIRMATION.value,
+                        TaskStatus.FAILED.value,
+                    }:
+                        task_row.status = TaskStatus.GENERATING.value
+                        task_row.updated_at = utc_now()
+                        self._commit()
                 return existing
+            self.reclaim_stale_generation_reservations(
+                task_id,
+                utc_now().replace(microsecond=0),
+                keep_key=key,
+                max_age_seconds=300,
+            )
+            task_row = self._task_row(task_id)
             occupied_versions = set(
                 self.session.scalars(
                     select(VersionRow.position).where(
@@ -338,13 +391,17 @@ class TaskRepository:
                 key=key,
                 request_hash=request_hash,
                 result_status=TaskStatus.GENERATING.value,
+                provider_idempotency_key=provider_idempotency_key,
                 candidate_position=position,
                 created_at=now,
                 updated_at=now,
             )
+            if mark_task_generating:
+                task_row.status = TaskStatus.GENERATING.value
+                task_row.updated_at = now
             self.session.add(row)
             try:
-                self.session.commit()
+                self._commit()
             except IntegrityError:
                 self.session.rollback()
                 existing = self.get_idempotency(task_id, "generate", key)
@@ -358,6 +415,57 @@ class TaskRepository:
 
         raise CandidateLimitError("a task may have at most two candidate versions")
 
+    def reclaim_stale_generation_reservations(
+        self,
+        task_id: UUID,
+        cutoff: datetime,
+        *,
+        keep_key: str | None = None,
+        max_age_seconds: int | None = None,
+    ) -> int:
+        """Release abandoned pre-submit slots without deleting retry records."""
+
+        cutoff = _require_utc(cutoff)
+        if max_age_seconds is not None:
+            cutoff = utc_now() - timedelta(seconds=max_age_seconds)
+        conditions = [
+            IdempotencyRow.task_id == task_id,
+            IdempotencyRow.operation == "generate",
+            IdempotencyRow.result_status == TaskStatus.GENERATING.value,
+            IdempotencyRow.provider_job_id.is_(None),
+            IdempotencyRow.updated_at < cutoff,
+        ]
+        if keep_key is not None:
+            conditions.append(IdempotencyRow.key != keep_key)
+        result = self.session.execute(
+            update(IdempotencyRow)
+            .where(*conditions)
+            .values(
+                result_status=TaskStatus.FAILED.value,
+                candidate_position=None,
+                updated_at=utc_now(),
+            )
+        )
+        self._commit()
+        return int(result.rowcount or 0)
+
+    def reserve_generation_and_mark_task_generating(
+        self,
+        task_id: UUID,
+        key: str,
+        request_hash: str,
+        provider_idempotency_key: str | None = None,
+    ) -> IdempotencyEntry:
+        """Reserve a candidate slot and persist ``generating`` atomically."""
+
+        return self.reserve_generation(
+            task_id,
+            key,
+            request_hash,
+            provider_idempotency_key,
+            mark_task_generating=True,
+        )
+
     def update_idempotency(
         self,
         task_id: UUID,
@@ -367,8 +475,11 @@ class TaskRepository:
         request_hash: str | None = None,
         result_status: TaskStatus | None = None,
         provider_job_id: str | None | object = _UNSET,
+        provider_idempotency_key: str | None | object = _UNSET,
         provider_status: str | None | object = _UNSET,
         candidate_position: int | None | object = _UNSET,
+        version_id: UUID | None | object = _UNSET,
+        result_asset_url: AssetURL | None | object = _UNSET,
     ) -> IdempotencyEntry:
         """Update provider progress and final state durably."""
 
@@ -390,19 +501,173 @@ class TaskRepository:
             row.result_status = result_status.value
         if provider_job_id is not _UNSET:
             row.provider_job_id = provider_job_id  # type: ignore[assignment]
+        if provider_idempotency_key is not _UNSET:
+            row.provider_idempotency_key = provider_idempotency_key  # type: ignore[assignment]
         if provider_status is not _UNSET:
             row.provider_status = provider_status  # type: ignore[assignment]
         if candidate_position is not _UNSET:
             row.candidate_position = candidate_position  # type: ignore[assignment]
+        if version_id is not _UNSET:
+            row.version_id = version_id  # type: ignore[assignment]
+        if result_asset_url is not _UNSET:
+            row.result_asset_url = (
+                _payload(result_asset_url)
+                if result_asset_url is not None
+                else None
+            )
         row.updated_at = utc_now()
         try:
-            self.session.commit()
+            self._commit()
         except IntegrityError:
             self.session.rollback()
             raise
         return self._as_idempotency(row)
 
     update_idempotency_record = update_idempotency
+
+    def get_version(
+        self,
+        task_id: UUID,
+        *,
+        version_id: UUID | None = None,
+        position: int | None = None,
+    ) -> VersionRecord | None:
+        """Read a candidate used to reconcile an interrupted generation."""
+
+        if version_id is None and position is None:
+            raise ValueError("version_id or position is required")
+        query = select(VersionRow).where(VersionRow.task_id == task_id)
+        if version_id is not None:
+            query = query.where(VersionRow.id == version_id)
+        else:
+            query = query.where(VersionRow.position == position)
+        row = self.session.scalar(query)
+        return VersionRecord.model_validate(row.payload) if row is not None else None
+
+    def prepare_generation_result(
+        self,
+        task_id: UUID,
+        key: str,
+        request_hash: str,
+        version_id: UUID,
+        result_asset_url: AssetURL,
+        *,
+        provider_status: str = "succeeded",
+    ) -> IdempotencyEntry:
+        """Durably record the chosen version UUID before final DB commit."""
+
+        row = self.session.scalar(
+            select(IdempotencyRow)
+            .where(
+                IdempotencyRow.task_id == task_id,
+                IdempotencyRow.operation == "generate",
+                IdempotencyRow.key == key,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise ValueError("idempotency record does not exist")
+        existing = self._as_idempotency(row)
+        self._require_idempotency_hash(existing, request_hash)
+        if existing.version_id is not None and existing.version_id != version_id:
+            raise VersionConflictError("generation version UUID differs on retry")
+        if (
+            existing.result_asset_url is not None
+            and existing.result_asset_url != result_asset_url
+        ):
+            raise VersionConflictError("generation result asset differs on retry")
+        row.version_id = version_id
+        row.result_asset_url = _payload(result_asset_url)
+        row.result_status = TaskStatus.VALIDATING.value
+        row.provider_status = provider_status
+        row.updated_at = utc_now()
+        self._commit()
+        return self._as_idempotency(row)
+
+    def finalize_generation(
+        self,
+        task_id: UUID,
+        key: str,
+        request_hash: str,
+        version: VersionRecord,
+        *,
+        position: int | None,
+    ) -> IdempotencyEntry:
+        """Atomically write version, task success, and idempotency final state."""
+
+        validated = VersionRecord.model_validate(version)
+        row = self.session.scalar(
+            select(IdempotencyRow)
+            .where(
+                IdempotencyRow.task_id == task_id,
+                IdempotencyRow.operation == "generate",
+                IdempotencyRow.key == key,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise ValueError("idempotency record does not exist")
+        existing = self._as_idempotency(row)
+        self._require_idempotency_hash(existing, request_hash)
+        if existing.version_id is not None and existing.version_id != validated.id:
+            raise VersionConflictError("generation version UUID differs on retry")
+        if (
+            existing.result_asset_url is not None
+            and existing.result_asset_url != validated.asset_url
+        ):
+            raise VersionConflictError("generation result asset differs on retry")
+
+        task_row = self._task_row(task_id)
+        stored = self.session.get(VersionRow, validated.id)
+        if stored is not None:
+            if stored.task_id != task_id:
+                raise VersionConflictError("version belongs to another task")
+            stored_version = VersionRecord.model_validate(stored.payload)
+            if stored_version.asset_url != validated.asset_url:
+                raise VersionConflictError("existing version asset differs on retry")
+            actual_position = stored.position
+        else:
+            occupied = {
+                int(item)
+                for item in self.session.scalars(
+                    select(VersionRow.position).where(VersionRow.task_id == task_id)
+                ).all()
+            }
+            actual_position = (
+                existing.candidate_position
+                if existing.candidate_position is not None
+                else position
+            )
+            if actual_position is None:
+                actual_position = next(
+                    (candidate for candidate in range(2) if candidate not in occupied),
+                    None,
+                )
+            if actual_position not in (0, 1) or actual_position in occupied:
+                raise CandidateLimitError(
+                    "a task may have at most two candidate versions"
+                )
+            self._ensure_asset(task_id, validated.asset_url)
+            self.session.add(
+                VersionRow(
+                    id=validated.id,
+                    task_id=task_id,
+                    position=actual_position,
+                    payload=_payload(validated),
+                )
+            )
+
+        row.version_id = validated.id
+        row.result_asset_url = _payload(validated.asset_url)
+        row.result_status = TaskStatus.SUCCEEDED.value
+        row.provider_status = "succeeded"
+        row.candidate_position = None
+        row.updated_at = utc_now()
+        task_row.status = TaskStatus.SUCCEEDED.value
+        task_row.error = None
+        task_row.updated_at = row.updated_at
+        self._commit()
+        return self._as_idempotency(row)
 
     @staticmethod
     def _require_idempotency_hash(
@@ -427,7 +692,7 @@ class TaskRepository:
                 )
             )
         task_row.updated_at = utc_now()
-        self.session.commit()
+        self._commit()
 
     def save_plan(self, task_id: UUID, plan: EditPlan) -> None:
         task_row = self._task_row(task_id)
@@ -437,7 +702,7 @@ class TaskRepository:
             EditPlanRow(task_id=task_id, payload=_payload(validated_plan))
         )
         task_row.updated_at = utc_now()
-        self.session.commit()
+        self._commit()
 
     def add_version(
         self, task_id: UUID, version: VersionRecord, *, position: int | None = None
@@ -461,9 +726,8 @@ class TaskRepository:
             self._ensure_asset(task_id, validated_version.asset_url)
             task_row.updated_at = utc_now()
             try:
-                self.session.commit()
+                self._commit()
             except IntegrityError as error:
-                self.session.rollback()
                 self._retry_existing_version(task_id, validated_version, error)
             return
 
@@ -493,7 +757,7 @@ class TaskRepository:
         )
         task_row.updated_at = utc_now()
         try:
-            self.session.commit()
+            self._commit()
         except IntegrityError as error:
             self.session.rollback()
             if "uq_versions_task_position" in str(error.orig) or (
@@ -539,7 +803,7 @@ class TaskRepository:
         task_row = self._task_row(task_id)
         task_row.updated_at = utc_now()
         try:
-            self.session.commit()
+            self._commit()
         except IntegrityError as retry_failure:
             self.session.rollback()
             raise retry_failure
@@ -554,5 +818,5 @@ class TaskRepository:
             )
             .values(status=TaskStatus.EXPIRED.value, updated_at=utc_now())
         )
-        self.session.commit()
+        self._commit()
         return int(result.rowcount or 0)

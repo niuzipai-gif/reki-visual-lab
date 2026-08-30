@@ -5,11 +5,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
+import os
 import secrets
+import time
 from threading import RLock
 from typing import Any
-from urllib.parse import urlsplit
-from uuid import UUID
+from urllib.parse import urlsplit, urlunsplit
+from uuid import UUID, uuid4
 
 from pydantic import ValidationError
 
@@ -91,11 +93,32 @@ class TaskService:
         storage: StorageAdapter,
         provider: ImageModelProvider,
         settings: Settings | None = None,
+        *,
+        poll_delay_seconds: float | None = None,
+        poll_backoff_factor: float = 1.0,
+        retry_after_seconds: int | None = None,
     ) -> None:
         self.repository = repository
         self.storage = storage
         self.provider = provider
         self.settings = settings or get_settings()
+        self.poll_delay_seconds = max(
+            0.0,
+            float(
+                os.getenv("COS_PROVIDER_POLL_DELAY_SECONDS", "0")
+                if poll_delay_seconds is None
+                else poll_delay_seconds
+            ),
+        )
+        self.poll_backoff_factor = max(1.0, float(poll_backoff_factor))
+        self.retry_after_seconds = max(
+            0,
+            int(
+                os.getenv("COS_PROVIDER_RETRY_AFTER_SECONDS", "1")
+                if retry_after_seconds is None
+                else retry_after_seconds
+            ),
+        )
         self._version_keys: dict[tuple[UUID, UUID], str] = {}
         self._lock = RLock()
 
@@ -139,6 +162,11 @@ class TaskService:
             raise TaskServiceError("NOT_FOUND", "任务不存在。", status_code=404)
         return task
 
+    def authorize_request(self, invite_token: Any) -> None:
+        """Authorize a non-create request before any task lookup."""
+
+        self._authorize(invite_token)
+
     def analyze(self, task_id: UUID | str, idempotency_key: Any) -> TaskRecord:
         parsed_id = self._parse_task_id(task_id)
         key = self._validate_idempotency_key(idempotency_key)
@@ -181,6 +209,9 @@ class TaskService:
                         key,
                         request_hash,
                         TaskStatus.ANALYZING,
+                        provider_idempotency_key=self._provider_idempotency_key(
+                            "analysis", task.original_asset_url.url
+                        ),
                     )
 
                 if existing.provider_job_id is None:
@@ -192,6 +223,12 @@ class TaskService:
                         key,
                         request_hash=request_hash,
                         provider_job_id=provider_job_id,
+                        provider_idempotency_key=(
+                            existing.provider_idempotency_key
+                            or self._provider_idempotency_key(
+                                "analysis", task.original_asset_url.url
+                            )
+                        ),
                         provider_status=self._provider_status(job),
                         result_status=TaskStatus.ANALYZING,
                     )
@@ -223,6 +260,7 @@ class TaskService:
         if entry.provider_job_id is None:
             return task
         for _attempt in range(self.MAX_POLL_ATTEMPTS):
+            self._sleep_before_poll(_attempt)
             result = self.provider.poll(entry.provider_job_id)
             provider_status = self._result_status(result)
             entry = self.repository.update_idempotency(
@@ -314,6 +352,9 @@ class TaskService:
                 "处理计划至少需要一个已启用的操作。",
             )
         request_hash = _request_hash(self._plan_hash_payload(plan))
+        provider_idempotency_key = self._provider_idempotency_key(
+            "edit", task.original_asset_url.url if task.original_asset_url else "", plan
+        )
 
         with self._lock:
             try:
@@ -325,6 +366,10 @@ class TaskService:
                     if existing.result_status is TaskStatus.FAILED:
                         raise self._provider_failure(None)
                     if existing.result_status is TaskStatus.SUCCEEDED:
+                        if existing.version_id is not None:
+                            return self._finalize_prepared_generation(
+                                task, existing, request_hash
+                            )
                         return self.get_task(parsed_id)
                 else:
                     self._require_status(
@@ -337,10 +382,28 @@ class TaskService:
                             "原图尚未准备好生成。",
                             status_code=409,
                         )
-                    existing = self.repository.reserve_generation(
-                        parsed_id, key, request_hash
+                    self._advance(task, TaskStatus.GENERATING)
+                    existing = self.repository.reserve_generation_and_mark_task_generating(
+                        parsed_id,
+                        key,
+                        request_hash,
+                        provider_idempotency_key,
                     )
-                    if task.status is not TaskStatus.GENERATING:
+
+                # A prior worker may have durably prepared the version UUID
+                # before crashing. Complete that record without polling or
+                # allocating a second candidate.
+                if existing.version_id is not None:
+                    return self._finalize_prepared_generation(
+                        task, existing, request_hash
+                    )
+
+                if task.status is not TaskStatus.GENERATING:
+                    if task.status is TaskStatus.VALIDATING:
+                        # A legacy/interrupted worker may have persisted the
+                        # validating state before the idempotency update.
+                        pass
+                    else:
                         self._advance(task, TaskStatus.GENERATING)
                         self._persist_task(task)
 
@@ -353,6 +416,10 @@ class TaskService:
                         key,
                         request_hash=request_hash,
                         provider_job_id=provider_job_id,
+                        provider_idempotency_key=(
+                            existing.provider_idempotency_key
+                            or provider_idempotency_key
+                        ),
                         provider_status=self._provider_status(job),
                         result_status=TaskStatus.GENERATING,
                     )
@@ -389,9 +456,35 @@ class TaskService:
         task: TaskRecord,
         entry: IdempotencyEntry,
     ) -> TaskRecord:
+        # Reconcile a legacy crash window where the version row was committed
+        # before the idempotency record received its recovery fields.
+        if entry.version_id is None and entry.candidate_position is not None:
+            stored_version = self.repository.get_version(
+                task.id, position=entry.candidate_position
+            )
+            if stored_version is not None:
+                if task.status is TaskStatus.GENERATING:
+                    self._advance(task, TaskStatus.VALIDATING)
+                    self._persist_task(task)
+                entry = self.repository.prepare_generation_result(
+                    task.id,
+                    entry.key,
+                    entry.request_hash,
+                    stored_version.id,
+                    stored_version.asset_url,
+                    provider_status="succeeded",
+                )
+                return self._finalize_prepared_generation(
+                    task, entry, entry.request_hash
+                )
+        if entry.version_id is not None:
+            return self._finalize_prepared_generation(
+                task, entry, entry.request_hash
+            )
         if entry.provider_job_id is None:
             return task
         for _attempt in range(self.MAX_POLL_ATTEMPTS):
+            self._sleep_before_poll(_attempt)
             result = self.provider.poll(entry.provider_job_id)
             provider_status = self._result_status(result)
             entry = self.repository.update_idempotency(
@@ -428,17 +521,24 @@ class TaskService:
                 )
                 raise self._provider_failure(None)
 
-            self._advance(task, TaskStatus.VALIDATING)
-            self._persist_task(task)
-            version = VersionRecord(
-                asset_url=result_asset,
-                validation=dict(_VALIDATION_RESULT),
-            )
             try:
-                self.repository.add_version(
+                if task.status is TaskStatus.GENERATING:
+                    self._advance(task, TaskStatus.VALIDATING)
+                    self._persist_task(task)
+                elif task.status is not TaskStatus.VALIDATING:
+                    # A task already marked succeeded is reconciled below;
+                    # other states cannot safely accept a provider result.
+                    if task.status is TaskStatus.SUCCEEDED:
+                        return self.get_task(task.id)
+                    self._require_status(task, {TaskStatus.VALIDATING})
+                version_id = entry.version_id or uuid4()
+                entry = self.repository.prepare_generation_result(
                     task.id,
-                    version,
-                    position=entry.candidate_position,
+                    entry.key,
+                    entry.request_hash,
+                    version_id,
+                    result_asset,
+                    provider_status="succeeded",
                 )
             except CandidateLimitError:
                 self.repository.update_idempotency(
@@ -450,21 +550,48 @@ class TaskService:
                     candidate_position=None,
                 )
                 raise
-            task.add_version(version)
-            object_key = self._object_key_for_asset(task.id, result_asset)
-            if isinstance(object_key, str):
-                self._version_keys[(task.id, version.id)] = object_key
-            self._advance(task, TaskStatus.SUCCEEDED)
-            task.error = None
-            self._persist_task(task)
-            self.repository.update_idempotency(
-                task.id,
-                "generate",
-                entry.key,
-                result_status=TaskStatus.SUCCEEDED,
-                provider_status="succeeded",
+            return self._finalize_prepared_generation(
+                task, entry, entry.request_hash
             )
-            return task
+        return self.get_task(task.id)
+
+    def _finalize_prepared_generation(
+        self,
+        task: TaskRecord,
+        entry: IdempotencyEntry,
+        request_hash: str,
+    ) -> TaskRecord:
+        """Reconcile a prepared result through the repository atomic method."""
+
+        result_asset = entry.result_asset_url
+        if result_asset is None and entry.version_id is not None:
+            recovered = self.repository.get_version(task.id, version_id=entry.version_id)
+            if recovered is not None:
+                result_asset = recovered.asset_url
+        if entry.version_id is None or result_asset is None:
+            return self.get_task(task.id)
+        version = VersionRecord(
+            id=entry.version_id,
+            asset_url=result_asset,
+            validation=dict(_VALIDATION_RESULT),
+        )
+        try:
+            self.repository.finalize_generation(
+                task.id,
+                entry.key,
+                request_hash,
+                version,
+                position=entry.candidate_position,
+            )
+        except CandidateLimitError:
+            # If an earlier worker already wrote this exact version, use that
+            # durable result; a different occupied slot remains a real limit.
+            existing = self.repository.get_version(task.id, version_id=version.id)
+            if existing is None:
+                raise
+        object_key = self._object_key_for_asset(task.id, result_asset)
+        if isinstance(object_key, str):
+            self._version_keys[(task.id, version.id)] = object_key
         return self.get_task(task.id)
 
     def download(self, task_id: UUID | str) -> AssetURL:
@@ -596,6 +723,38 @@ class TaskService:
     @classmethod
     def _result_status(cls, value: Any) -> str:
         return cls._provider_status(value)
+
+    def _sleep_before_poll(self, attempt: int) -> None:
+        if attempt <= 0 or self.poll_delay_seconds <= 0:
+            return
+        delay = self.poll_delay_seconds * (
+            self.poll_backoff_factor ** (attempt - 1)
+        )
+        time.sleep(delay)
+
+    @staticmethod
+    def _provider_idempotency_key(
+        operation: str,
+        source_url: str,
+        plan: EditPlan | None = None,
+    ) -> str:
+        """Match the provider adapter's stable canonical operation identity."""
+
+        source = source_url.strip()
+        parsed = urlsplit(source)
+        if parsed.scheme and parsed.netloc:
+            source = urlunsplit(
+                (parsed.scheme.lower(), parsed.netloc.lower(), parsed.path, "", "")
+            )
+        else:
+            source = source.split("?", 1)[0].split("#", 1)[0]
+        material: dict[str, Any] = {"operation": operation, "source": source}
+        if plan is not None:
+            plan_payload = plan.model_dump(mode="json")
+            for operation_payload in plan_payload.get("operations", ()):
+                operation_payload.pop("id", None)
+            material["plan"] = plan_payload
+        return _request_hash(material)
 
     def _mark_provider_failed(
         self,
@@ -740,7 +899,11 @@ class TaskService:
                 else None
             )
             row.error = task.error.model_dump(mode="json") if task.error else None
-            session.commit()
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
             return
 
         save_task = getattr(self.repository, "save_task", None)

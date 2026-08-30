@@ -202,8 +202,18 @@ class IdempotencyRow(Base):
     request_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     result_status: Mapped[str] = mapped_column(String(32), nullable=False)
     provider_job_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider_idempotency_key: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
     provider_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     candidate_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # This is intentionally not an FK: the UUID is written before the version
+    # row so a crash between durable result preparation and finalization can be
+    # recovered by the same idempotency record.
+    version_id: Mapped[UUID | None] = mapped_column(TASK_ID, nullable=True)
+    result_asset_url: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON_PAYLOAD, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

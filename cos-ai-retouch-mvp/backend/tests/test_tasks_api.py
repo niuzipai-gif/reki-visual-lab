@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
 from app.config import Settings
-from app.db import VersionRow
+from app.db import TaskRow, VersionRow
 from app.domain.models import AssetURL, EditPlan, TaskStatus, VersionRecord
 from app.repositories.tasks import TaskRepository
 from app.services.image_provider import (
@@ -20,6 +20,7 @@ from app.services.image_provider import (
 )
 from app.services.storage import InMemoryStorageAdapter
 from app.services.task_service import TaskService
+from app.services.task_service import _request_hash
 
 
 class CountingProvider:
@@ -148,6 +149,15 @@ class StableProvider:
         )
 
 
+INVITE_HEADERS = {"X-Invite-Token": "invite-demo"}
+
+
+def _authenticated_headers(**extra: str) -> dict[str, str]:
+    headers = dict(INVITE_HEADERS)
+    headers.update(extra)
+    return headers
+
+
 @pytest.fixture
 def api_context(repository):
     from app.main import create_app
@@ -230,7 +240,7 @@ def _prepare_confirmation(client: TestClient, task_id: str | None = None):
     task_id = task_id or _create(client).json()["task_id"]
     analyzed = client.post(
         f"/api/v1/tasks/{task_id}/analyze",
-        headers={"Idempotency-Key": "analysis-once"},
+        headers=_authenticated_headers(**{"Idempotency-Key": "analysis-once"}),
     )
     assert analyzed.status_code == 200
     assert analyzed.json()["status"] == "awaiting_confirmation"
@@ -296,13 +306,13 @@ def test_analysis_transitions_to_confirmation_and_is_idempotent(api_context):
 
     first = client.post(
         f"/api/v1/tasks/{task_id}/analyze",
-        headers={"Idempotency-Key": "analysis-once"},
+        headers=_authenticated_headers(**{"Idempotency-Key": "analysis-once"}),
     )
     retry = client.post(
         f"/api/v1/tasks/{task_id}/analyze",
-        headers={"Idempotency-Key": "analysis-once"},
+        headers=_authenticated_headers(**{"Idempotency-Key": "analysis-once"}),
     )
-    fetched = client.get(f"/api/v1/tasks/{task_id}")
+    fetched = client.get(f"/api/v1/tasks/{task_id}", headers=INVITE_HEADERS)
 
     assert first.status_code == retry.status_code == fetched.status_code == 200
     assert first.json()["status"] == retry.json()["status"] == "awaiting_confirmation"
@@ -320,23 +330,29 @@ def test_plan_and_generate_enforce_confirmation_and_enabled_operation(api_contex
 
     before_plan = client.post(
         f"/api/v1/tasks/{task_id}/generate",
-        headers={"Idempotency-Key": "generate-before-plan"},
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-before-plan"}),
     )
     assert before_plan.status_code == 409
     assert before_plan.json()["error"]["code"] == "TASK_NOT_READY"
 
-    empty_plan = client.post(f"/api/v1/tasks/{task_id}/plan", json={})
+    empty_plan = client.post(
+        f"/api/v1/tasks/{task_id}/plan", json={}, headers=INVITE_HEADERS
+    )
     assert empty_plan.status_code == 400
     assert empty_plan.json()["error"]["code"] == "INVALID_PLAN"
 
-    saved = client.post(f"/api/v1/tasks/{task_id}/plan", json=_plan_payload())
+    saved = client.post(
+        f"/api/v1/tasks/{task_id}/plan",
+        json=_plan_payload(),
+        headers=INVITE_HEADERS,
+    )
     assert saved.status_code == 200
     assert saved.json()["plan"]["operations"][0]["enabled"] is True
     assert saved.json()["status"] == "awaiting_confirmation"
 
     generated = client.post(
         f"/api/v1/tasks/{task_id}/generate",
-        headers={"Idempotency-Key": "generate-once"},
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-once"}),
     )
     assert generated.status_code == 200
     assert generated.json()["status"] == "succeeded"
@@ -349,16 +365,22 @@ def test_generate_is_idempotent_original_is_untouched_and_candidates_are_bounded
 ):
     client, repository, _storage, provider = api_context
     task_id = _prepare_confirmation(client)
-    original = client.get(f"/api/v1/tasks/{task_id}").json()["original_asset_url"]
-    client.post(f"/api/v1/tasks/{task_id}/plan", json=_plan_payload())
+    original = client.get(
+        f"/api/v1/tasks/{task_id}", headers=INVITE_HEADERS
+    ).json()["original_asset_url"]
+    client.post(
+        f"/api/v1/tasks/{task_id}/plan",
+        json=_plan_payload(),
+        headers=INVITE_HEADERS,
+    )
 
     first = client.post(
         f"/api/v1/tasks/{task_id}/generate",
-        headers={"Idempotency-Key": "generate-once"},
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-once"}),
     )
     retry = client.post(
         f"/api/v1/tasks/{task_id}/generate",
-        headers={"Idempotency-Key": "generate-once"},
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-once"}),
     )
     assert first.status_code == retry.status_code == 200
     assert first.json()["versions"] == retry.json()["versions"]
@@ -376,11 +398,15 @@ def test_rebuilt_task_service_uses_persisted_idempotency_without_resubmitting(
 ):
     client, repository, storage, provider = api_context
     task_id = _prepare_confirmation(client)
-    client.post(f"/api/v1/tasks/{task_id}/plan", json=_plan_payload())
+    client.post(
+        f"/api/v1/tasks/{task_id}/plan",
+        json=_plan_payload(),
+        headers=INVITE_HEADERS,
+    )
 
     first = client.post(
         f"/api/v1/tasks/{task_id}/generate",
-        headers={"Idempotency-Key": "generate-rebuild"},
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-rebuild"}),
     )
     assert first.status_code == 200
     assert provider.edit_submissions == 1
@@ -451,6 +477,200 @@ def test_provider_idempotency_recovers_after_crash_before_job_id_write(
     assert record.provider_job_id == "stable-analysis-job-1"
 
 
+def test_generate_rebuild_recovers_after_crash_before_atomic_finalize(
+    repository, monkeypatch
+):
+    settings = Settings(invite_tokens=["invite-demo"], asset_ttl_hours=1)
+    storage = InMemoryStorageAdapter(settings)
+    provider = StableProvider()
+    service = TaskService(repository, storage, provider, settings=settings)
+    task, _signed = service.create_task(
+        "invite-demo", "cos-photo.jpg", "image/jpeg", 1200
+    )
+    service.analyze(task.id, "analysis-for-generate-recovery")
+    service.save_plan(task.id, EditPlan.model_validate(_plan_payload()))
+
+    real_finalize = getattr(repository, "finalize_generation", None)
+    crashed = False
+
+    def crash_before_finalize(*args, **kwargs):
+        nonlocal crashed
+        if not crashed:
+            crashed = True
+            raise SimulatedProcessCrash()
+        assert real_finalize is not None
+        return real_finalize(*args, **kwargs)
+
+    monkeypatch.setattr(
+        repository, "finalize_generation", crash_before_finalize, raising=False
+    )
+    with pytest.raises(SimulatedProcessCrash):
+        service.generate(task.id, "generate-recovery")
+
+    prepared = repository.get_idempotency(
+        task.id, "generate", "generate-recovery"
+    )
+    assert prepared is not None
+    assert prepared.version_id is not None
+    assert prepared.result_asset_url is not None
+
+    rebuilt = TaskService(
+        TaskRepository(repository.session),
+        storage,
+        provider,
+        settings=settings,
+    )
+    recovered = rebuilt.generate(task.id, "generate-recovery")
+
+    assert recovered.status is TaskStatus.SUCCEEDED
+    assert len(recovered.versions) == 1
+    assert recovered.versions[0].id == prepared.version_id
+    assert provider.submissions == 2  # one analysis job and one edit job
+    assert repository.get_idempotency(
+        task.id, "generate", "generate-recovery"
+    ).result_status is TaskStatus.SUCCEEDED
+
+
+def test_generate_rebuild_reconciles_a_version_written_before_final_state(
+    repository,
+):
+    settings = Settings(invite_tokens=["invite-demo"], asset_ttl_hours=1)
+    storage = InMemoryStorageAdapter(settings)
+    provider = StableProvider()
+    service = TaskService(repository, storage, provider, settings=settings)
+    task, _signed = service.create_task(
+        "invite-demo", "cos-photo.jpg", "image/jpeg", 1200
+    )
+    service.analyze(task.id, "analysis-before-legacy-window")
+    plan = EditPlan.model_validate(_plan_payload())
+    service.save_plan(task.id, plan)
+
+    request_hash = _request_hash(service._plan_hash_payload(plan))
+    provider_key = service._provider_idempotency_key(
+        "edit", task.original_asset_url.url, plan
+    )
+    entry = repository.reserve_generation(
+        task.id,
+        "generate-legacy-window",
+        request_hash,
+        provider_key,
+    )
+    job = provider.submit_edit(task.original_asset_url.url, plan)
+    repository.update_idempotency(
+        task.id,
+        "generate",
+        "generate-legacy-window",
+        provider_job_id=job.job_id,
+        provider_idempotency_key=provider_key,
+        provider_status="succeeded",
+        result_status=TaskStatus.GENERATING,
+    )
+    result = provider.poll(job.job_id)
+    version = VersionRecord(
+        id=UUID("00000000-0000-0000-0000-000000000991"),
+        asset_url=result.asset_url,
+        validation={"face_identity": "pass"},
+    )
+    repository.add_version(task.id, version, position=entry.candidate_position)
+    task_row = repository.session.get(TaskRow, task.id)
+    task_row.status = TaskStatus.VALIDATING.value
+    repository.session.commit()
+
+    rebuilt = TaskService(
+        TaskRepository(repository.session),
+        storage,
+        provider,
+        settings=settings,
+    )
+    recovered = rebuilt.generate(task.id, "generate-legacy-window")
+
+    assert recovered.status is TaskStatus.SUCCEEDED
+    assert [item.id for item in recovered.versions] == [version.id]
+    assert provider.submissions == 2
+
+
+def test_follow_up_task_endpoints_require_header_without_leaking_existence(
+    api_context,
+):
+    client, _repository, _storage, _provider = api_context
+    task_id = _create(client).json()["task_id"]
+    requests = (
+        ("get", f"/api/v1/tasks/{task_id}", {}),
+        (
+            "post",
+            f"/api/v1/tasks/{task_id}/analyze",
+            {"headers": {"Idempotency-Key": "auth-analyze"}},
+        ),
+        (
+            "post",
+            f"/api/v1/tasks/{task_id}/plan",
+            {"json": _plan_payload()},
+        ),
+        (
+            "post",
+            f"/api/v1/tasks/{task_id}/generate",
+            {"headers": {"Idempotency-Key": "auth-generate"}},
+        ),
+        ("get", f"/api/v1/tasks/{task_id}/download", {}),
+    )
+
+    for token in (None, "wrong-token"):
+        for method, path, kwargs in requests:
+            request_kwargs = dict(kwargs)
+            headers = dict(request_kwargs.get("headers", {}))
+            if token is not None:
+                headers["X-Invite-Token"] = token
+            if headers:
+                request_kwargs["headers"] = headers
+            response = getattr(client, method)(path, **request_kwargs)
+            assert response.status_code == 401
+            assert response.json()["error"]["code"] == "UNAUTHORIZED"
+            assert task_id not in response.text
+            assert "original_asset_url" not in response.text
+
+
+def test_default_app_scopes_sessions_per_request_and_closes_adapters(tmp_path):
+    from app.main import create_app
+
+    class ClosableStorage(InMemoryStorageAdapter):
+        def __init__(self, settings):
+            super().__init__(settings)
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class ClosableProvider(CountingProvider):
+        def __init__(self, settings):
+            super().__init__(settings)
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'lifecycle.db'}",
+        invite_tokens=["invite-demo"],
+    )
+    storage = ClosableStorage(settings)
+    provider = ClosableProvider(settings)
+    app = create_app(settings=settings, storage=storage, provider=provider)
+
+    assert not hasattr(app.state, "task_service")
+    with TestClient(app) as client:
+        created = _create(client)
+        assert created.status_code == 200
+        task_id = created.json()["task_id"]
+        fetched = client.get(
+            f"/api/v1/tasks/{task_id}", headers=INVITE_HEADERS
+        )
+        assert fetched.status_code == 200
+        assert not hasattr(app.state, "task_service")
+
+    assert storage.closed is True
+    assert provider.closed is True
+
+
 def test_queued_jobs_poll_until_success_with_one_persisted_provider_job(
     scripted_context,
 ):
@@ -461,17 +681,21 @@ def test_queued_jobs_poll_until_success_with_one_persisted_provider_job(
 
     analyzed = client.post(
         f"/api/v1/tasks/{task_id}/analyze",
-        headers={"Idempotency-Key": "analysis-queued"},
+        headers=_authenticated_headers(**{"Idempotency-Key": "analysis-queued"}),
     )
     assert analyzed.status_code == 200
     assert analyzed.json()["status"] == "awaiting_confirmation"
     assert provider.analysis_submissions == 1
     assert provider.poll_counts["analysis-job-1"] == 2
 
-    client.post(f"/api/v1/tasks/{task_id}/plan", json=_plan_payload())
+    client.post(
+        f"/api/v1/tasks/{task_id}/plan",
+        json=_plan_payload(),
+        headers=INVITE_HEADERS,
+    )
     generated = client.post(
         f"/api/v1/tasks/{task_id}/generate",
-        headers={"Idempotency-Key": "generate-queued"},
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-queued"}),
     )
     record = repository.get_idempotency(
         UUID(task_id), "generate", "generate-queued"
@@ -494,17 +718,18 @@ def test_queued_job_poll_limit_returns_retryable_task_and_reuses_job_on_retry(
 
     first = client.post(
         f"/api/v1/tasks/{task_id}/analyze",
-        headers={"Idempotency-Key": "analysis-timeout"},
+        headers=_authenticated_headers(**{"Idempotency-Key": "analysis-timeout"}),
     )
     retry = client.post(
         f"/api/v1/tasks/{task_id}/analyze",
-        headers={"Idempotency-Key": "analysis-timeout"},
+        headers=_authenticated_headers(**{"Idempotency-Key": "analysis-timeout"}),
     )
     record = repository.get_idempotency(
         UUID(task_id), "analyze", "analysis-timeout"
     )
 
     assert first.status_code == retry.status_code == 200
+    assert first.headers.get("Retry-After") == "1"
     assert first.json()["status"] == retry.json()["status"] == "analyzing"
     assert provider.analysis_submissions == 1
     assert provider.poll_counts["analysis-job-1"] == 6
@@ -523,7 +748,7 @@ def test_provider_failure_persists_failed_idempotency_state_before_safe_error(
 
     response = client.post(
         f"/api/v1/tasks/{task_id}/analyze",
-        headers={"Idempotency-Key": "analysis-failed"},
+        headers=_authenticated_headers(**{"Idempotency-Key": "analysis-failed"}),
     )
     record = repository.get_idempotency(UUID(task_id), "analyze", "analysis-failed")
 
@@ -570,7 +795,11 @@ def test_database_rejects_duplicate_version_positions_for_one_task(api_context):
 def test_generate_rejects_a_task_that_already_has_two_candidates(api_context):
     client, repository, _storage, provider = api_context
     task_id = _prepare_confirmation(client)
-    client.post(f"/api/v1/tasks/{task_id}/plan", json=_plan_payload())
+    client.post(
+        f"/api/v1/tasks/{task_id}/plan",
+        json=_plan_payload(),
+        headers=INVITE_HEADERS,
+    )
 
     expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
     for index in range(2):
@@ -587,7 +816,7 @@ def test_generate_rejects_a_task_that_already_has_two_candidates(api_context):
 
     response = client.post(
         f"/api/v1/tasks/{task_id}/generate",
-        headers={"Idempotency-Key": "generate-over-limit"},
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-over-limit"}),
     )
 
     assert response.status_code == 409
@@ -599,19 +828,27 @@ def test_download_is_only_available_for_successful_unexpired_task(api_context):
     client, repository, _storage, _provider = api_context
     task_id = _create(client).json()["task_id"]
 
-    not_ready = client.get(f"/api/v1/tasks/{task_id}/download")
+    not_ready = client.get(
+        f"/api/v1/tasks/{task_id}/download", headers=INVITE_HEADERS
+    )
     assert not_ready.status_code == 409
     assert not_ready.json()["error"]["code"] == "TASK_NOT_READY"
 
     _prepare_confirmation(client, task_id)
-    client.post(f"/api/v1/tasks/{task_id}/plan", json=_plan_payload())
+    client.post(
+        f"/api/v1/tasks/{task_id}/plan",
+        json=_plan_payload(),
+        headers=INVITE_HEADERS,
+    )
     generated = client.post(
         f"/api/v1/tasks/{task_id}/generate",
-        headers={"Idempotency-Key": "generate-download"},
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-download"}),
     )
     assert generated.status_code == 200
 
-    available = client.get(f"/api/v1/tasks/{task_id}/download")
+    available = client.get(
+        f"/api/v1/tasks/{task_id}/download", headers=INVITE_HEADERS
+    )
     assert available.status_code == 200
     assert available.json()["url"].startswith("https://")
     assert available.json()["expires_at"]
@@ -628,7 +865,9 @@ def test_download_is_only_available_for_successful_unexpired_task(api_context):
     expired_payload["asset_url"] = expired_asset
     version_row.payload = expired_payload
     repository.session.commit()
-    unavailable = client.get(f"/api/v1/tasks/{task_id}/download")
+    unavailable = client.get(
+        f"/api/v1/tasks/{task_id}/download", headers=INVITE_HEADERS
+    )
     assert unavailable.status_code == 410
     assert unavailable.json()["error"]["code"] == "TASK_EXPIRED"
 
@@ -648,10 +887,14 @@ def test_provider_failure_is_safe_and_never_returns_raw_upstream_body(api_contex
     with TestClient(failing_app) as failing_client:
         task_id = _create(failing_client).json()["task_id"]
         _prepare_confirmation(failing_client, task_id)
-        failing_client.post(f"/api/v1/tasks/{task_id}/plan", json=_plan_payload())
+        failing_client.post(
+            f"/api/v1/tasks/{task_id}/plan",
+            json=_plan_payload(),
+            headers=INVITE_HEADERS,
+        )
         response = failing_client.post(
             f"/api/v1/tasks/{task_id}/generate",
-            headers={"Idempotency-Key": "generate-provider-error"},
+            headers=_authenticated_headers(**{"Idempotency-Key": "generate-provider-error"}),
         )
 
     assert response.status_code == 502
@@ -663,11 +906,16 @@ def test_provider_failure_is_safe_and_never_returns_raw_upstream_body(api_contex
 def test_missing_task_and_missing_idempotency_key_use_stable_errors(api_context):
     client, _repository, _storage, _provider = api_context
 
-    missing = client.get("/api/v1/tasks/00000000-0000-0000-0000-000000000000")
+    missing = client.get(
+        "/api/v1/tasks/00000000-0000-0000-0000-000000000000",
+        headers=INVITE_HEADERS,
+    )
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "NOT_FOUND"
 
     task_id = _create(client).json()["task_id"]
-    missing_key = client.post(f"/api/v1/tasks/{task_id}/analyze")
+    missing_key = client.post(
+        f"/api/v1/tasks/{task_id}/analyze", headers=INVITE_HEADERS
+    )
     assert missing_key.status_code == 400
     assert missing_key.json()["error"]["code"] == "INVALID_IDEMPOTENCY_KEY"

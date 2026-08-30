@@ -222,7 +222,11 @@ The persisted idempotency record has this shape:
   "request_hash": "sha256:...",
   "result_status": "generating",
   "provider_job_id": "provider-job-id-or-null",
+  "provider_idempotency_key": "stable-server-generated-key",
   "provider_status": "queued|running|succeeded|failed",
+  "candidate_position": 0,
+  "version_id": "UUID-or-null",
+  "result_asset_url": {/* Asset URL with kind=version, or null */},
   "created_at": "2026-08-30T12:10:00Z"
 }
 ```
@@ -234,7 +238,16 @@ tracks provider progress. A matching hash reuses the stored provider job,
 including after a service restart. A different hash returns `IDEMPOTENCY_CONFLICT`. Provider
 jobs in `queued` or `running` are polled for a bounded number of attempts per
 request; a still-pending record remains retryable and the next request resumes
-polling the same `provider_job_id`.
+polling the same `provider_job_id`. The provider idempotency key is derived
+from the canonical source asset and, for generation, the canonical edit plan;
+it is stable across service restarts and is never supplied by the browser.
+
+Generation persists the chosen `version_id` and result asset before finalizing.
+One repository transaction then writes the version row, marks the task
+`succeeded`, and marks the idempotency record `succeeded`. A retry reconciles a
+prepared or already-written version instead of allocating another candidate.
+Unsubmitted stale reservations release their candidate slot while retaining a
+retry record; a retry using the original key can still recover its durable job.
 
 Generation reserves candidate positions transactionally in the database. A
 task can have positions `0` and `1` only, so concurrent requests cannot create
@@ -261,6 +274,12 @@ POST /api/v1/maintenance/cleanup
 `created` task, and returns an upload URL with status `uploading` after the
 upload reservation transition. Analyze, plan, and generate endpoints return
 the task shape or a stable error shape.
+
+The create request carries `invite_token` in its JSON body. Every subsequent
+task endpoint (`analyze`, task GET, `plan`, `generate`, and `download`) requires
+the server-validated invite in the `X-Invite-Token` header. Missing or invalid
+headers return `401 UNAUTHORIZED` before task lookup, so task existence and
+signed URLs are not disclosed. `GET /healthz` is public.
 
 ### Implemented API contract
 
@@ -292,6 +311,10 @@ On success, `POST /api/v1/tasks` returns only the upload reservation fields:
 to the task and operation. Repeating an equivalent request returns the current
 task without submitting another provider job; reusing a key for a different
 request returns `IDEMPOTENCY_CONFLICT`.
+
+When a provider job is still queued or running after the bounded poll budget,
+the endpoint returns the current task and a `Retry-After` response header. The
+delay/backoff is server-configured and tests may set it to zero.
 
 `POST /api/v1/tasks/{task_id}/plan` accepts the structured `EditPlan` object
 above and returns the task with the saved plan. At least one operation must be

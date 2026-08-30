@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -12,15 +13,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import inspect, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
+from app.api.routes_tasks import router as tasks_router
 from app.config import Settings, get_settings
 from app.db import create_db_engine
 from app.repositories.tasks import TaskRepository
 from app.services.image_provider import create_image_provider
 from app.services.storage import InMemoryStorageAdapter, S3StorageAdapter
 from app.services.task_service import TaskService, TaskServiceError
-from app.api.routes_tasks import router as tasks_router
 
 
 def _safe_error(code: str, message: str, status_code: int) -> JSONResponse:
@@ -31,14 +32,10 @@ def _safe_error(code: str, message: str, status_code: int) -> JSONResponse:
 
 
 def _upgrade_schema(database_url: str) -> None:
-    """Apply committed Alembic migrations before opening the repository."""
+    """Apply committed Alembic migrations before serving requests."""
 
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-    # Alembic's ConfigParser treats percent signs as interpolation markers.
     config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
-    # Adopt a pre-Alembic development database as the immutable 0001 baseline,
-    # then let 0002 add the coordination schema. Existing schemas are never
-    # changed through create_all.
     existing_engine = create_db_engine(database_url)
     try:
         inspector = inspect(existing_engine)
@@ -53,10 +50,41 @@ def _upgrade_schema(database_url: str) -> None:
                 )
     finally:
         existing_engine.dispose()
+
     baseline_tables = {"tasks", "assets", "analysis_cards", "edit_plans", "versions"}
     if not has_migration_history and baseline_tables.issubset(tables):
         command.stamp(config, "0001_initial")
     command.upgrade(config, "head")
+
+
+async def _close_adapter(adapter: Any) -> None:
+    close = getattr(adapter, "close", None)
+    if not callable(close):
+        return
+    result = close()
+    if hasattr(result, "__await__"):
+        await result
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    try:
+        yield
+    finally:
+        if getattr(app.state, "manage_adapters", False):
+            for adapter in (
+                getattr(app.state, "provider", None),
+                getattr(app.state, "storage", None),
+            ):
+                try:
+                    await _close_adapter(adapter)
+                except Exception:
+                    # Shutdown must still dispose the DB engine if an adapter
+                    # has a best-effort close failure.
+                    continue
+        engine = getattr(app.state, "db_engine", None)
+        if engine is not None:
+            engine.dispose()
 
 
 def create_app(
@@ -67,12 +95,17 @@ def create_app(
     provider: Any = None,
     session_factory: sessionmaker | None = None,
 ) -> FastAPI:
-    """Build an app with injectable repository, storage, and provider adapters."""
+    """Build an app with injectable adapters and request-scoped DB services."""
 
     resolved = settings or get_settings()
-    app = FastAPI(title="COS AI Retouch MVP", version="0.1.0")
+    app = FastAPI(
+        title="COS AI Retouch MVP",
+        version="0.1.0",
+        lifespan=_lifespan,
+    )
 
-    if repository is None:
+    default_production_path = repository is None
+    if default_production_path:
         _upgrade_schema(resolved.get_database_url())
         engine = create_db_engine(resolved.get_database_url())
         factory = session_factory or sessionmaker(
@@ -80,10 +113,12 @@ def create_app(
             autoflush=False,
             expire_on_commit=False,
         )
-        session: Session = factory()
-        repository = TaskRepository(session)
+        # No session is opened here. The dependency owns one per request.
         app.state.db_engine = engine
-        app.state.db_session = session
+        app.state.session_factory = factory
+    else:
+        # Explicit injection is the test/embedding path and may own its service.
+        app.state.task_service = None
 
     if storage is None:
         storage = (
@@ -95,12 +130,16 @@ def create_app(
         provider = create_image_provider(resolved)
 
     app.state.settings = resolved
-    app.state.task_service = TaskService(
-        repository,
-        storage,
-        provider,
-        settings=resolved,
-    )
+    app.state.storage = storage
+    app.state.provider = provider
+    app.state.manage_adapters = default_production_path
+    if not default_production_path:
+        app.state.task_service = TaskService(
+            repository,
+            storage,
+            provider,
+            settings=resolved,
+        )
 
     app.add_middleware(
         CORSMiddleware,

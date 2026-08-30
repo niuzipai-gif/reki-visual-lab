@@ -10,7 +10,14 @@ from sqlalchemy import create_engine, func, inspect, select
 from sqlalchemy.exc import IntegrityError
 
 from app.config import Settings
-from app.db import AssetRow, Base, IdempotencyRow, VersionRow, _sync_database_url
+from app.db import (
+    AssetRow,
+    Base,
+    IdempotencyRow,
+    TaskRow,
+    VersionRow,
+    _sync_database_url,
+)
 from app.repositories.tasks import TaskRepository, VersionConflictError
 from app.domain.models import (
     AnalysisCard,
@@ -479,6 +486,8 @@ def test_two_stage_migration_supports_old_data_repeat_upgrade_and_downgrade(
 
     command.upgrade(alembic_config, "0001_initial")
     engine = create_engine(database_url)
+    old_task_id = uuid4()
+    old_version = VersionRecord(asset_url=_asset("version", "old-version.jpg"))
     try:
         inspector = inspect(engine)
         assert "idempotency_records" not in inspector.get_table_names()
@@ -486,6 +495,27 @@ def test_two_stage_migration_supports_old_data_repeat_upgrade_and_downgrade(
             item["name"] == "uq_versions_task_position"
             for item in inspector.get_unique_constraints("versions")
         )
+        with engine.begin() as connection:
+            connection.execute(
+                TaskRow.__table__.insert().values(
+                    id=old_task_id,
+                    status=TaskStatus.UPLOADING.value,
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                    idempotency_key=None,
+                    original_asset_url=None,
+                    mask_asset_url=None,
+                    error=None,
+                )
+            )
+            connection.execute(
+                VersionRow.__table__.insert().values(
+                    id=old_version.id,
+                    task_id=old_task_id,
+                    position=0,
+                    payload=old_version.model_dump(mode="json"),
+                )
+            )
     finally:
         engine.dispose()
 
@@ -518,6 +548,12 @@ def test_two_stage_migration_supports_old_data_repeat_upgrade_and_downgrade(
             and item["column_names"] == ["task_id", "operation", "key"]
             for item in idempotency_constraints
         )
+        with engine.connect() as connection:
+            assert connection.execute(
+                select(func.count()).select_from(VersionRow.__table__).where(
+                    VersionRow.__table__.c.task_id == old_task_id
+                )
+            ).scalar_one() == 1
     finally:
         engine.dispose()
 
@@ -531,6 +567,66 @@ def test_two_stage_migration_supports_old_data_repeat_upgrade_and_downgrade(
             item["name"] == "uq_versions_task_position"
             for item in inspector.get_unique_constraints("versions")
         )
+    finally:
+        engine.dispose()
+
+
+def test_migration_rejects_duplicate_old_version_positions_before_schema_changes(
+    tmp_path,
+):
+    database_url = f"sqlite:///{tmp_path / 'migration-duplicate.db'}"
+    alembic_ini = Path(__file__).parents[1] / "alembic.ini"
+    alembic_config = Config(str(alembic_ini))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "0001_initial")
+    task_id = uuid4()
+    first = VersionRecord(asset_url=_asset("version", "duplicate-1.jpg"))
+    second = VersionRecord(asset_url=_asset("version", "duplicate-2.jpg"))
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            now = datetime.now(timezone.utc)
+            connection.execute(
+                TaskRow.__table__.insert().values(
+                    id=task_id,
+                    status=TaskStatus.UPLOADING.value,
+                    created_at=now,
+                    updated_at=now,
+                    idempotency_key=None,
+                    original_asset_url=None,
+                    mask_asset_url=None,
+                    error=None,
+                )
+            )
+            connection.execute(
+                VersionRow.__table__.insert(),
+                [
+                    {
+                        "id": first.id,
+                        "task_id": task_id,
+                        "position": 0,
+                        "payload": first.model_dump(mode="json"),
+                    },
+                    {
+                        "id": second.id,
+                        "task_id": task_id,
+                        "position": 0,
+                        "payload": second.model_dump(mode="json"),
+                    },
+                ],
+            )
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="duplicate.*position"):
+        command.upgrade(alembic_config, "head")
+
+    engine = create_engine(database_url)
+    try:
+        inspector = inspect(engine)
+        assert "idempotency_records" not in inspector.get_table_names()
+        assert inspect(engine).get_table_names()
     finally:
         engine.dispose()
 
@@ -565,3 +661,30 @@ def test_idempotency_key_is_rejected_by_the_database_when_reused(repository):
     with pytest.raises(IntegrityError):
         repository.session.commit()
     repository.session.rollback()
+
+
+def test_stale_unsubmitted_generation_reservation_can_be_reclaimed(repository):
+    task = TaskRecord.new()
+    repository.create_task(task)
+    first = repository.reserve_generation(
+        task.id, "abandoned-generation", "hash-abandoned", "provider-key"
+    )
+    row = repository.session.scalar(
+        select(IdempotencyRow).where(IdempotencyRow.task_id == task.id)
+    )
+    row.updated_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    repository.session.commit()
+
+    reclaimed = repository.reclaim_stale_generation_reservations(
+        task.id,
+        datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    second = repository.reserve_generation(
+        task.id, "new-generation", "hash-new", "provider-key-new"
+    )
+
+    assert reclaimed == 1
+    assert first.candidate_position == second.candidate_position == 0
+    assert repository.get_idempotency(
+        task.id, "generate", "abandoned-generation"
+    ).result_status is TaskStatus.FAILED
