@@ -93,11 +93,12 @@ export default function UploadPanel({
       if (!created.uploadUrl) throw new Error("missing upload url");
       await apiClient.uploadOriginal(created.uploadUrl, file);
       setProgressStatus("analyzing");
-      const analyzed = await apiClient.startAnalysis(
+      await apiClient.startAnalysis(
         created.taskId,
         inviteToken,
         createIdempotencyKey(),
       );
+      const analyzed = await apiClient.getTask(created.taskId, inviteToken);
       setProgressStatus(analyzed.status);
       onTaskUpdate(analyzed);
     } catch (caught) {

@@ -6,7 +6,6 @@ import {
   type AnalysisCard,
   type AssetUrl,
   type CreateTaskInput,
-  type DownloadUrl,
   type EditPlan,
   type EditPlanInput,
   type Region,
@@ -343,8 +342,8 @@ export async function startAnalysis(
   taskId: string,
   inviteToken: string,
   idempotencyKey?: string,
-): Promise<TaskView> {
-  return request(
+): Promise<void> {
+  await request(
     `/api/v1/tasks/${encodeURIComponent(taskId)}/analyze`,
     {
       ...jsonBody(undefined),
@@ -352,7 +351,6 @@ export async function startAnalysis(
       headers: { "Idempotency-Key": withIdempotencyKey(idempotencyKey) },
     },
     inviteToken,
-    normalizeTask,
   );
 }
 
@@ -369,12 +367,11 @@ export async function savePlan(
   taskId: string,
   plan: EditPlanInput,
   inviteToken: string,
-): Promise<TaskView> {
-  return request(
+): Promise<void> {
+  await request(
     `/api/v1/tasks/${encodeURIComponent(taskId)}/plan`,
     jsonBody(toWirePlan(plan)),
     inviteToken,
-    normalizeTask,
   );
 }
 
@@ -382,8 +379,8 @@ export async function startGeneration(
   taskId: string,
   inviteToken: string,
   idempotencyKey?: string,
-): Promise<TaskView> {
-  return request(
+): Promise<void> {
+  await request(
     `/api/v1/tasks/${encodeURIComponent(taskId)}/generate`,
     {
       ...jsonBody(undefined),
@@ -391,24 +388,20 @@ export async function startGeneration(
       headers: { "Idempotency-Key": withIdempotencyKey(idempotencyKey) },
     },
     inviteToken,
-    normalizeTask,
   );
 }
 
 export async function getDownloadUrl(
   taskId: string,
   inviteToken: string,
-): Promise<DownloadUrl> {
+): Promise<string> {
   return request(
     `/api/v1/tasks/${encodeURIComponent(taskId)}/download`,
     { method: "GET" },
     inviteToken,
     (payload) => {
       const value = isRecord(payload) ? payload : {};
-      return {
-        url: stringValue(value.url),
-        expiresAt: stringValue(value.expires_at ?? value.expiresAt),
-      };
+      return stringValue(value.url);
     },
   );
 }

@@ -14,14 +14,24 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export type Goal = "natural_retouch" | "structure_repair";
 
-export type AnalysisCategory =
+export type TaskCategory =
   | "face"
   | "hair"
   | "clothing"
-  | "body"
-  | "pose"
+  | "body_pose"
   | "background"
   | "lighting";
+
+export type AnalysisCategory = TaskCategory;
+
+export const TASK_CATEGORIES: TaskCategory[] = [
+  "face",
+  "hair",
+  "clothing",
+  "body_pose",
+  "background",
+  "lighting",
+];
 
 export interface AssetUrl {
   kind: "original" | "mask" | "version";
@@ -113,11 +123,6 @@ export interface CreateTaskInput {
   filename: string;
   contentType: string;
   byteSize: number;
-}
-
-export interface DownloadUrl {
-  url: string;
-  expiresAt: string;
 }
 
 export const DEFAULT_PRESERVE = [

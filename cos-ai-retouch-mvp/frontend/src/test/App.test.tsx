@@ -50,10 +50,10 @@ function makeClient() {
       expiresAt: "2026-08-31T01:00:00Z",
     }),
     uploadOriginal: vi.fn().mockResolvedValue(undefined),
-    startAnalysis: vi.fn().mockResolvedValue(awaitingTask),
+    startAnalysis: vi.fn().mockResolvedValue(undefined),
     getTask: vi.fn().mockResolvedValue(awaitingTask),
-    savePlan: vi.fn(),
-    startGeneration: vi.fn(),
+    savePlan: vi.fn().mockResolvedValue(undefined),
+    startGeneration: vi.fn().mockResolvedValue(undefined),
     getDownloadUrl: vi.fn(),
   };
 }
@@ -124,11 +124,13 @@ describe("COS retouch app", () => {
       "invite-in-memory",
       expect.any(String),
     );
+    expect(client.getTask).toHaveBeenCalledWith("task-123", "invite-in-memory");
 
     expect(await screen.findByRole("heading", { name: "AI 分析" })).toBeVisible();
-    for (const label of ["面部", "头发", "服装", "身体", "姿态", "背景", "光线"]) {
+    for (const label of ["面部", "头发", "服装", "身体 / 姿态", "背景", "光线"]) {
       expect(screen.getByText(label)).toBeVisible();
     }
+    expect(screen.queryByText("姿态", { exact: true })).not.toBeInTheDocument();
     expect(screen.getByText("置信度 92%")).toBeVisible();
     expect(screen.getByTestId("region-highlight-face-1")).toHaveAttribute(
       "aria-label",

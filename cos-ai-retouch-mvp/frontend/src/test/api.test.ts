@@ -111,11 +111,13 @@ describe("typed task API client", () => {
       await import("../app/api");
     const inviteToken = "invite-in-memory";
 
-    await startAnalysis("task-123", inviteToken, "analyze-key");
+    expect(await startAnalysis("task-123", inviteToken, "analyze-key")).toBeUndefined();
     await getTask("task-123", inviteToken);
-    await savePlan("task-123", { goals: [], operations: [] }, inviteToken);
-    await startGeneration("task-123", inviteToken, "generate-key");
-    await getDownloadUrl("task-123", inviteToken);
+    expect(await savePlan("task-123", { goals: [], operations: [] }, inviteToken)).toBeUndefined();
+    expect(await startGeneration("task-123", inviteToken, "generate-key")).toBeUndefined();
+    expect(await getDownloadUrl("task-123", inviteToken)).toBe(
+      "https://storage.example/download",
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(5);
     for (const [, init] of fetchMock.mock.calls) {
@@ -129,8 +131,8 @@ describe("typed task API client", () => {
       .mockResolvedValueOnce(jsonResponse(taskWire));
 
     const { startAnalysis, startGeneration } = await import("../app/api");
-    await startAnalysis("task-123", "invite-in-memory", "analyze-key");
-    await startGeneration("task-123", "invite-in-memory", "generate-key");
+    expect(await startAnalysis("task-123", "invite-in-memory", "analyze-key")).toBeUndefined();
+    expect(await startGeneration("task-123", "invite-in-memory", "generate-key")).toBeUndefined();
 
     expect(new Headers(fetchMock.mock.calls[0][1].headers).get("Idempotency-Key")).toBe("analyze-key");
     expect(new Headers(fetchMock.mock.calls[1][1].headers).get("Idempotency-Key")).toBe("generate-key");
@@ -180,5 +182,29 @@ describe("typed task API client", () => {
         retryable: true,
       },
     );
+  });
+
+  it("maps an HTTP 200 failed task payload to a user-readable error state", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        ...taskWire,
+        status: "failed",
+        error: {
+          code: "PROVIDER_ERROR",
+          message: '{"prompt":"private provider payload"}',
+          retryable: true,
+        },
+      }),
+    );
+
+    const { getTask } = await import("../app/api");
+    const task = await getTask("task-123", "invite-in-memory");
+
+    expect(task.status).toBe("failed");
+    expect(task.error).toMatchObject({
+      code: "PROVIDER_ERROR",
+      message: "图片处理暂时不可用，请稍后重试。",
+      retryable: true,
+    });
   });
 });

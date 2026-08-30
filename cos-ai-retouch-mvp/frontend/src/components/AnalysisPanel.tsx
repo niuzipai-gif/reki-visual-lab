@@ -11,7 +11,7 @@ import {
   DEFAULT_PRESERVE,
   DEFAULT_VALIDATION,
   type AnalysisCard,
-  type AnalysisCategory,
+  type TaskCategory,
   type EditPlanInput,
   type Goal,
   type Region,
@@ -34,27 +34,25 @@ interface AnalysisPanelProps {
   renderRegionEditor?: (props: RegionEditorProps) => ReactNode;
 }
 
-const CATEGORY_META: Array<{ key: AnalysisCategory; label: string; fallback: string }> = [
+const CATEGORY_META: Array<{ key: TaskCategory; label: string; fallback: string }> = [
   { key: "face", label: "面部", fallback: "保留面部辨识度，只处理必要的局部细节。" },
   { key: "hair", label: "头发", fallback: "检查发丝边缘和局部细节，不改变整体造型。" },
   { key: "clothing", label: "服装", fallback: "检查服装细节与接缝，保留原有设计。" },
-  { key: "body", label: "身体", fallback: "保持身体比例，只提示局部结构风险。" },
-  { key: "pose", label: "姿态", fallback: "保持主姿态，仅确认局部连接是否自然。" },
+  { key: "body_pose", label: "身体 / 姿态", fallback: "保持身体比例和主姿态，只提示局部连接风险。" },
   { key: "background", label: "背景", fallback: "保持背景结构和透视，不做整图重绘。" },
   { key: "lighting", label: "光线", fallback: "保持原始光向、层次和噪点一致。" },
 ];
 
-const OPERATION_KIND: Record<AnalysisCategory, string> = {
+const OPERATION_KIND: Record<TaskCategory, string> = {
   face: "skin_retouch",
   hair: "hair_detail",
   clothing: "clothing_repair",
-  body: "body_detail",
-  pose: "pose_repair",
+  body_pose: "body_pose_repair",
   background: "background_cleanup",
   lighting: "light_balance",
 };
 
-function cardForCategory(cards: AnalysisCard[], key: AnalysisCategory): AnalysisCard {
+function cardForCategory(cards: AnalysisCard[], key: TaskCategory): AnalysisCard {
   return (
     cards.find((card) => card.category === key) || {
       id: `suggested-${key}`,
@@ -89,8 +87,8 @@ export function buildEditPlan(
     preserve: [...DEFAULT_PRESERVE],
     regions,
     operations: selectedCards.map((card) => ({
-      kind: OPERATION_KIND[card.category as AnalysisCategory] || "local_detail",
-      goal: goal === "structure_repair" || (goal === "both" && card.category === "pose")
+      kind: OPERATION_KIND[card.category as TaskCategory] || "local_detail",
+      goal: goal === "structure_repair" || (goal === "both" && card.category === "body_pose")
         ? "structure_repair"
         : "natural_retouch",
       regionIds: card.regions.map((region) => region.id),
@@ -149,7 +147,8 @@ export default function AnalysisPanel({
     setBusy(true);
     setError(null);
     try {
-      const saved = await apiClient.savePlan(task.taskId, plan, inviteToken);
+      await apiClient.savePlan(task.taskId, plan, inviteToken);
+      const saved = await apiClient.getTask(task.taskId, inviteToken);
       onTaskUpdate(saved);
       return saved;
     } catch (caught) {
@@ -166,11 +165,12 @@ export default function AnalysisPanel({
     setBusy(true);
     setError(null);
     try {
-      const generated = await apiClient.startGeneration(
+      await apiClient.startGeneration(
         task.taskId,
         inviteToken,
         createIdempotencyKey(),
       );
+      const generated = await apiClient.getTask(task.taskId, inviteToken);
       onTaskUpdate(generated);
     } catch (caught) {
       setError(getUserSafeErrorMessage(caught));
