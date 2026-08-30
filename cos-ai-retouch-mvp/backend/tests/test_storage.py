@@ -35,7 +35,9 @@ def test_memory_storage_uses_a_basename_and_returns_an_expiring_upload_asset():
     assert ".." not in asset.object_key
 
 
-@pytest.mark.parametrize("content_type", ["image/gif", "application/octet-stream", "IMAGE/PNG"])
+@pytest.mark.parametrize(
+    "content_type", ["image/gif", "application/octet-stream", "IMAGE/PNG"]
+)
 def test_storage_rejects_content_types_before_signing(content_type):
     storage = InMemoryStorageAdapter(Settings(max_upload_bytes=100))
 
@@ -58,6 +60,13 @@ def test_storage_rejects_an_oversized_upload_before_signing():
             "image/jpeg",
             content_length=101,
         )
+
+
+def test_memory_storage_rejects_missing_content_length_before_signing():
+    storage = InMemoryStorageAdapter(Settings(max_upload_bytes=100))
+
+    with pytest.raises(StorageError, match="content length is required"):
+        storage.create_upload_url(uuid4(), "cos-look.jpg", "image/jpeg")
 
 
 def test_storage_builds_scoped_mask_and_version_keys_and_deletes_memory_objects():
@@ -90,6 +99,21 @@ class _PresigningS3Client:
         self.delete_calls.append(kwargs)
 
 
+def test_s3_storage_rejects_missing_content_length_before_signing():
+    client = _PresigningS3Client()
+    settings = Settings(
+        max_upload_bytes=2048,
+        storage_bucket="retouch-assets",
+        storage_endpoint="https://s3.example.test",
+    )
+    storage = S3StorageAdapter(settings, client=client)
+
+    with pytest.raises(StorageError, match="content length is required"):
+        storage.create_upload_url(uuid4(), "look.jpg", "image/jpeg")
+
+    assert client.presign_calls == []
+
+
 def test_s3_storage_uses_boto3_presigning_for_upload_and_download():
     client = _PresigningS3Client()
     settings = Settings(
@@ -118,5 +142,51 @@ def test_s3_storage_uses_boto3_presigning_for_upload_and_download():
     assert download.endswith("X-Amz-Expires=3600")
     assert [call[0] for call in client.presign_calls] == ["put_object", "get_object"]
     assert client.presign_calls[0][1]["ContentType"] == "image/jpeg"
+    assert client.presign_calls[0][1]["ContentLength"] == 12
     assert client.presign_calls[0][2] == 3600
-    assert client.delete_calls == [{"Bucket": "retouch-assets", "Key": upload.object_key}]
+    assert client.delete_calls == [
+        {"Bucket": "retouch-assets", "Key": upload.object_key}
+    ]
+
+
+@pytest.mark.parametrize(
+    "object_key",
+    [
+        "",
+        "assets/task/original/look.png",
+        "tasks//original/look.png",
+        "tasks/task/other/look.png",
+        "tasks/task/original",
+        "tasks/task/original/look.png/extra",
+        r"tasks/task/original\look.png",
+        "tasks/task/../original/look.png",
+        "tasks/task/original/../look.png",
+        "tasks/task/mask/mask.png",
+        "tasks/task/versions/version.jpg",
+    ],
+)
+def test_memory_download_and_delete_reject_keys_outside_the_asset_namespaces(
+    object_key,
+):
+    storage = InMemoryStorageAdapter(Settings())
+
+    with pytest.raises(StorageError):
+        storage.create_download_url(object_key)
+    with pytest.raises(StorageError):
+        storage.delete_object(object_key)
+
+
+def test_s3_download_and_delete_reject_keys_outside_the_asset_namespaces():
+    client = _PresigningS3Client()
+    storage = S3StorageAdapter(
+        Settings(storage_bucket="retouch-assets"),
+        client=client,
+    )
+
+    with pytest.raises(StorageError):
+        storage.create_download_url("other/key.png")
+    with pytest.raises(StorageError):
+        storage.delete_object(r"tasks/task/original\look.png")
+
+    assert client.presign_calls == []
+    assert client.delete_calls == []

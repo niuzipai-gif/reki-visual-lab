@@ -114,6 +114,8 @@ def _validate_upload(
     safe_filename = _safe_basename(filename)
     if content_type not in _ALLOWED_CONTENT_TYPES:
         raise StorageError("unsupported content type; use image/jpeg or image/png")
+    if content_length is None:
+        raise StorageError("content length is required before signing")
     if content_length is not None and (
         not isinstance(content_length, int) or isinstance(content_length, bool)
     ):
@@ -156,8 +158,20 @@ def _asset(
 def _validate_object_key(object_key: str) -> str:
     if not isinstance(object_key, str) or not object_key or "\x00" in object_key:
         raise StorageError("object key must not be empty")
-    if object_key.startswith("/") or ".." in object_key.split("/"):
+    if "\\" in object_key:
+        raise StorageError("object key contains an invalid path separator")
+
+    parts = object_key.split("/")
+    if len(parts) != 4 or parts[0] != "tasks":
+        raise StorageError("object key is outside the asset namespace")
+    if any(not part or part in {".", ".."} for part in parts):
         raise StorageError("object key contains an invalid path component")
+    if parts[2] not in {"original", "mask", "versions"}:
+        raise StorageError("object key is outside the asset namespace")
+    if parts[2] == "mask" and not parts[3].endswith(".json"):
+        raise StorageError("mask object key must end with .json")
+    if parts[2] == "versions" and not parts[3].endswith(".png"):
+        raise StorageError("version object key must end with .png")
     return object_key
 
 
@@ -169,14 +183,24 @@ class InMemoryStorageAdapter:
         self.objects: dict[str, bytes] = {}
         self.content_types: dict[str, str] = {}
 
-    def _signed_url(self, object_key: str, expires_at: datetime) -> str:
+    def _signed_url(
+        self,
+        object_key: str,
+        expires_at: datetime,
+        content_length: int | None = None,
+    ) -> str:
         encoded_key = quote(object_key, safe="/")
         expires = int(expires_at.timestamp())
         signature = sha256(f"{object_key}:{expires}".encode("utf-8")).hexdigest()
+        size_query = (
+            f"&X-Upload-Content-Length={content_length}"
+            if content_length is not None
+            else ""
+        )
         return (
             f"https://storage.local/{encoded_key}"
             f"?X-Amz-Expires={_ttl_seconds(self.settings)}"
-            f"&X-Amz-Date={expires}&X-Amz-Signature={signature}"
+            f"&X-Amz-Date={expires}&X-Amz-Signature={signature}{size_query}"
         )
 
     def create_upload_url(
@@ -193,7 +217,7 @@ class InMemoryStorageAdapter:
         expires_at = _expires_at(self.settings)
         return _asset(
             kind="original",
-            url=self._signed_url(object_key, expires_at),
+            url=self._signed_url(object_key, expires_at, content_length),
             object_key=object_key,
             content_type=content_type,
             expires_at=expires_at,
@@ -204,7 +228,8 @@ class InMemoryStorageAdapter:
         return self._signed_url(object_key, _expires_at(self.settings))
 
     def delete_object(self, object_key: str) -> None:
-        self.objects.pop(_validate_object_key(object_key), None)
+        object_key = _validate_object_key(object_key)
+        self.objects.pop(object_key, None)
         self.content_types.pop(object_key, None)
 
     def put_object(self, object_key: str, body: bytes, *, content_type: str) -> None:

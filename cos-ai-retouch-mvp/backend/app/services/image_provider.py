@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+from threading import RLock
 from typing import Any, Literal, Protocol
+from urllib.error import HTTPError
 from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
-from urllib.error import HTTPError
 
 try:
     import httpx
@@ -141,14 +142,18 @@ def _operation_key(
         "source": _source_identity(source_url),
     }
     if plan is not None:
-        material["plan"] = plan.model_dump(mode="json")
-    canonical = json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        plan_payload = plan.model_dump(mode="json")
+        for operation_payload in plan_payload.get("operations", ()):
+            operation_payload.pop("id", None)
+        material["plan"] = plan_payload
+    canonical = json.dumps(
+        material, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
     return sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _expires_at(settings: Settings) -> datetime:
-    ttl_hours = max(settings.asset_ttl_hours, 1)
-    return datetime.now(timezone.utc) + timedelta(hours=ttl_hours)
+    return datetime.now(timezone.utc) + timedelta(hours=settings.asset_ttl_hours)
 
 
 def _normalize_status(value: Any) -> ProviderStatus:
@@ -196,6 +201,7 @@ class MockImageModelProvider:
         self.jobs: dict[str, ProviderJob] = {}
         self._results: dict[str, ProviderResult] = {}
         self._operation_jobs: dict[str, str] = {}
+        self._submission_lock = RLock()
 
     def _submit(
         self,
@@ -203,49 +209,50 @@ class MockImageModelProvider:
         source_url: str,
         plan: EditPlan | None = None,
     ) -> ProviderJob:
-        operation_key = _operation_key(operation, source_url, plan)
-        existing_job_id = self._operation_jobs.get(operation_key)
-        if existing_job_id is not None:
-            return self.jobs[existing_job_id]
+        with self._submission_lock:
+            operation_key = _operation_key(operation, source_url, plan)
+            existing_job_id = self._operation_jobs.get(operation_key)
+            if existing_job_id is not None:
+                return self.jobs[existing_job_id]
 
-        job_id = f"mock-{operation}-{operation_key[:16]}"
-        job = ProviderJob(job_id=job_id, operation=operation, status="queued")
-        if operation == "analysis":
-            result = ProviderResult(
-                job_id=job_id,
-                status="succeeded",
-                analysis=self.analysis_fixture,
-                metadata={
-                    "provider": "mock",
-                    "model": "demo",
-                    "demo": True,
-                },
-            )
-        else:
-            marker = quote("演示模型结果", safe="")
-            result_url = (
-                f"https://mock.image-provider.local/results/{job_id}.png"
-                f"?provider=mock&demo=true&label={marker}"
-            )
-            result = ProviderResult(
-                job_id=job_id,
-                status="succeeded",
-                asset_url=AssetURL(
-                    kind="version",
-                    url=result_url,
-                    expires_at=_expires_at(self.settings),
-                ),
-                metadata={
-                    "provider": "mock",
-                    "model": "demo",
-                    "demo": True,
-                    "label": "演示模型结果",
-                },
-            )
-        self.jobs[job_id] = job
-        self._results[job_id] = result
-        self._operation_jobs[operation_key] = job_id
-        return job
+            job_id = f"mock-{operation}-{operation_key[:16]}"
+            job = ProviderJob(job_id=job_id, operation=operation, status="queued")
+            if operation == "analysis":
+                result = ProviderResult(
+                    job_id=job_id,
+                    status="succeeded",
+                    analysis=self.analysis_fixture,
+                    metadata={
+                        "provider": "mock",
+                        "model": "demo",
+                        "demo": True,
+                    },
+                )
+            else:
+                marker = quote("演示模型结果", safe="")
+                result_url = (
+                    f"https://mock.image-provider.local/results/{job_id}.png"
+                    f"?provider=mock&demo=true&label={marker}"
+                )
+                result = ProviderResult(
+                    job_id=job_id,
+                    status="succeeded",
+                    asset_url=AssetURL(
+                        kind="version",
+                        url=result_url,
+                        expires_at=_expires_at(self.settings),
+                    ),
+                    metadata={
+                        "provider": "mock",
+                        "model": "demo",
+                        "demo": True,
+                        "label": "演示模型结果",
+                    },
+                )
+            self.jobs[job_id] = job
+            self._results[job_id] = result
+            self._operation_jobs[operation_key] = job_id
+            return job
 
     def submit_analysis(self, source_url: str) -> ProviderJob:
         return self._submit("analysis", source_url)
@@ -271,12 +278,14 @@ class MockImageModelProvider:
 
 
 class _UrllibResponse:
-    def __init__(self, status_code: int, payload: Any):
+    def __init__(self, status_code: int, body: bytes | None):
         self.status_code = status_code
-        self._payload = payload
+        self._body = body
 
     def json(self) -> Any:
-        return self._payload
+        if self._body is None:
+            raise ValueError("response body is empty")
+        return json.loads(self._body.decode("utf-8"))
 
 
 class ExternalImageModelProvider:
@@ -303,11 +312,21 @@ class ExternalImageModelProvider:
             self._owns_http_client = True
         self._jobs: dict[str, ProviderJob] = {}
         self._operation_jobs: dict[str, str] = {}
+        self._submission_lock = RLock()
 
     def close(self) -> None:
-        if self._owns_http_client and self.http_client is not None:
-            self.http_client.close()
+        if self.http_client is not None:
+            close = getattr(self.http_client, "close", None)
+            if close is not None:
+                close()
             self.http_client = None
+
+    def __enter__(self) -> "ExternalImageModelProvider":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> bool:
+        self.close()
+        return False
 
     def _configuration(self) -> tuple[str, str]:
         base_url = (self.settings.image_provider_base_url or "").strip().rstrip("/")
@@ -414,7 +433,7 @@ class ExternalImageModelProvider:
         try:
             with urlopen(request, timeout=30) as response:  # noqa: S310 - configured server URL
                 raw = response.read()
-                return _UrllibResponse(response.status, json.loads(raw))
+                return _UrllibResponse(response.status, raw)
         except HTTPError as exc:
             return _UrllibResponse(exc.code, None)
 
@@ -424,41 +443,42 @@ class ExternalImageModelProvider:
         source_url: str,
         plan: EditPlan | None = None,
     ) -> ProviderJob:
-        base_url, api_key = self._configuration()
-        operation_key = _operation_key(operation, source_url, plan)
-        existing_job_id = self._operation_jobs.get(operation_key)
-        if existing_job_id is not None:
-            return self._jobs[existing_job_id]
+        with self._submission_lock:
+            base_url, api_key = self._configuration()
+            operation_key = _operation_key(operation, source_url, plan)
+            existing_job_id = self._operation_jobs.get(operation_key)
+            if existing_job_id is not None:
+                return self._jobs[existing_job_id]
 
-        payload: dict[str, Any] = {
-            "model": self.settings.image_provider_model,
-            "source_url": source_url,
-        }
-        if plan is not None:
-            payload["plan"] = plan.model_dump(mode="json")
-        endpoint = f"{base_url}/{operation}"
-        data = self._request(
-            "POST",
-            endpoint,
-            api_key=api_key,
-            payload=payload,
-            operation_key=operation_key,
-        )
-        raw_job_id = data.get("job_id", data.get("id"))
-        if not isinstance(raw_job_id, str) or not raw_job_id.strip():
-            raise ProviderError(
-                "image provider returned an invalid job",
-                code="INVALID_PROVIDER_RESPONSE",
-                retryable=True,
+            payload: dict[str, Any] = {
+                "model": self.settings.image_provider_model,
+                "source_url": source_url,
+            }
+            if plan is not None:
+                payload["plan"] = plan.model_dump(mode="json")
+            endpoint = f"{base_url}/{operation}"
+            data = self._request(
+                "POST",
+                endpoint,
+                api_key=api_key,
+                payload=payload,
+                operation_key=operation_key,
             )
-        job = ProviderJob(
-            job_id=raw_job_id,
-            operation=operation,
-            status=_normalize_status(data.get("status")),
-        )
-        self._jobs[raw_job_id] = job
-        self._operation_jobs[operation_key] = raw_job_id
-        return job
+            raw_job_id = data.get("job_id", data.get("id"))
+            if not isinstance(raw_job_id, str) or not raw_job_id.strip():
+                raise ProviderError(
+                    "image provider returned an invalid job",
+                    code="INVALID_PROVIDER_RESPONSE",
+                    retryable=True,
+                )
+            job = ProviderJob(
+                job_id=raw_job_id,
+                operation=operation,
+                status=_normalize_status(data.get("status")),
+            )
+            self._jobs[raw_job_id] = job
+            self._operation_jobs[operation_key] = raw_job_id
+            return job
 
     def submit_analysis(self, source_url: str) -> ProviderJob:
         return self._submit("analysis", source_url)
@@ -472,27 +492,38 @@ class ExternalImageModelProvider:
             )
         return self._submit("edit", source_url, plan)
 
-    @staticmethod
-    def _asset_from_payload(value: Any) -> AssetURL | None:
+    def _asset_from_payload(self, value: Any) -> AssetURL | None:
         if value is None:
             return None
         if isinstance(value, str):
-            if not value:
-                raise ValueError("empty asset URL")
-            return AssetURL(
-                kind="version",
-                url=value,
-                expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
-            )
-        if not isinstance(value, dict):
+            asset_url = value
+            kind = "version"
+        elif isinstance(value, dict):
+            asset = dict(value)
+            asset_url = asset.get("url")
+            kind = asset.get("kind", "version")
+        else:
             raise ValueError("invalid asset payload")
-        asset = dict(value)
-        asset.setdefault("kind", "version")
-        asset.setdefault(
-            "expires_at",
-            datetime.now(timezone.utc) + timedelta(hours=24),
+        if not isinstance(asset_url, str) or not asset_url:
+            raise ValueError("empty asset URL")
+        try:
+            parsed = urlsplit(asset_url)
+            hostname = parsed.hostname
+        except ValueError as exc:
+            raise ValueError("invalid asset URL") from exc
+        if (
+            parsed.scheme.lower() not in {"http", "https"}
+            or not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or any(character.isspace() for character in asset_url)
+        ):
+            raise ValueError("asset URL must be a credential-free HTTP URL")
+        return AssetURL(
+            kind=kind,
+            url=asset_url,
+            expires_at=_expires_at(self.settings),
         )
-        return AssetURL.model_validate(asset)
 
     def poll(self, job_id: str) -> ProviderResult:
         if not isinstance(job_id, str) or not job_id:
@@ -525,7 +556,9 @@ class ExternalImageModelProvider:
             status=_normalize_status(data.get("status")),
             analysis=analysis,
             asset_url=asset_url,
-            metadata=_safe_metadata(data.get("metadata", data.get("provider_metadata"))),
+            metadata=_safe_metadata(
+                data.get("metadata", data.get("provider_metadata"))
+            ),
         )
 
 

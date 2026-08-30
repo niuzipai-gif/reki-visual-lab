@@ -1,11 +1,15 @@
-import json
 import inspect
+import json
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+from threading import Lock
 
 import httpx
 import pytest
 
 from app.config import Settings
-from app.domain.models import EditPlan
+from app.domain.models import EditPlan, Goal, Operation
 from app.services.image_provider import (
     ExternalImageModelProvider,
     MockImageModelProvider,
@@ -29,7 +33,9 @@ def test_mock_provider_returns_the_fixed_analysis_fixture():
 
 def test_mock_edit_submission_is_idempotent_and_marks_the_demo_copy_asset():
     provider = MockImageModelProvider()
-    source_url = "https://assets.example.test/tasks/task-1/original/look.png?signature=old"
+    source_url = (
+        "https://assets.example.test/tasks/task-1/original/look.png?signature=old"
+    )
     plan = EditPlan()
 
     first = provider.submit_edit(source_url, plan)
@@ -150,6 +156,197 @@ def test_external_provider_redacts_non_2xx_upstream_body_and_secrets():
     assert "customer prompt" not in message
 
 
+@pytest.mark.parametrize(
+    "asset_url",
+    [
+        "data:image/png;base64,ZmFrZQ==",
+        "file:///tmp/result.png",
+        "javascript:alert(1)",
+        "https:///missing-host/result.png",
+        "https://user:password@provider.example.test/result.png",
+    ],
+)
+def test_external_provider_rejects_unsafe_result_asset_urls(asset_url):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"job_id": "job-asset", "status": "succeeded", "asset_url": asset_url},
+        )
+
+    settings = Settings(
+        image_provider_mode="external",
+        image_provider_base_url="https://provider.example.test/v1",
+        image_provider_api_key="server-only-secret",
+    )
+    provider = ExternalImageModelProvider(
+        settings,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(ProviderError) as raised:
+        provider.poll("job-asset")
+
+    assert raised.value.code == "INVALID_PROVIDER_RESPONSE"
+
+
+def test_external_provider_uses_settings_ttl_for_result_asset_urls():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "job_id": "job-expiry",
+                "status": "succeeded",
+                "asset_url": "https://provider.example.test/result.png",
+            },
+        )
+
+    settings = Settings(
+        asset_ttl_hours=3,
+        image_provider_mode="external",
+        image_provider_base_url="https://provider.example.test/v1",
+        image_provider_api_key="server-only-secret",
+    )
+    provider = ExternalImageModelProvider(
+        settings,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    before = datetime.now(timezone.utc) + timedelta(hours=3)
+
+    result = provider.poll("job-expiry")
+
+    after = datetime.now(timezone.utc) + timedelta(hours=3)
+    assert before <= result.asset_url.expires_at <= after
+
+
+def test_external_provider_canonicalizes_equivalent_plans_without_operation_ids():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(
+            202, json={"job_id": "job-equivalent", "status": "queued"}
+        )
+
+    settings = Settings(
+        image_provider_mode="external",
+        image_provider_base_url="https://provider.example.test/v1",
+        image_provider_api_key="server-only-secret",
+    )
+    provider = ExternalImageModelProvider(
+        settings,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    first_plan = EditPlan(
+        operations=(Operation(kind="skin_retouch", goal=Goal.NATURAL_RETOUCH),)
+    )
+    equivalent_plan = EditPlan(
+        operations=(Operation(kind="skin_retouch", goal=Goal.NATURAL_RETOUCH),)
+    )
+
+    first = provider.submit_edit("https://assets.example.test/original.png", first_plan)
+    retry = provider.submit_edit(
+        "https://assets.example.test/original.png",
+        equivalent_plan,
+    )
+
+    assert first.job_id == retry.job_id == "job-equivalent"
+    assert len(calls) == 1
+
+
+def test_external_provider_serializes_concurrent_same_operation_to_one_submission():
+    calls = 0
+    calls_lock = Lock()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+        time.sleep(0.05)
+        return httpx.Response(
+            202, json={"job_id": "job-concurrent", "status": "queued"}
+        )
+
+    settings = Settings(
+        image_provider_mode="external",
+        image_provider_base_url="https://provider.example.test/v1",
+        image_provider_api_key="server-only-secret",
+    )
+    provider = ExternalImageModelProvider(
+        settings,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    plan = EditPlan()
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        jobs = list(
+            executor.map(
+                lambda _: provider.submit_edit(
+                    "https://assets.example.test/original.png", plan
+                ),
+                range(8),
+            )
+        )
+
+    assert {job.job_id for job in jobs} == {"job-concurrent"}
+    assert calls == 1
+
+
+class _InvalidJsonUrllibResponse:
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self):
+        return b"not-json"
+
+
+def test_urllib_fallback_maps_successful_invalid_json_to_invalid_provider_response(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.services.image_provider.urlopen",
+        lambda request, timeout: _InvalidJsonUrllibResponse(),
+    )
+    settings = Settings(
+        image_provider_mode="external",
+        image_provider_base_url="https://provider.example.test/v1",
+        image_provider_api_key="server-only-secret",
+    )
+    provider = ExternalImageModelProvider(settings)
+
+    with pytest.raises(ProviderError) as raised:
+        provider.submit_analysis("https://assets.example.test/original.png")
+
+    assert raised.value.code == "INVALID_PROVIDER_RESPONSE"
+
+
+def test_external_provider_close_closes_an_injected_http_client():
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                202, json={"job_id": "job", "status": "queued"}
+            )
+        )
+    )
+    provider = ExternalImageModelProvider(
+        Settings(
+            image_provider_mode="external",
+            image_provider_base_url="https://provider.example.test/v1",
+            image_provider_api_key="server-only-secret",
+        ),
+        http_client=client,
+    )
+
+    provider.close()
+    provider.close()
+
+    assert client.is_closed
+
+
 def test_provider_submit_boundary_never_accepts_a_frontend_api_key():
     providers = (
         MockImageModelProvider(),
@@ -161,9 +358,7 @@ def test_provider_submit_boundary_never_accepts_a_frontend_api_key():
             parameters = inspect.signature(
                 getattr(provider, method_name)
             ).parameters.values()
-            assert "api_key" not in {
-                parameter.name for parameter in parameters
-            }
+            assert "api_key" not in {parameter.name for parameter in parameters}
             assert not any(
                 parameter.kind is inspect.Parameter.VAR_KEYWORD
                 for parameter in parameters
