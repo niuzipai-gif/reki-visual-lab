@@ -525,6 +525,24 @@ class TaskService:
         task: TaskRecord,
         entry: IdempotencyEntry,
     ) -> TaskRecord:
+        # A reclaimer or another worker may have advanced this reservation
+        # after this worker captured its entry.  Do not reconcile a version
+        # or poll a provider job from an obsolete generation.
+        current_entry = self.repository.get_idempotency(
+            task.id, "generate", entry.key
+        )
+        if current_entry is None:
+            return self.get_task(task.id)
+        if current_entry.request_hash != entry.request_hash:
+            raise TaskServiceError(
+                "IDEMPOTENCY_CONFLICT",
+                "幂等键已用于不同的请求。",
+                status_code=409,
+            )
+        if current_entry.reservation_generation != entry.reservation_generation:
+            return self.get_task(task.id)
+        entry = current_entry
+
         # Reconcile a legacy crash window where the version row was committed
         # before the idempotency record received its recovery fields.
         if entry.version_id is None and entry.candidate_position is not None:
@@ -554,48 +572,38 @@ class TaskService:
             self._sleep_before_poll(_attempt)
             result = self.provider.poll(entry.provider_job_id)
             provider_status = self._result_status(result)
+            reservation_generation = entry.reservation_generation
             entry = self.repository.update_idempotency(
                 task.id,
                 "generate",
                 entry.key,
                 result_status=TaskStatus.GENERATING,
                 provider_status=provider_status,
+                reservation_generation=reservation_generation,
             )
+            if entry.reservation_generation != reservation_generation:
+                return self.get_task(task.id)
             if provider_status == "failed":
-                self._fail_task(
+                if not self._fail_task(
                     task,
-                    reservation_generation=entry.reservation_generation,
+                    reservation_generation=reservation_generation,
                     key=entry.key,
                     request_hash=entry.request_hash,
-                )
-                self.repository.update_idempotency(
-                    task.id,
-                    "generate",
-                    entry.key,
-                    result_status=TaskStatus.FAILED,
-                    provider_status="failed",
-                    candidate_position=None,
-                )
+                ):
+                    return self.get_task(task.id)
                 raise self._provider_failure(None)
             if provider_status != "succeeded":
                 continue
 
             result_asset = getattr(result, "asset_url", None)
             if result_asset is None or getattr(result_asset, "kind", None) != "version":
-                self._fail_task(
+                if not self._fail_task(
                     task,
-                    reservation_generation=entry.reservation_generation,
+                    reservation_generation=reservation_generation,
                     key=entry.key,
                     request_hash=entry.request_hash,
-                )
-                self.repository.update_idempotency(
-                    task.id,
-                    "generate",
-                    entry.key,
-                    result_status=TaskStatus.FAILED,
-                    provider_status="failed",
-                    candidate_position=None,
-                )
+                ):
+                    return self.get_task(task.id)
                 raise self._provider_failure(None)
 
             try:
@@ -625,6 +633,7 @@ class TaskService:
                     result_status=TaskStatus.FAILED,
                     provider_status="failed",
                     candidate_position=None,
+                    reservation_generation=reservation_generation,
                 )
                 raise
             return self._finalize_prepared_generation(task, entry, entry.request_hash)

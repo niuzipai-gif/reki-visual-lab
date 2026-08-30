@@ -765,6 +765,7 @@ class TaskRepository:
         candidate_position: int | None | object = _UNSET,
         version_id: UUID | None | object = _UNSET,
         result_asset_url: AssetURL | None | object = _UNSET,
+        reservation_generation: int | None = None,
     ) -> IdempotencyEntry:
         """Update provider progress and final state durably."""
 
@@ -782,29 +783,56 @@ class TaskRepository:
         existing = self._as_idempotency(row)
         if request_hash is not None and existing.request_hash != request_hash:
             raise IdempotencyConflictError("idempotency request hash conflict")
+
+        values: dict[str, Any] = {"updated_at": utc_now()}
         if result_status is not None:
-            row.result_status = result_status.value
+            values["result_status"] = result_status.value
         if provider_job_id is not _UNSET:
-            row.provider_job_id = provider_job_id  # type: ignore[assignment]
+            values["provider_job_id"] = provider_job_id
         if provider_idempotency_key is not _UNSET:
-            row.provider_idempotency_key = provider_idempotency_key  # type: ignore[assignment]
+            values["provider_idempotency_key"] = provider_idempotency_key
         if provider_status is not _UNSET:
-            row.provider_status = provider_status  # type: ignore[assignment]
+            values["provider_status"] = provider_status
         if candidate_position is not _UNSET:
-            row.candidate_position = candidate_position  # type: ignore[assignment]
+            values["candidate_position"] = candidate_position
         if version_id is not _UNSET:
-            row.version_id = version_id  # type: ignore[assignment]
+            values["version_id"] = version_id
         if result_asset_url is not _UNSET:
-            row.result_asset_url = (
+            values["result_asset_url"] = (
                 _payload(result_asset_url) if result_asset_url is not None else None
             )
-        row.updated_at = utc_now()
+
+        conditions = [IdempotencyRow.id == row.id]
+        if reservation_generation is not None:
+            conditions.append(
+                IdempotencyRow.reservation_generation == reservation_generation
+            )
+            if operation == "generate":
+                task_row = self._task_row(task_id)
+                if task_row.status in {
+                    TaskStatus.SUCCEEDED.value,
+                    TaskStatus.EXPIRED.value,
+                }:
+                    return existing
         try:
+            updated = self.session.execute(
+                update(IdempotencyRow).where(*conditions).values(**values)
+            )
+            if not updated.rowcount:
+                self.session.expire_all()
+                current = self.get_idempotency(task_id, operation, key)
+                if current is None:
+                    raise ValueError("idempotency record does not exist")
+                return current
             self._commit()
         except IntegrityError:
             self.session.rollback()
             raise
-        return self._as_idempotency(row)
+        self.session.expire_all()
+        current = self.get_idempotency(task_id, operation, key)
+        if current is None:
+            raise ValueError("idempotency record does not exist")
+        return current
 
     update_idempotency_record = update_idempotency
 

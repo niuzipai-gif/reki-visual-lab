@@ -150,6 +150,40 @@ class StableProvider:
         )
 
 
+class LateFailureProvider:
+    """Return a stale failure for the first edit job and success for the next."""
+
+    def __init__(self):
+        self.edit_submissions = 0
+
+    def submit_analysis(self, source_url: str):
+        return ProviderJob(job_id="analysis-job-1", operation="analysis", status="queued")
+
+    def submit_edit(self, source_url: str, plan: EditPlan):
+        self.edit_submissions += 1
+        job_id = "old-edit-job" if self.edit_submissions == 1 else "new-edit-job"
+        return ProviderJob(job_id=job_id, operation="edit", status="queued")
+
+    def poll(self, job_id: str):
+        if job_id == "analysis-job-1":
+            return ProviderResult(
+                job_id=job_id,
+                status="succeeded",
+                analysis=MockImageModelProvider.analysis_fixture,
+            )
+        if job_id == "old-edit-job":
+            return ProviderResult(job_id=job_id, status="failed")
+        return ProviderResult(
+            job_id=job_id,
+            status="succeeded",
+            asset_url=AssetURL(
+                kind="version",
+                url=f"https://storage.example.test/{job_id}.png",
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            ),
+        )
+
+
 INVITE_HEADERS = {"X-Invite-Token": "invite-demo"}
 
 
@@ -746,6 +780,81 @@ def test_old_generation_failure_cannot_overwrite_new_success(repository):
     current = repository.get_task(task.id)
     assert current.status is TaskStatus.SUCCEEDED
     assert current.error is None
+
+
+def test_late_generation_poll_failure_cannot_overwrite_new_generation(
+    repository,
+):
+    settings = Settings(invite_tokens=["invite-demo"], asset_ttl_hours=1)
+    storage = InMemoryStorageAdapter(settings)
+    provider = LateFailureProvider()
+    service = TaskService(repository, storage, provider, settings=settings)
+    task, _signed = service.create_task(
+        "invite-demo", "cos-photo.jpg", "image/jpeg", 1200
+    )
+    service.analyze(task.id, "analysis-for-late-failure")
+    plan = EditPlan.model_validate(_plan_payload())
+    service.save_plan(task.id, plan)
+
+    request_hash = _request_hash(service._plan_hash_payload(plan))
+    provider_key = service._provider_idempotency_key(
+        "edit", task.original_asset_url.url, plan
+    )
+    old_key = "generate-late-failure"
+    old_entry = repository.reserve_generation_and_mark_task_generating(
+        task.id, old_key, request_hash, provider_key
+    )
+    old_entry = repository.begin_provider_submission(
+        task.id, old_key, request_hash, old_entry.reservation_generation
+    )
+    old_job = provider.submit_edit(task.original_asset_url.url, plan)
+    old_entry = repository.record_provider_submission(
+        task.id,
+        old_key,
+        request_hash,
+        old_entry.reservation_generation,
+        provider_job_id=old_job.job_id,
+        provider_status="queued",
+        provider_idempotency_key=provider_key,
+    )
+    old_task = service.get_task(task.id)
+    new_key = "generate-new-generation"
+    new_entry = repository.reserve_generation_and_mark_task_generating(
+        task.id, new_key, request_hash, provider_key
+    )
+    new_entry = repository.begin_provider_submission(
+        task.id, new_key, request_hash, new_entry.reservation_generation
+    )
+    new_job = provider.submit_edit(task.original_asset_url.url, plan)
+    new_entry = repository.record_provider_submission(
+        task.id,
+        new_key,
+        request_hash,
+        new_entry.reservation_generation,
+        provider_job_id=new_job.job_id,
+        provider_status="queued",
+        provider_idempotency_key=provider_key,
+    )
+    succeeded = service._poll_generation(
+        service.get_task(task.id), new_entry
+    )
+    assert succeeded.status is TaskStatus.SUCCEEDED
+
+    late_result = service._poll_generation(old_task, old_entry)
+    assert late_result.status is TaskStatus.SUCCEEDED
+    current = repository.get_task(task.id)
+    assert current is not None
+    assert current.status is TaskStatus.SUCCEEDED
+    new_record = repository.get_idempotency(
+        task.id, "generate", new_key
+    )
+    assert new_record is not None
+    assert new_record.result_status is TaskStatus.SUCCEEDED
+    old_record = repository.get_idempotency(task.id, "generate", old_key)
+    assert old_record is not None
+    assert old_record.result_status is TaskStatus.GENERATING
+    assert old_record.provider_status == "queued"
+    assert old_record.candidate_position == 0
 
 
 def test_new_generate_key_reclaims_stale_submitting_through_api(api_context):
