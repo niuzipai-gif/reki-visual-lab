@@ -441,13 +441,72 @@ class TaskRepository:
             update(IdempotencyRow)
             .where(*conditions)
             .values(
-                result_status=TaskStatus.FAILED.value,
+                result_status=TaskStatus.GENERATING.value,
+                provider_status="stale_reservation",
                 candidate_position=None,
                 updated_at=utc_now(),
             )
         )
         self._commit()
         return int(result.rowcount or 0)
+
+    def reacquire_generation_slot(
+        self,
+        task_id: UUID,
+        key: str,
+        request_hash: str,
+        provider_idempotency_key: str | None = None,
+    ) -> IdempotencyEntry:
+        """Reclaim one released slot for the original idempotency key."""
+
+        row = self.session.scalar(
+            select(IdempotencyRow)
+            .where(
+                IdempotencyRow.task_id == task_id,
+                IdempotencyRow.operation == "generate",
+                IdempotencyRow.key == key,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise ValueError("idempotency record does not exist")
+        existing = self._as_idempotency(row)
+        self._require_idempotency_hash(existing, request_hash)
+        if existing.candidate_position is not None:
+            return existing
+        if existing.provider_status != "stale_reservation":
+            return existing
+
+        occupied = set(
+            self.session.scalars(
+                select(VersionRow.position).where(VersionRow.task_id == task_id)
+            ).all()
+        )
+        occupied.update(
+            int(position)
+            for position in self.session.scalars(
+                select(IdempotencyRow.candidate_position).where(
+                    IdempotencyRow.task_id == task_id,
+                    IdempotencyRow.operation == "generate",
+                    IdempotencyRow.result_status != TaskStatus.FAILED.value,
+                    IdempotencyRow.candidate_position.is_not(None),
+                    IdempotencyRow.id != row.id,
+                )
+            ).all()
+        )
+        position = next(
+            (candidate for candidate in range(2) if candidate not in occupied), None
+        )
+        if position is None:
+            raise CandidateLimitError("a task may have at most two candidate versions")
+        row.candidate_position = position
+        row.result_status = TaskStatus.GENERATING.value
+        row.provider_status = None
+        if provider_idempotency_key is not None:
+            row.provider_idempotency_key = provider_idempotency_key
+        row.updated_at = utc_now()
+        self._commit()
+        return self._as_idempotency(row)
 
     def reserve_generation_and_mark_task_generating(
         self,

@@ -6,10 +6,11 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.config import Settings
-from app.db import TaskRow, VersionRow
+from app.db import IdempotencyRow, TaskRow, VersionRow
 from app.domain.models import AssetURL, EditPlan, TaskStatus, VersionRecord
 from app.repositories.tasks import TaskRepository
 from app.services.image_provider import (
@@ -586,6 +587,57 @@ def test_generate_rebuild_reconciles_a_version_written_before_final_state(
 
     assert recovered.status is TaskStatus.SUCCEEDED
     assert [item.id for item in recovered.versions] == [version.id]
+    assert provider.submissions == 2
+
+
+def test_same_key_recovers_after_stale_reservation_reclaim(repository, monkeypatch):
+    settings = Settings(invite_tokens=["invite-demo"], asset_ttl_hours=1)
+    storage = InMemoryStorageAdapter(settings)
+    provider = StableProvider()
+    service = TaskService(repository, storage, provider, settings=settings)
+    task, _signed = service.create_task(
+        "invite-demo", "cos-photo.jpg", "image/jpeg", 1200
+    )
+    service.analyze(task.id, "analysis-before-stale-retry")
+    plan = EditPlan.model_validate(_plan_payload())
+    service.save_plan(task.id, plan)
+    request_hash = _request_hash(service._plan_hash_payload(plan))
+    provider_key = service._provider_idempotency_key(
+        "edit", task.original_asset_url.url, plan
+    )
+    entry = repository.reserve_generation_and_mark_task_generating(
+        task.id, "generate-stale-retry", request_hash, provider_key
+    )
+    row = repository.session.scalar(
+        select(IdempotencyRow).where(
+            IdempotencyRow.task_id == task.id,
+            IdempotencyRow.operation == "generate",
+            IdempotencyRow.key == "generate-stale-retry",
+        )
+    )
+    row.updated_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    repository.session.commit()
+    repository.reclaim_stale_generation_reservations(
+        task.id, datetime.now(timezone.utc) - timedelta(minutes=5)
+    )
+
+    real_submit = provider.submit_edit
+
+    def assert_slot_before_submit(source_url, submitted_plan):
+        recovered_entry = repository.get_idempotency(
+            task.id, "generate", "generate-stale-retry"
+        )
+        assert recovered_entry is not None
+        assert recovered_entry.provider_status != "stale_reservation"
+        assert recovered_entry.candidate_position is not None
+        return real_submit(source_url, submitted_plan)
+
+    monkeypatch.setattr(provider, "submit_edit", assert_slot_before_submit)
+    recovered = service.generate(task.id, "generate-stale-retry")
+
+    assert recovered.status is TaskStatus.SUCCEEDED
+    assert len(recovered.versions) == 1
+    assert recovered.versions[0].asset_url.kind == "version"
     assert provider.submissions == 2
 
 

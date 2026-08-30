@@ -685,6 +685,7 @@ def test_stale_unsubmitted_generation_reservation_can_be_reclaimed(repository):
 
     assert reclaimed == 1
     assert first.candidate_position == second.candidate_position == 0
-    assert repository.get_idempotency(
-        task.id, "generate", "abandoned-generation"
-    ).result_status is TaskStatus.FAILED
+    stale = repository.get_idempotency(task.id, "generate", "abandoned-generation")
+    assert stale.result_status is TaskStatus.GENERATING
+    assert stale.provider_status == "stale_reservation"
+    assert stale.candidate_position is None

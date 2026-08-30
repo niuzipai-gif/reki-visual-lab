@@ -365,6 +365,16 @@ class TaskService:
                     self._require_same_request(existing, request_hash)
                     if existing.result_status is TaskStatus.FAILED:
                         raise self._provider_failure(None)
+                    if (
+                        existing.provider_status == "stale_reservation"
+                        and existing.provider_job_id is None
+                    ):
+                        existing = self.repository.reacquire_generation_slot(
+                            parsed_id,
+                            key,
+                            request_hash,
+                            provider_idempotency_key,
+                        )
                     if existing.result_status is TaskStatus.SUCCEEDED:
                         if existing.version_id is not None:
                             return self._finalize_prepared_generation(
