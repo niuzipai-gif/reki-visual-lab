@@ -19,6 +19,49 @@ router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
 maintenance_router = APIRouter(prefix="/api/v1/maintenance", tags=["maintenance"])
 
 
+_PUBLIC_ERROR_MESSAGES = {
+    "INVALID_INVITE": "邀请 token 无效，请重新输入。",
+    "UNAUTHORIZED": "邀请 token 无效，请重新输入。",
+    "UNSUPPORTED_IMAGE": "图片格式不受支持，请上传 JPG 或 PNG。",
+    "INVALID_FILE": "文件类型、文件名或文件大小无效。",
+    "UPLOAD_FAILED": "原图上传失败，请重试或重新上传。",
+    "ANALYSIS_FAILED": "原图分析失败，请重试分析。",
+    "TASK_NOT_READY": "任务还未准备好，请回到上一步完成确认。",
+    "PROVIDER_TIMEOUT": "图片处理超时，请重试。",
+    "PROVIDER_QUOTA": "图片处理额度暂时不足，请稍后重试。",
+    "VALIDATION_REVIEW": "候选图需要人工复核，请查看结果后再决定。",
+    "TASK_EXPIRED": "任务已过期，请重新上传原图。",
+    "INVALID_PLAN": "修图计划格式无效，请重新确认修图区域。",
+    "NOT_FOUND": "任务不存在或已不可用。",
+    "PROVIDER_ERROR": "图片处理暂时不可用，请稍后重试。",
+    "IDEMPOTENCY_CONFLICT": "请求正在处理中，请稍后重试。",
+    "CANDIDATE_LIMIT": "一个任务最多生成两个候选版本。",
+    "INVALID_IDEMPOTENCY_KEY": "请求校验失败，请重试当前步骤。",
+}
+
+
+def _safe_public_error(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    raw_code = value.get("code")
+    code = raw_code if raw_code in _PUBLIC_ERROR_MESSAGES else "REQUEST_FAILED"
+    return {
+        "code": code,
+        "message": _PUBLIC_ERROR_MESSAGES.get(code, "请求失败，请稍后重试。"),
+        "retryable": value.get("retryable") is True,
+    }
+
+
+def _safe_public_asset(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    if not isinstance(value.get("url"), str) or not value["url"]:
+        return None
+    if not isinstance(value.get("expires_at"), str) or not value["expires_at"]:
+        return None
+    return value
+
+
 class CreateTaskRequest(BaseModel):
     """Metadata used to reserve one original upload."""
 
@@ -62,11 +105,22 @@ def get_task_service(request: Request) -> Generator[TaskService, None, None]:
 
 
 def _task_view(task: Any) -> dict[str, Any]:
-    return task.model_dump(
+    payload = task.model_dump(
         mode="json",
         by_alias=True,
         exclude={"idempotency_key"},
     )
+    if "error" in payload:
+        payload["error"] = _safe_public_error(payload.get("error"))
+    for key in ("original_asset_url", "mask_asset_url"):
+        if key in payload:
+            payload[key] = _safe_public_asset(payload.get(key))
+    versions = payload.get("versions")
+    if isinstance(versions, list):
+        for version in versions:
+            if isinstance(version, dict) and "asset_url" in version:
+                version["asset_url"] = _safe_public_asset(version.get("asset_url"))
+    return payload
 
 
 def _isoformat(value: Any) -> str:

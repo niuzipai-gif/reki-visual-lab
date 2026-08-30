@@ -15,17 +15,113 @@ import {
   type VersionView,
 } from "../domain/task";
 
-const USER_ERROR_MESSAGES: Record<string, string> = {
-  UNAUTHORIZED: "邀请 token 无效或已过期。",
-  INVALID_FILE: "文件类型、文件名或文件大小无效。",
-  TASK_NOT_READY: "任务还未准备好，请完成前一步操作。",
-  INVALID_PLAN: "修图计划格式无效，请重新确认修图区域。",
-  NOT_FOUND: "任务不存在或已不可用。",
-  TASK_EXPIRED: "任务已过期，请重新上传原图。",
-  PROVIDER_ERROR: "图片处理暂时不可用，请稍后重试。",
-  IDEMPOTENCY_CONFLICT: "请求正在处理中，请稍后重试。",
-  CANDIDATE_LIMIT: "一个任务最多生成两个候选版本。",
-  UPLOAD_FAILED: "原图上传失败，请稍后重试。",
+export type ErrorRecoveryAction = "invite" | "reupload" | "retry" | "back" | "review";
+
+export interface UserSafeErrorState {
+  code: string;
+  message: string;
+  action: ErrorRecoveryAction;
+  actionLabel: string;
+  retryable: boolean;
+}
+
+interface UserErrorCopy {
+  message: string;
+  action: ErrorRecoveryAction;
+  actionLabel: string;
+}
+
+const USER_ERROR_COPY: Record<string, UserErrorCopy> = {
+  INVALID_INVITE: {
+    message: "邀请 token 无效，请重新输入。",
+    action: "invite",
+    actionLabel: "重新输入邀请 token",
+  },
+  UNAUTHORIZED: {
+    message: "邀请 token 无效，请重新输入。",
+    action: "invite",
+    actionLabel: "重新输入邀请 token",
+  },
+  UNSUPPORTED_IMAGE: {
+    message: "图片格式不受支持，请上传 JPG 或 PNG。",
+    action: "reupload",
+    actionLabel: "重新上传图片",
+  },
+  INVALID_FILE: {
+    message: "文件类型、文件名或文件大小无效。",
+    action: "reupload",
+    actionLabel: "重新上传图片",
+  },
+  UPLOAD_FAILED: {
+    message: "原图上传失败，请重试或重新上传。",
+    action: "retry",
+    actionLabel: "重试上传",
+  },
+  ANALYSIS_FAILED: {
+    message: "原图分析失败，请重试分析。",
+    action: "retry",
+    actionLabel: "重试分析",
+  },
+  TASK_NOT_READY: {
+    message: "任务还未准备好，请回到上一步完成确认。",
+    action: "back",
+    actionLabel: "回到上一步",
+  },
+  PROVIDER_TIMEOUT: {
+    message: "图片处理超时，请重试。",
+    action: "retry",
+    actionLabel: "重试处理",
+  },
+  PROVIDER_QUOTA: {
+    message: "图片处理额度暂时不足，请稍后重试。",
+    action: "retry",
+    actionLabel: "稍后重试",
+  },
+  VALIDATION_REVIEW: {
+    message: "候选图需要人工复核，请查看结果后再决定。",
+    action: "review",
+    actionLabel: "查看复核结果",
+  },
+  TASK_EXPIRED: {
+    message: "任务已过期，请重新上传原图。",
+    action: "reupload",
+    actionLabel: "重新上传原图",
+  },
+  INVALID_PLAN: {
+    message: "修图计划格式无效，请重新确认修图区域。",
+    action: "back",
+    actionLabel: "回到上一步",
+  },
+  NOT_FOUND: {
+    message: "任务不存在或已不可用。",
+    action: "reupload",
+    actionLabel: "重新上传图片",
+  },
+  PROVIDER_ERROR: {
+    message: "图片处理暂时不可用，请稍后重试。",
+    action: "retry",
+    actionLabel: "重试处理",
+  },
+  IDEMPOTENCY_CONFLICT: {
+    message: "请求正在处理中，请稍后重试。",
+    action: "retry",
+    actionLabel: "重试处理",
+  },
+  CANDIDATE_LIMIT: {
+    message: "一个任务最多生成两个候选版本。",
+    action: "review",
+    actionLabel: "查看已有结果",
+  },
+  INVALID_IDEMPOTENCY_KEY: {
+    message: "请求校验失败，请重试当前步骤。",
+    action: "retry",
+    actionLabel: "重试当前步骤",
+  },
+  REQUEST_FAILED: {
+    message: "请求失败，请稍后重试。",
+    action: "retry",
+    actionLabel: "重试当前步骤",
+  },
 };
 
 export class ApiError extends Error {
@@ -56,22 +152,26 @@ function numberValue(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function safeApiMessage(code: string, value: unknown): string {
-  if (USER_ERROR_MESSAGES[code]) {
-    return USER_ERROR_MESSAGES[code];
-  }
-  if (typeof value === "string" && value.length <= 500) {
-    const trimmed = value.trim();
-    if (trimmed && !trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-      return trimmed;
-    }
-  }
-  return "请求失败，请稍后重试。";
+function errorCopy(code: string): UserErrorCopy {
+  return USER_ERROR_COPY[code] || USER_ERROR_COPY.REQUEST_FAILED;
+}
+
+export function getUserSafeErrorState(error: unknown): UserSafeErrorState {
+  const rawCode = error instanceof ApiError
+    ? error.code
+    : isRecord(error) && typeof error.code === "string"
+      ? error.code
+      : "REQUEST_FAILED";
+  const code = USER_ERROR_COPY[rawCode] ? rawCode : "REQUEST_FAILED";
+  const copy = errorCopy(code);
+  const retryable = error instanceof ApiError
+    ? error.retryable
+    : isRecord(error) && error.retryable === true;
+  return { code, ...copy, retryable };
 }
 
 export function getUserSafeErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
-  return "请求失败，请稍后重试。";
+  return getUserSafeErrorState(error).message;
 }
 
 function mapAsset(value: unknown): AssetUrl | null {
@@ -199,11 +299,11 @@ function mapVersion(value: unknown): VersionView {
 
 function mapError(value: unknown): TaskError | null {
   if (!isRecord(value)) return null;
-  const code = stringValue(value.code, "REQUEST_FAILED");
+  const state = getUserSafeErrorState(value);
   return {
-    code,
-    message: safeApiMessage(code, value.message),
-    retryable: value.retryable === true,
+    code: state.code,
+    message: state.message,
+    retryable: state.retryable,
   };
 }
 
@@ -268,7 +368,7 @@ async function request<T>(
     const code = stringValue(errorPayload.code, "REQUEST_FAILED");
     throw new ApiError(
       code,
-      safeApiMessage(code, errorPayload.message),
+      errorCopy(code).message,
       response.status,
       errorPayload.retryable === true,
     );
@@ -359,7 +459,7 @@ export async function uploadOriginal(uploadUrl: string, file: File): Promise<voi
     body: file,
   });
   if (!response.ok) {
-    throw new ApiError("UPLOAD_FAILED", USER_ERROR_MESSAGES.UPLOAD_FAILED, response.status);
+    throw new ApiError("UPLOAD_FAILED", errorCopy("UPLOAD_FAILED").message, response.status);
   }
 }
 

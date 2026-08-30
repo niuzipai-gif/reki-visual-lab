@@ -3,8 +3,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   apiClient as defaultApiClient,
   createIdempotencyKey,
-  getUserSafeErrorMessage,
+  getUserSafeErrorState,
   type ApiClient,
+  type ErrorRecoveryAction,
 } from "../app/api";
 import {
   DEFAULT_INTEGRATION,
@@ -16,6 +17,7 @@ import {
   type Goal,
   type MaskStroke,
   type Region,
+  type TaskError,
   type TaskOperation,
   type TaskView,
 } from "../domain/task";
@@ -36,6 +38,7 @@ interface AnalysisPanelProps {
   getOperationKey?: (taskId: string, operation: TaskOperation) => string;
   /** Task 7 can mount MaskCanvas here without changing this workflow. */
   renderRegionEditor?: (props: RegionEditorProps) => ReactNode;
+  onBackToUpload?: () => void;
 }
 
 const CATEGORY_META: Array<{ key: TaskCategory; label: string; fallback: string }> = [
@@ -173,6 +176,7 @@ export default function AnalysisPanel({
   previewUrl,
   getOperationKey,
   renderRegionEditor,
+  onBackToUpload,
 }: AnalysisPanelProps) {
   const cards = useMemo(
     () => CATEGORY_META.map(({ key }) => cardForCategory(task.analysis, key)),
@@ -189,6 +193,7 @@ export default function AnalysisPanel({
   const [notes, setNotes] = useState(task.plan?.notes ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [taskError, setTaskError] = useState<TaskError | null>(null);
   const [generationRetryable, setGenerationRetryable] = useState(false);
   const [generationOperationStarted, setGenerationOperationStarted] = useState(
     () => generationStartedByTask(task),
@@ -215,6 +220,7 @@ export default function AnalysisPanel({
       previousTaskIdRef.current = task.taskId;
       setGenerationRetryable(false);
       setError(null);
+      setTaskError(null);
     }
 
     if (isNewTask || !planDirtyRef.current) {
@@ -284,6 +290,7 @@ export default function AnalysisPanel({
     }
     setBusy(true);
     setError(null);
+    setTaskError(null);
     try {
       await apiClient.savePlan(task.taskId, plan, inviteToken);
       const saved = await apiClient.getTask(task.taskId, inviteToken);
@@ -291,7 +298,13 @@ export default function AnalysisPanel({
       onTaskUpdate(saved);
       return saved;
     } catch (caught) {
-      setError(getUserSafeErrorMessage(caught));
+      const safeState = getUserSafeErrorState(caught);
+      setError(safeState.message);
+      setTaskError({
+        code: safeState.code,
+        message: safeState.message,
+        retryable: safeState.retryable,
+      });
       return null;
     } finally {
       setBusy(false);
@@ -305,6 +318,7 @@ export default function AnalysisPanel({
     setGenerationOperationStarted(true);
     setBusy(true);
     setError(null);
+    setTaskError(null);
     try {
       try {
         await apiClient.startGeneration(
@@ -313,11 +327,20 @@ export default function AnalysisPanel({
           getOperationKey?.(task.taskId, "generate") || createIdempotencyKey(),
         );
       } catch (caught) {
-        setError(getUserSafeErrorMessage(caught));
+        const safeState = getUserSafeErrorState(caught);
+        setError(safeState.message);
+        setTaskError({
+          code: safeState.code,
+          message: safeState.message,
+          retryable: safeState.retryable,
+        });
         try {
           const refreshed = await apiClient.getTask(task.taskId, inviteToken);
           onTaskUpdate(refreshed);
-          if (refreshed.status === "failed") setError(null);
+          if (refreshed.status === "failed") {
+            setTaskError(refreshed.error);
+            setError(null);
+          }
         } catch {
           // Keep the local retry affordance when the status refresh is also unavailable.
         }
@@ -327,13 +350,30 @@ export default function AnalysisPanel({
       try {
         const generated = await apiClient.getTask(task.taskId, inviteToken);
         onTaskUpdate(generated);
+        setTaskError(generated.error);
         setGenerationRetryable(false);
       } catch (caught) {
-        setError(getUserSafeErrorMessage(caught));
+        const safeState = getUserSafeErrorState(caught);
+        setError(safeState.message);
+        setTaskError({
+          code: safeState.code,
+          message: safeState.message,
+          retryable: safeState.retryable,
+        });
         setGenerationRetryable(true);
       }
     } finally {
       setBusy(false);
+    }
+  }
+
+  function handleRecovery(action: ErrorRecoveryAction) {
+    if (action === "retry") {
+      void (generationAlreadyStarted ? handleGenerate() : savePlan());
+      return;
+    }
+    if (action === "back" || action === "reupload" || action === "invite") {
+      onBackToUpload?.();
     }
   }
 
@@ -494,8 +534,11 @@ export default function AnalysisPanel({
         </button>
       </div>
       {task.status === "generating" || task.status === "validating" || task.status === "succeeded" || task.status === "failed" ? (
-        <TaskProgress status={task.status} error={task.error} />
+        <TaskProgress status={task.status} error={task.error} onRecover={handleRecovery} />
       ) : null}
+      {taskError && !["failed", "expired"].includes(task.status) && (
+        <TaskProgress status="failed" error={taskError} onRecover={handleRecovery} />
+      )}
     </section>
   );
 }

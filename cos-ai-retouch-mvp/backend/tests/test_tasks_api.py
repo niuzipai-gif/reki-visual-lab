@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.config import Settings
+from app.api.routes_tasks import _task_view
 from app.db import IdempotencyRow, TaskRow, VersionRow
 from app.domain.models import (
     AssetURL,
@@ -1610,3 +1611,32 @@ def test_missing_task_and_missing_idempotency_key_use_stable_errors(api_context)
     )
     assert missing_key.status_code == 400
     assert missing_key.json()["error"]["code"] == "INVALID_IDEMPOTENCY_KEY"
+
+
+def test_task_view_redacts_untrusted_error_details_and_assets_without_expiry():
+    class UnsafeTask:
+        def model_dump(self, **_kwargs):
+            return {
+                "task_id": "task-unsafe",
+                "status": "failed",
+                "error": {
+                    "code": "PROVIDER_TIMEOUT",
+                    "message": "Traceback provider response body storage://private",
+                    "retryable": True,
+                },
+                "original_asset_url": {
+                    "kind": "original",
+                    "url": "https://storage.example/private-original.jpg",
+                    "expires_at": "",
+                },
+                "versions": [],
+            }
+
+    view = _task_view(UnsafeTask())
+
+    assert view["error"] == {
+        "code": "PROVIDER_TIMEOUT",
+        "message": "图片处理超时，请重试。",
+        "retryable": True,
+    }
+    assert view["original_asset_url"] is None

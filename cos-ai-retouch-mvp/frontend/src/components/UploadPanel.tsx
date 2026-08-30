@@ -2,15 +2,16 @@ import { useEffect, useState } from "react";
 
 import {
   createIdempotencyKey,
-  getUserSafeErrorMessage,
+  getUserSafeErrorState,
   apiClient as defaultApiClient,
   type ApiClient,
+  type ErrorRecoveryAction,
 } from "../app/api";
 import {
   MAX_UPLOAD_BYTES,
   isSupportedImageType,
 } from "../app/config";
-import type { TaskOperation, TaskView } from "../domain/task";
+import type { TaskError, TaskOperation, TaskView } from "../domain/task";
 import TaskProgress from "./TaskProgress";
 
 export type PreviewChangeHandler = (previewUrl: string | null, release?: () => void) => void;
@@ -66,6 +67,7 @@ export default function UploadPanel({
   const [uploadComplete, setUploadComplete] = useState(false);
   const [retryableAnalysis, setRetryableAnalysis] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [taskError, setTaskError] = useState<TaskError | null>(null);
   const [progressStatus, setProgressStatus] = useState<TaskView["status"]>("created");
   const [busy, setBusy] = useState(false);
 
@@ -91,15 +93,28 @@ export default function UploadPanel({
     }
     const validationError = validateFile(selected);
     setError(validationError);
+    setTaskError(
+      validationError
+        ? { code: "UNSUPPORTED_IMAGE", message: validationError, retryable: false }
+        : null,
+    );
     setFile(validationError ? null : selected);
     if (validationError) {
+      setProgressStatus("failed");
       setPreviewUrl(null);
       return;
     }
+    setProgressStatus("created");
     try {
       setPreviewUrl(await readPreview(selected));
     } catch {
       setError("原图预览失败，请重新选择文件。");
+      setTaskError({
+        code: "UNSUPPORTED_IMAGE",
+        message: "图片预览失败，请重新上传图片。",
+        retryable: false,
+      });
+      setProgressStatus("failed");
       setFile(null);
       setPreviewUrl(null);
     }
@@ -109,6 +124,7 @@ export default function UploadPanel({
     if (!file || busy) return;
     setBusy(true);
     setError(null);
+    setTaskError(null);
     let taskForRetry = createdTask;
     let isUploaded = uploadComplete;
     try {
@@ -141,10 +157,16 @@ export default function UploadPanel({
       const analyzed = await apiClient.getTask(taskForRetry.taskId, inviteToken);
       setRetryableAnalysis(analyzed.status === "analyzing");
       setProgressStatus(analyzed.status);
+      setTaskError(analyzed.error);
       onTaskUpdate(analyzed);
     } catch (caught) {
-      const safeMessage = getUserSafeErrorMessage(caught);
-      setError(safeMessage);
+      const safeState = getUserSafeErrorState(caught);
+      setError(safeState.message);
+      setTaskError({
+        code: safeState.code,
+        message: safeState.message,
+        retryable: safeState.retryable,
+      });
       setProgressStatus("failed");
       setRetryableAnalysis(Boolean(taskForRetry && isUploaded));
       onTaskUpdate({
@@ -154,11 +176,35 @@ export default function UploadPanel({
         analysis: [],
         plan: taskForRetry?.plan || null,
         versions: [],
-        error: { code: "UPLOAD_FAILED", message: safeMessage, retryable: true },
+        error: {
+          code: safeState.code,
+          message: safeState.message,
+          retryable: safeState.retryable,
+        },
       });
     } finally {
       setBusy(false);
     }
+  }
+
+  function resetUpload() {
+    setFile(null);
+    setPreviewUrl(null);
+    setCreatedTask(null);
+    setUploadComplete(false);
+    setRetryableAnalysis(false);
+    setTaskError(null);
+    setError(null);
+    setProgressStatus("created");
+    onTaskReset?.();
+  }
+
+  function handleRecovery(action: ErrorRecoveryAction) {
+    if (action === "retry") {
+      void handleUpload();
+      return;
+    }
+    resetUpload();
   }
 
   return (
@@ -198,7 +244,9 @@ export default function UploadPanel({
       <button className="primary-button" type="button" disabled={!file || busy} onClick={() => void handleUpload()}>
         {busy ? "正在准备…" : retryableAnalysis ? "重试分析" : "上传并开始分析"}
       </button>
-      {busy || progressStatus !== "created" ? <TaskProgress status={progressStatus} /> : null}
+      {busy || progressStatus !== "created" || taskError ? (
+        <TaskProgress status={progressStatus} error={taskError} onRecover={handleRecovery} />
+      ) : null}
     </section>
   );
 }

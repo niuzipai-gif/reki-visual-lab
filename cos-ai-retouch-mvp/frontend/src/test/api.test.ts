@@ -288,4 +288,22 @@ describe("typed task API client", () => {
       retryable: true,
     });
   });
+
+  it.each([
+    ["INVALID_INVITE", "邀请 token 无效，请重新输入。"],
+    ["UNSUPPORTED_IMAGE", "图片格式不受支持，请上传 JPG 或 PNG。"],
+    ["UPLOAD_FAILED", "原图上传失败，请重试或重新上传。"],
+    ["ANALYSIS_FAILED", "原图分析失败，请重试分析。"],
+    ["TASK_NOT_READY", "任务还未准备好，请回到上一步完成确认。"],
+    ["PROVIDER_TIMEOUT", "图片处理超时，请重试。"],
+    ["PROVIDER_QUOTA", "图片处理额度暂时不足，请稍后重试。"],
+    ["VALIDATION_REVIEW", "候选图需要人工复核，请查看结果后再决定。"],
+    ["TASK_EXPIRED", "任务已过期，请重新上传原图。"],
+  ])("maps %s to a bounded Chinese message without upstream details", async (code, message) => {
+    const { ApiError, getUserSafeErrorMessage } = await import("../app/api");
+    const raw = "Traceback (most recent call last): provider response body and storage://private";
+
+    expect(getUserSafeErrorMessage(new ApiError(code, raw, 500, true))).toBe(message);
+    expect(getUserSafeErrorMessage(new ApiError(code, raw, 500, true))).not.toContain(raw);
+  });
 });

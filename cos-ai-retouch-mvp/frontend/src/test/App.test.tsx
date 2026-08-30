@@ -5,6 +5,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "../app/api";
 import App, { createOperationKeyStore } from "../app/App";
 import type { TaskView } from "../domain/task";
 
@@ -395,5 +396,31 @@ describe("COS retouch app", () => {
     expect(screen.getByRole("button", { name: "保存修图计划" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "重试生成" })).toBeEnabled();
     expect(client.savePlan).not.toHaveBeenCalled();
+  });
+
+  it("returns to the invite gate when the API rejects the invite", async () => {
+    const user = userEvent.setup();
+    const client = makeClient();
+    client.createTask.mockRejectedValueOnce(
+      new ApiError(
+        "INVALID_INVITE",
+        "Traceback: provider response body storage://private",
+        401,
+      ),
+    );
+    render(<App apiClient={client} />);
+
+    await user.type(screen.getByLabelText("邀请 token"), "invalid-invite");
+    await user.click(screen.getByRole("button", { name: "进入工作台" }));
+    await user.upload(
+      screen.getByLabelText("选择 JPG 或 PNG 原图"),
+      new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
+    );
+    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+
+    expect(await screen.findByRole("heading", { name: "进入修图工作台" })).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("邀请 token 无效，请重新输入。");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Traceback");
+    expect(screen.getByLabelText("邀请 token")).toBeVisible();
   });
 });

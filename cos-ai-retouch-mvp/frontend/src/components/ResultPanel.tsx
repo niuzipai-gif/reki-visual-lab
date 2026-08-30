@@ -12,10 +12,11 @@ import {
 import {
   apiClient as defaultApiClient,
   createIdempotencyKey,
-  getUserSafeErrorMessage,
+  getUserSafeErrorState,
   type ApiClient,
+  type ErrorRecoveryAction,
 } from "../app/api";
-import type { TaskOperation, TaskView, VersionView } from "../domain/task";
+import type { TaskError, TaskOperation, TaskView, VersionView } from "../domain/task";
 import TaskProgress from "./TaskProgress";
 
 interface ResultPanelProps {
@@ -24,6 +25,7 @@ interface ResultPanelProps {
   inviteToken: string;
   onTaskUpdate: (task: TaskView) => void;
   onRestoreOriginal?: () => void;
+  onResetWorkflow?: () => void;
   apiClient?: ApiClient;
   getOperationKey?: (taskId: string, operation: TaskOperation) => string;
   createGenerationKey?: () => string;
@@ -47,6 +49,7 @@ export default function ResultPanel({
   inviteToken,
   onTaskUpdate,
   onRestoreOriginal,
+  onResetWorkflow,
   apiClient = defaultApiClient,
   getOperationKey,
   createGenerationKey,
@@ -60,6 +63,8 @@ export default function ResultPanel({
   const [zoom, setZoom] = useState(100);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [taskError, setTaskError] = useState<TaskError | null>(null);
+  const [failedAction, setFailedAction] = useState<"generate" | "download" | null>(null);
   const [dragging, setDragging] = useState(false);
   const comparisonRef = useRef<HTMLDivElement | null>(null);
 
@@ -162,6 +167,8 @@ export default function ResultPanel({
   async function regenerate() {
     setBusy(true);
     setError(null);
+    setTaskError(null);
+    setFailedAction("generate");
     try {
       await apiClient.startGeneration(
         task.taskId,
@@ -171,8 +178,16 @@ export default function ResultPanel({
           createIdempotencyKey(),
       );
       onTaskUpdate(await apiClient.getTask(task.taskId, inviteToken));
+      setTaskError(null);
+      setFailedAction(null);
     } catch (caught) {
-      setError(getUserSafeErrorMessage(caught));
+      const safeState = getUserSafeErrorState(caught);
+      setError(safeState.message);
+      setTaskError({
+        code: safeState.code,
+        message: safeState.message,
+        retryable: safeState.retryable,
+      });
     } finally {
       setBusy(false);
     }
@@ -181,14 +196,32 @@ export default function ResultPanel({
   async function downloadCurrentResult() {
     setBusy(true);
     setError(null);
+    setTaskError(null);
+    setFailedAction("download");
     try {
       const url = await apiClient.getDownloadUrl(task.taskId, inviteToken);
       if (url) window.open(url, "_blank", "noopener,noreferrer");
+      setTaskError(null);
+      setFailedAction(null);
     } catch (caught) {
-      setError(getUserSafeErrorMessage(caught));
+      const safeState = getUserSafeErrorState(caught);
+      setError(safeState.message);
+      setTaskError({
+        code: safeState.code,
+        message: safeState.message,
+        retryable: safeState.retryable,
+      });
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleRecovery(action: ErrorRecoveryAction) {
+    if (action === "retry") {
+      void (failedAction === "download" ? downloadCurrentResult() : regenerate());
+      return;
+    }
+    if (action === "back" || action === "reupload" || action === "invite") onResetWorkflow?.();
   }
 
   return (
@@ -300,8 +333,9 @@ export default function ResultPanel({
         ))}
       </div>
 
-      {task.status === "expired" && <TaskProgress status="expired" />}
+      {task.status === "expired" && <TaskProgress status="expired" onRecover={handleRecovery} />}
       {error && <p className="error-text" role="alert">{error}</p>}
+      {taskError && <TaskProgress status="failed" error={taskError} onRecover={handleRecovery} />}
       <div className="analysis-actions result-actions">
         <button className="secondary-button" type="button" disabled={busy || task.status === "expired"} onClick={restoreOriginal}>
           恢复原图

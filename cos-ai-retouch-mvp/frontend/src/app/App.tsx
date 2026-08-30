@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { createIdempotencyKey, getUserSafeErrorMessage, apiClient as defaultApiClient, type ApiClient } from "./api";
+import {
+  createIdempotencyKey,
+  getUserSafeErrorState,
+  apiClient as defaultApiClient,
+  type ApiClient,
+  type ErrorRecoveryAction,
+} from "./api";
 import type { TaskOperation, TaskView } from "../domain/task";
 import AnalysisPanel from "../components/AnalysisPanel";
 import InviteGate from "../components/InviteGate";
@@ -64,10 +70,35 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
   }
 
   function handleTaskUpdate(nextTask: TaskView) {
-    setTask(nextTask);
     if (nextTask.status === "failed" && nextTask.taskId === "local-upload") {
-      setGateError(getUserSafeErrorMessage(new Error(nextTask.error?.message)));
+      const safeState = getUserSafeErrorState(nextTask.error);
+      if (safeState.action === "invite") {
+        setGateError(safeState.message);
+        setInviteToken(null);
+        setTask(null);
+        return;
+      }
     }
+    setTask(nextTask);
+  }
+
+  function resetWorkflow() {
+    if (task) operationKeyStore.clearTask(task.taskId);
+    previewCleanupRef.current?.();
+    previewCleanupRef.current = null;
+    previewUrlRef.current = null;
+    setPreviewUrl(null);
+    setTask(null);
+  }
+
+  function handleRecovery(action: ErrorRecoveryAction) {
+    if (action === "invite") {
+      setGateError(task?.error?.message || "邀请 token 无效，请重新输入。");
+      setInviteToken(null);
+      setTask(null);
+      return;
+    }
+    if (action === "back" || action === "reupload") resetWorkflow();
   }
 
   if (!inviteToken) {
@@ -108,14 +139,7 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
               getOperationKey={operationKeyStore.get}
               onTaskUpdate={handleTaskUpdate}
               onPreviewChange={handlePreviewChange}
-              onTaskReset={() => {
-                if (task) operationKeyStore.clearTask(task.taskId);
-                previewCleanupRef.current?.();
-                previewCleanupRef.current = null;
-                previewUrlRef.current = null;
-                setPreviewUrl(null);
-                setTask(null);
-              }}
+              onTaskReset={resetWorkflow}
             />
           )}
           {showAnalysis && task && (
@@ -124,9 +148,10 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
               inviteToken={inviteToken}
               apiClient={apiClient}
               getOperationKey={operationKeyStore.get}
-              onTaskUpdate={handleTaskUpdate}
-              previewUrl={previewUrl ?? task.originalAssetUrl?.url ?? null}
-            />
+            onTaskUpdate={handleTaskUpdate}
+            previewUrl={previewUrl ?? task.originalAssetUrl?.url ?? null}
+            onBackToUpload={resetWorkflow}
+          />
           )}
           {showResult && task && (
             <ResultPanel
@@ -136,6 +161,7 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
               apiClient={apiClient}
               createGenerationKey={createIdempotencyKey}
               onTaskUpdate={handleTaskUpdate}
+              onResetWorkflow={resetWorkflow}
               onRestoreOriginal={() => {
                 setTask((current) =>
                   current
@@ -163,10 +189,10 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
             <p className="aside-copy">每个建议都需要明确确认，生成只使用结构化修图计划。</p>
           </div>
           {task?.status === "failed" && task.taskId !== "local-upload" && (
-            <TaskProgress status={task.status} error={task.error} />
+            <TaskProgress status={task.status} error={task.error} onRecover={handleRecovery} />
           )}
           {task?.status === "expired" && task.taskId !== "local-upload" && (
-            <TaskProgress status={task.status} />
+            <TaskProgress status={task.status} error={task.error} onRecover={handleRecovery} />
           )}
         </aside>
       </div>

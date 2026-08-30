@@ -8,7 +8,7 @@ The application is intentionally split into a React/Vite frontend, a FastAPI bac
 
 Node.js 20+ and Python 3.11+ are required.
 
-The commands below are the full-MVP development, test, and build commands. They become runnable after later tasks add the frontend `src/`, backend `app/`, and test files. This bootstrap task intentionally does not add application UI or business logic.
+The commands below are the full-MVP development, test, and build commands.
 
 Frontend:
 
@@ -16,7 +16,7 @@ Frontend:
 cd frontend
 npm install
 npm run dev
-npm run test
+npm run test -- --run
 npm run build
 ```
 
@@ -30,22 +30,33 @@ python -m venv .venv
 .venv\Scripts\python -m uvicorn app.main:app --reload --port 8000
 ```
 
-## Current bootstrap verification
+## Browser smoke verification
 
-At this bootstrap stage, only the project manifests and shared contract exist. Run these checks from the corresponding directories to verify the dependency metadata and lockfile without expecting the full application commands above to run yet:
-
-Frontend:
+The browser smoke uses the deterministic mock-provider contract through
+Playwright route interception. It uploads only the checked-in 160×120 solid
+color fixture at `frontend/e2e/fixtures/cos-smoke.jpg`; it never calls MinMax or
+requires an image-provider key.
 
 ```text
 cd frontend
-npm ci --dry-run
+npm install
+npx playwright install chromium
+npx playwright test e2e/invite-single-photo.spec.ts
 ```
 
-Backend:
+The flow covers invite entry, fixture selection, analysis cards, both bounded
+retouch goals, one normalized mask stroke, plan submission, result comparison,
+and requesting an expiring download URL. For a visible CLI-first run, add
+`--headed`; the local Vite server is started automatically by
+`playwright.config.ts`.
+
+Backend checks remain independent of browser provider credentials:
 
 ```text
 cd backend
-python -m pip install -e .[test]
+python -m pytest -q
+python -m ruff check app tests
+python -m compileall -q app tests
 ```
 
 ## Provider and secret boundary

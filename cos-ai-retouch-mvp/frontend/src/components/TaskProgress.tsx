@@ -1,8 +1,13 @@
 import type { TaskError, TaskStatus } from "../domain/task";
+import {
+  getUserSafeErrorState,
+  type ErrorRecoveryAction,
+} from "../app/api";
 
 interface TaskProgressProps {
   status: TaskStatus;
   error?: TaskError | null;
+  onRecover?: (action: ErrorRecoveryAction) => void;
 }
 
 const STATUS_COPY: Record<TaskStatus, { label: string; percent: number }> = {
@@ -17,8 +22,15 @@ const STATUS_COPY: Record<TaskStatus, { label: string; percent: number }> = {
   expired: { label: "任务已过期", percent: 100 },
 };
 
-export default function TaskProgress({ status, error }: TaskProgressProps) {
+export default function TaskProgress({ status, error, onRecover }: TaskProgressProps) {
   const copy = STATUS_COPY[status];
+  const errorState = getUserSafeErrorState(
+    error || (status === "expired" ? { code: "TASK_EXPIRED" } : null),
+  );
+  const displayMessage = error?.code === "PROVIDER_ERROR"
+    ? "图像服务暂时不可用，请稍后重试。"
+    : errorState.message;
+  const showError = status === "failed" || status === "expired";
   return (
     <section className={`progress-card progress-${status}`} aria-live="polite">
       <div className="progress-heading">
@@ -28,13 +40,19 @@ export default function TaskProgress({ status, error }: TaskProgressProps) {
       <div className="progress-track" aria-label={`当前进度 ${copy.percent}%`}>
         <span style={{ width: `${copy.percent}%` }} />
       </div>
-      {status === "failed" && (
+      {showError && (
+        <>
         <p className="error-text" role="alert">
-          {error?.message || "处理失败，请稍后重试。"}
+          {displayMessage}
         </p>
-      )}
-      {status === "expired" && (
-        <p className="muted">任务已过期，下载已失效。请重新上传原图开始新的任务。</p>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => onRecover?.(errorState.action)}
+          >
+            {errorState.actionLabel}
+          </button>
+        </>
       )}
     </section>
   );
