@@ -118,7 +118,7 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
               apiClient={apiClient}
               getOperationKey={operationKeyStore.get}
               onTaskUpdate={handleTaskUpdate}
-              previewUrl={previewUrl}
+              previewUrl={previewUrl ?? task.originalAssetUrl?.url ?? null}
             />
           )}
         </div>

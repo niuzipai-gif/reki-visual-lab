@@ -8,6 +8,7 @@ import {
   type CreateTaskInput,
   type EditPlan,
   type EditPlanInput,
+  type MaskStroke,
   type Region,
   type TaskError,
   type TaskView,
@@ -97,6 +98,22 @@ function mapRegion(value: unknown): Region {
   };
 }
 
+function mapMaskStroke(value: unknown): MaskStroke | null {
+  if (!isRecord(value)) return null;
+  const mode = value.mode === "erase" ? "erase" : value.mode === "add" ? "add" : null;
+  const width = numberValue(value.width);
+  const points = Array.isArray(value.points)
+    ? value.points.flatMap((point) => {
+        if (!isRecord(point)) return [];
+        const x = numberValue(point.x);
+        const y = numberValue(point.y);
+        return x === null || y === null ? [] : [{ x, y }];
+      })
+    : [];
+  if (!mode || width === null || points.length === 0) return null;
+  return { mode, width, points };
+}
+
 function mapAnalysisCard(value: unknown): AnalysisCard {
   const card = isRecord(value) ? value : {};
   const regions = Array.isArray(card.regions) ? card.regions.map(mapRegion) : [];
@@ -114,6 +131,7 @@ function mapAnalysisCard(value: unknown): AnalysisCard {
 
 function mapPlan(value: unknown): EditPlan | null {
   if (!isRecord(value)) return null;
+  const rawMaskStrokes = value.mask_strokes ?? value.maskStrokes;
   const operations = Array.isArray(value.operations)
     ? value.operations.map((operation) => {
         const item = isRecord(operation) ? operation : {};
@@ -140,6 +158,12 @@ function mapPlan(value: unknown): EditPlan | null {
       ? value.preserve.filter((item): item is string => typeof item === "string")
       : [...DEFAULT_PRESERVE],
     regions: Array.isArray(value.regions) ? value.regions.map(mapRegion) : [],
+    maskStrokes: Array.isArray(rawMaskStrokes)
+      ? rawMaskStrokes.flatMap((stroke: unknown) => {
+          const mapped = mapMaskStroke(stroke);
+          return mapped ? [mapped] : [];
+        })
+      : [],
     operations,
     intensity: numberValue(value.intensity) ?? 55,
     integration: Array.isArray(value.integration)
@@ -294,6 +318,7 @@ function toWirePlan(plan: EditPlanInput): Record<string, unknown> {
     goals: plan.goals,
     preserve: plan.preserve ?? [...DEFAULT_PRESERVE],
     regions: (plan.regions ?? []).map(toWireRegion),
+    mask_strokes: plan.maskStrokes ?? [],
     operations: plan.operations.map((operation) => ({
       ...(operation.id ? { id: operation.id } : {}),
       kind: operation.kind,

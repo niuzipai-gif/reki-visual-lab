@@ -52,6 +52,12 @@ export interface Region {
   maskAssetUrl?: AssetUrl | null;
 }
 
+export type MaskStroke = {
+  mode: "add" | "erase";
+  width: number;
+  points: Array<{ x: number; y: number }>;
+};
+
 export interface AnalysisCard {
   id: string;
   category: string;
@@ -77,6 +83,7 @@ export interface EditPlanInput {
   goals: Goal[];
   preserve?: string[];
   regions?: Region[];
+  maskStrokes?: MaskStroke[];
   operations: OperationInput[];
   intensity?: number;
   integration?: string[];
@@ -87,6 +94,7 @@ export interface EditPlanInput {
 export interface EditPlan extends EditPlanInput {
   preserve: string[];
   regions: Region[];
+  maskStrokes: MaskStroke[];
   intensity: number;
   integration: string[];
   validation: string[];

@@ -83,6 +83,23 @@ The browser converts display pixels to this form before sending them. It must
 not send screen pixels or re-scale coordinates after a responsive resize.
 When present, `mask_asset_url` is an Asset URL whose `kind` is `mask`.
 
+### Mask stroke
+
+The browser keeps user mask edits as an ordered list of strokes. Each stroke
+has this exact shape; `points` are normalized against the displayed image
+width and height, so responsive resizing does not change the selected geometry:
+
+```pseudo-json
+{
+  "mode": "add",
+  "width": 24,
+  "points": [{"x": 0.25, "y": 0.20}, {"x": 0.30, "y": 0.25}]
+}
+```
+
+`mode` is exactly `add` or `erase`. Undo removes only the last stroke, and an
+erase stroke remains `mode: "erase"` when it is sent in the plan.
+
 ### Analysis card
 
 ```pseudo-json
@@ -118,6 +135,7 @@ regions require explicit user confirmation.
     "noise consistency"
   ],
   "regions": [/* Region */],
+  "mask_strokes": [/* Mask stroke */],
   "operations": [
     {
       "id": "UUID",
@@ -148,9 +166,12 @@ regions require explicit user confirmation.
 ```
 
 `intensity` and operation intensity are integers from `0..100`; the UI maps
-自然 / 标准 / 明显 to `25 / 55 / 80`. `notes` is optional and capped at 500
-characters. A structure-repair operation must reference a confirmed local
-region; the domain rejects enabled operations with empty or dangling region
+自然 / 标准 / 明显 to `25 / 55 / 80`. `mask_strokes` is ordered and keeps the
+exact stroke shape above. `notes` is optional and capped at 500 characters; it
+can supplement but cannot replace the structured fields. A structure-repair
+operation must reference a confirmed local region and a non-empty user mask;
+the browser refuses to submit a structure-repair plan with no stroke points,
+and the domain rejects enabled operations with empty or dangling region
 references. The default `preserve` list above is mandatory unless a future
 contract explicitly adds a stronger protection rule.
 

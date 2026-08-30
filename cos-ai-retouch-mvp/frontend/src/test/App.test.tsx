@@ -48,6 +48,7 @@ const plannedTask: TaskView = {
     goals: ["natural_retouch"],
     preserve: [],
     regions: [],
+    maskStrokes: [],
     operations: [{ kind: "skin_retouch", goal: "natural_retouch", regionIds: [], intensity: 55, enabled: true }],
     intensity: 55,
     integration: [],

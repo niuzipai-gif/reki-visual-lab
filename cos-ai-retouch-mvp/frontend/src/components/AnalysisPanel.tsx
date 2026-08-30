@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
   apiClient as defaultApiClient,
@@ -14,11 +14,13 @@ import {
   type TaskCategory,
   type EditPlanInput,
   type Goal,
+  type MaskStroke,
   type Region,
   type TaskOperation,
   type TaskView,
 } from "../domain/task";
 import TaskProgress from "./TaskProgress";
+import MaskCanvas from "./MaskCanvas";
 
 interface RegionEditorProps {
   region: Region;
@@ -54,6 +56,23 @@ const OPERATION_KIND: Record<TaskCategory, string> = {
   lighting: "light_balance",
 };
 
+const PRESERVE_LABELS: Array<{ value: string; label: string }> = [
+  { value: "face identity", label: "脸部身份" },
+  { value: "costume design", label: "服装设计" },
+  { value: "main pose", label: "主体姿势" },
+  { value: "composition", label: "构图" },
+  { value: "background structure", label: "背景结构" },
+  { value: "original light direction", label: "光线方向" },
+  { value: "perspective", label: "透视关系" },
+  { value: "noise consistency", label: "噪点一致性" },
+];
+
+const INTENSITY_VALUES = [25, 55, 80] as const;
+
+function normalizeIntensity(value: number | undefined): number {
+  return INTENSITY_VALUES.includes(value as (typeof INTENSITY_VALUES)[number]) ? value as number : 55;
+}
+
 function cardForCategory(cards: AnalysisCard[], key: TaskCategory): AnalysisCard {
   return (
     cards.find((card) => card.category === key) || {
@@ -88,25 +107,31 @@ export function buildEditPlan(
   cards: AnalysisCard[],
   enabledIds: Set<string>,
   goal: Goal | "both",
+  intensity = 55,
+  maskStrokes: MaskStroke[] = [],
+  notes?: string,
 ): EditPlanInput {
   const selectedCards = cards.filter((card) => enabledIds.has(card.id));
   const regions = selectedCards.flatMap((card) => card.regions);
+  const selectedIntensity = normalizeIntensity(intensity);
   return {
     goals: selectedGoal(goal),
     preserve: [...DEFAULT_PRESERVE],
     regions,
+    maskStrokes: [...maskStrokes],
     operations: selectedCards.map((card) => ({
       kind: OPERATION_KIND[card.category as TaskCategory] || "local_detail",
       goal: goal === "structure_repair" || (goal === "both" && card.category === "body_pose")
         ? "structure_repair"
         : "natural_retouch",
       regionIds: card.regions.map((region) => region.id),
-      intensity: 55,
+      intensity: selectedIntensity,
       enabled: true,
     })),
-    intensity: 55,
+    intensity: selectedIntensity,
     integration: [...DEFAULT_INTEGRATION],
     validation: [...DEFAULT_VALIDATION],
+    notes: notes ? notes.slice(0, 500) : null,
   };
 }
 
@@ -129,6 +154,9 @@ export default function AnalysisPanel({
   );
   const [enabledIds, setEnabledIds] = useState<Set<string>>(initialEnabled);
   const [goal, setGoal] = useState<Goal | "both">("natural_retouch");
+  const [intensity, setIntensity] = useState(() => normalizeIntensity(task.plan?.intensity));
+  const [strokes, setStrokes] = useState<MaskStroke[]>(task.plan?.maskStrokes ?? []);
+  const [notes, setNotes] = useState(task.plan?.notes ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generationRetryable, setGenerationRetryable] = useState(false);
@@ -141,6 +169,12 @@ export default function AnalysisPanel({
     GENERATION_ACTIVE_STATUSES.has(task.status) ||
     (task.status === "failed" && Boolean(task.plan));
 
+  useEffect(() => {
+    setIntensity(normalizeIntensity(task.plan?.intensity));
+    setStrokes(task.plan?.maskStrokes ?? []);
+    setNotes(task.plan?.notes ?? "");
+  }, [task.taskId]);
+
   function toggleCard(cardId: string) {
     setEnabledIds((current) => {
       const next = new Set(current);
@@ -151,15 +185,20 @@ export default function AnalysisPanel({
   }
 
   async function savePlan() {
-    const plan = buildEditPlan(cards, enabledIds, goal);
+    const plan = buildEditPlan(cards, enabledIds, goal, intensity, strokes, notes);
     if (!plan.operations.length) {
       setError("请至少启用一张分析卡片。");
       return null;
     }
-    if (
-      goal === "structure_repair" &&
-      plan.operations.some((operation) => operation.regionIds?.length === 0)
-    ) {
+    const hasStructureRepair = plan.operations.some(
+      (operation) => operation.enabled && operation.goal === "structure_repair",
+    );
+    const hasMask = strokes.some((stroke) => stroke.points.length > 0);
+    if (hasStructureRepair && !hasMask) {
+      setError("结构修复需要至少绘制一笔局部蒙版后才能保存。");
+      return null;
+    }
+    if (hasStructureRepair && plan.operations.some((operation) => operation.regionIds?.length === 0)) {
       setError("结构修复必须绑定已标注的局部区域。");
       return null;
     }
@@ -214,7 +253,13 @@ export default function AnalysisPanel({
       <p className="muted">建议默认关闭。请逐卡确认需要处理的区域，低置信度区域不会自动进入修图计划。</p>
       {previewUrl && (
         <div className="analysis-preview" aria-label="原图与区域标注">
-          <img src={previewUrl} alt="原图分析预览" />
+          <MaskCanvas
+            originalImageUrl={previewUrl}
+            regions={cards.flatMap((card) => card.regions)}
+            strokes={strokes}
+            onChange={setStrokes}
+            disabled={generationAlreadyStarted || busy}
+          />
           {cards.flatMap((card) => card.regions).map((region) => (
             <div
               className="region-highlight"
@@ -252,6 +297,36 @@ export default function AnalysisPanel({
             {label}
           </label>
         ))}
+      </div>
+      <fieldset className="intensity-picker" disabled={generationAlreadyStarted || busy}>
+        <legend className="control-label">处理强度</legend>
+        {([
+          [25, "自然"],
+          [55, "标准"],
+          [80, "明显"],
+        ] as const).map(([value, label]) => (
+          <label key={value}>
+            <input
+              type="radio"
+              name="intensity"
+              value={value}
+              checked={intensity === value}
+              aria-label={label}
+              onChange={() => setIntensity(value)}
+            />
+            {label} · {value}
+          </label>
+        ))}
+      </fieldset>
+      <div className="preserve-checklist" aria-label="始终保护清单">
+        <div className="control-label">始终保护</div>
+        <ul>
+          {PRESERVE_LABELS.map(({ value, label }) => (
+            <li key={value}>
+              <span aria-hidden="true">✓</span> {label}
+            </li>
+          ))}
+        </ul>
       </div>
       <div className="analysis-grid">
         {cards.map((card) => {
@@ -291,6 +366,18 @@ export default function AnalysisPanel({
           );
         })}
       </div>
+      <label className="notes-field">
+        补充说明（可选）
+        <textarea
+          value={notes}
+          maxLength={500}
+          rows={3}
+          aria-label="补充说明"
+          disabled={generationAlreadyStarted || busy}
+          onChange={(event) => setNotes(event.target.value.slice(0, 500))}
+        />
+        <span className="muted">{notes.length}/500 · 仅作为结构化修图计划的补充</span>
+      </label>
       {error && <p className="error-text" role="alert">{error}</p>}
       <div className="analysis-actions">
         <button
