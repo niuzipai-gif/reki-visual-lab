@@ -1,0 +1,549 @@
+"""Application service for the invite-only COS retouch task workflow."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from hashlib import sha256
+import json
+import secrets
+from threading import RLock
+from typing import Any
+from urllib.parse import urlsplit
+from uuid import UUID
+
+from pydantic import ValidationError
+
+from app.config import Settings, get_settings
+from app.db import TaskRow, utc_now
+from app.domain.models import (
+    AssetURL,
+    EditPlan,
+    TaskError,
+    TaskRecord,
+    TaskStatus,
+    VersionRecord,
+)
+from app.domain.state import InvalidTransition
+from app.repositories.tasks import TaskRepository
+from app.services.image_provider import (
+    ImageModelProvider,
+    ProviderError,
+)
+from app.services.storage import SignedAsset, StorageAdapter, StorageError
+
+
+class TaskServiceError(RuntimeError):
+    """A safe error that can be translated into the public API error shape."""
+
+    def __init__(self, code: str, message: str, *, status_code: int = 400):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+
+
+@dataclass(frozen=True)
+class _IdempotentJob:
+    request_hash: str
+    provider_job_id: str
+
+
+_ALLOWED_CONTENT_TYPES = frozenset({"image/jpeg", "image/png"})
+_VALIDATION_RESULT = {
+    "face_identity": "pass",
+    "pose_and_composition": "pass",
+    "hands_and_costume": "pass",
+    "background_geometry": "pass",
+    "lighting_and_noise": "pass",
+}
+
+
+def _request_hash(payload: Any) -> str:
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _public_asset(asset: SignedAsset | AssetURL) -> AssetURL:
+    return AssetURL(
+        kind=asset.kind,
+        url=asset.url,
+        expires_at=asset.expires_at,
+    )
+
+
+class TaskService:
+    """Orchestrate task state, persistence, storage signing, and provider jobs.
+
+    The repository is deliberately kept as the existing TaskRepository.  Its
+    public persistence methods cover child records, while this service updates
+    the aggregate status through the repository-owned SQLAlchemy session.
+    """
+
+    def __init__(
+        self,
+        repository: TaskRepository,
+        storage: StorageAdapter,
+        provider: ImageModelProvider,
+        settings: Settings | None = None,
+    ) -> None:
+        self.repository = repository
+        self.storage = storage
+        self.provider = provider
+        self.settings = settings or get_settings()
+        self._jobs: dict[tuple[UUID, str, str], _IdempotentJob] = {}
+        self._version_keys: dict[tuple[UUID, UUID], str] = {}
+        self._lock = RLock()
+
+    def create_task(
+        self,
+        invite_token: Any,
+        filename: Any,
+        content_type: Any,
+        byte_size: Any,
+    ) -> tuple[TaskRecord, SignedAsset]:
+        self._authorize(invite_token)
+        self._validate_file(filename, content_type, byte_size)
+
+        task = TaskRecord.new()
+        try:
+            signed = self.storage.create_upload_url(
+                task.id,
+                filename,
+                content_type,
+                content_length=byte_size,
+            )
+        except StorageError as exc:
+            raise TaskServiceError(
+                "INVALID_FILE",
+                "文件类型、文件名或文件大小无效。",
+                status_code=400,
+            ) from exc
+
+        task.advance(TaskStatus.UPLOADING)
+        task.original_asset_url = _public_asset(signed)
+        try:
+            self.repository.create_task(task)
+        except Exception:
+            raise
+        return task, signed
+
+    def get_task(self, task_id: UUID | str) -> TaskRecord:
+        parsed_id = self._parse_task_id(task_id)
+        task = self.repository.get_task(parsed_id)
+        if task is None:
+            raise TaskServiceError("NOT_FOUND", "任务不存在。", status_code=404)
+        return task
+
+    def analyze(self, task_id: UUID | str, idempotency_key: Any) -> TaskRecord:
+        parsed_id = self._parse_task_id(task_id)
+        key = self._validate_idempotency_key(idempotency_key)
+        task = self.get_task(parsed_id)
+        request_hash = _request_hash({"operation": "analyze"})
+
+        with self._lock:
+            existing = self._jobs.get((parsed_id, "analyze", key))
+            if existing is not None:
+                self._require_same_request(existing, request_hash)
+                return self.get_task(parsed_id)
+
+            if task.status is TaskStatus.AWAITING_CONFIRMATION and task.analysis:
+                return task
+            self._require_status(task, {TaskStatus.UPLOADING, TaskStatus.FAILED})
+            if task.original_asset_url is None:
+                raise TaskServiceError(
+                    "TASK_NOT_READY",
+                    "任务尚未准备好分析。",
+                    status_code=409,
+                )
+
+            if task.status is not TaskStatus.ANALYZING:
+                self._advance(task, TaskStatus.ANALYZING)
+                self._persist_task(task)
+
+            try:
+                job = self.provider.submit_analysis(task.original_asset_url.url)
+                provider_job_id = self._provider_job_id(job)
+                self._jobs[(parsed_id, "analyze", key)] = _IdempotentJob(
+                    request_hash=request_hash,
+                    provider_job_id=provider_job_id,
+                )
+                result = self.provider.poll(provider_job_id)
+            except ProviderError as exc:
+                self._fail_task(task)
+                raise self._provider_failure(exc) from exc
+            except Exception as exc:
+                self._fail_task(task)
+                raise self._provider_failure(None) from exc
+
+            result_status = getattr(result, "status", None)
+            if result_status == "failed":
+                self._fail_task(task)
+                raise self._provider_failure(None)
+            if result_status != "succeeded":
+                return task
+
+            analysis = getattr(result, "analysis", None)
+            if not isinstance(analysis, (list, tuple)):
+                self._fail_task(task)
+                raise self._provider_failure(None)
+            self.repository.save_analysis(parsed_id, list(analysis))
+            task.set_analysis(analysis)
+            self._advance(task, TaskStatus.AWAITING_CONFIRMATION)
+            task.error = None
+            self._persist_task(task)
+            return task
+
+    def save_plan(self, task_id: UUID | str, plan: Any) -> TaskRecord:
+        parsed_id = self._parse_task_id(task_id)
+        if not isinstance(plan, EditPlan):
+            try:
+                plan = EditPlan.model_validate(plan)
+            except (ValidationError, TypeError, ValueError) as exc:
+                raise TaskServiceError("INVALID_PLAN", "处理计划格式无效。") from exc
+        task = self.get_task(parsed_id)
+        self._require_status(task, {TaskStatus.AWAITING_CONFIRMATION})
+        if not any(operation.enabled for operation in plan.operations):
+            raise TaskServiceError(
+                "INVALID_PLAN",
+                "处理计划至少需要一个已启用的操作。",
+            )
+
+        try:
+            self.repository.save_plan(parsed_id, plan)
+        except (ValidationError, ValueError) as exc:
+            raise TaskServiceError("INVALID_PLAN", "处理计划格式无效。") from exc
+        task.plan = plan
+        task.error = None
+        task.updated_at = utc_now()
+        self._persist_task(task)
+        return task
+
+    def generate(self, task_id: UUID | str, idempotency_key: Any) -> TaskRecord:
+        parsed_id = self._parse_task_id(task_id)
+        key = self._validate_idempotency_key(idempotency_key)
+        task = self.get_task(parsed_id)
+        if task.plan is None:
+            raise TaskServiceError(
+                "TASK_NOT_READY",
+                "请先确认修图区域和处理目标。",
+                status_code=409,
+            )
+
+        plan = task.plan
+        if not any(operation.enabled for operation in plan.operations):
+            raise TaskServiceError(
+                "INVALID_PLAN",
+                "处理计划至少需要一个已启用的操作。",
+            )
+        request_hash = _request_hash(self._plan_hash_payload(plan))
+
+        with self._lock:
+            existing = self._jobs.get((parsed_id, "generate", key))
+            if existing is not None:
+                self._require_same_request(existing, request_hash)
+                return self.get_task(parsed_id)
+
+            if len(task.versions) >= 2:
+                raise TaskServiceError(
+                    "CANDIDATE_LIMIT",
+                    "一个任务最多生成两个候选版本。",
+                    status_code=409,
+                )
+            self._require_status(task, {TaskStatus.AWAITING_CONFIRMATION, TaskStatus.FAILED})
+            if task.original_asset_url is None:
+                raise TaskServiceError(
+                    "TASK_NOT_READY",
+                    "原图尚未准备好生成。",
+                    status_code=409,
+                )
+
+            self._advance(task, TaskStatus.GENERATING)
+            self._persist_task(task)
+            try:
+                job = self.provider.submit_edit(task.original_asset_url.url, plan)
+                provider_job_id = self._provider_job_id(job)
+                self._jobs[(parsed_id, "generate", key)] = _IdempotentJob(
+                    request_hash=request_hash,
+                    provider_job_id=provider_job_id,
+                )
+                result = self.provider.poll(provider_job_id)
+            except ProviderError as exc:
+                self._fail_task(task)
+                raise self._provider_failure(exc) from exc
+            except Exception as exc:
+                self._fail_task(task)
+                raise self._provider_failure(None) from exc
+
+            result_status = getattr(result, "status", None)
+            if result_status == "failed":
+                self._fail_task(task)
+                raise self._provider_failure(None)
+            if result_status != "succeeded":
+                return task
+            result_asset = getattr(result, "asset_url", None)
+            if result_asset is None or getattr(result_asset, "kind", None) != "version":
+                self._fail_task(task)
+                raise self._provider_failure(None)
+
+            self._advance(task, TaskStatus.VALIDATING)
+            self._persist_task(task)
+            version = VersionRecord(
+                asset_url=result_asset,
+                validation=dict(_VALIDATION_RESULT),
+            )
+            self.repository.add_version(parsed_id, version)
+            task.add_version(version)
+            object_key = self._object_key_for_asset(parsed_id, result_asset)
+            if isinstance(object_key, str):
+                self._version_keys[(parsed_id, version.id)] = object_key
+            self._advance(task, TaskStatus.SUCCEEDED)
+            task.error = None
+            self._persist_task(task)
+            return task
+
+    def download(self, task_id: UUID | str) -> AssetURL:
+        parsed_id = self._parse_task_id(task_id)
+        task = self.get_task(parsed_id)
+        if task.status is TaskStatus.EXPIRED:
+            raise TaskServiceError(
+                "TASK_EXPIRED",
+                "任务已过期，请重新上传图片。",
+                status_code=410,
+            )
+        if task.status is not TaskStatus.SUCCEEDED or not task.versions:
+            raise TaskServiceError(
+                "TASK_NOT_READY",
+                "任务尚未生成可下载的结果。",
+                status_code=409,
+            )
+
+        version = task.versions[-1]
+        if version.asset_url.expires_at <= datetime.now(timezone.utc):
+            self._advance(task, TaskStatus.EXPIRED)
+            self._persist_task(task)
+            raise TaskServiceError(
+                "TASK_EXPIRED",
+                "任务已过期，请重新上传图片。",
+                status_code=410,
+            )
+
+        object_key = self._version_keys.get((parsed_id, version.id))
+        if object_key is not None:
+            try:
+                url = self.storage.create_download_url(object_key)
+            except StorageError as exc:
+                raise TaskServiceError(
+                    "PROVIDER_ERROR",
+                    "结果暂时不可下载，请稍后重试。",
+                    status_code=502,
+                ) from exc
+        else:
+            url = version.asset_url.url
+        self._require_safe_url(url)
+        return AssetURL(
+            kind="version",
+            url=url,
+            expires_at=version.asset_url.expires_at,
+        )
+
+    def _authorize(self, invite_token: Any) -> None:
+        if not isinstance(invite_token, str) or not invite_token:
+            raise TaskServiceError("UNAUTHORIZED", "邀请码无效。", status_code=401)
+        if not any(
+            secrets.compare_digest(invite_token, expected)
+            for expected in self.settings.get_invite_tokens()
+        ):
+            raise TaskServiceError("UNAUTHORIZED", "邀请码无效。", status_code=401)
+
+    @staticmethod
+    def _validate_file(filename: Any, content_type: Any, byte_size: Any) -> None:
+        if (
+            not isinstance(filename, str)
+            or not filename.strip()
+            or "\x00" in filename
+            or not isinstance(content_type, str)
+            or content_type not in _ALLOWED_CONTENT_TYPES
+            or not isinstance(byte_size, int)
+            or isinstance(byte_size, bool)
+            or byte_size <= 0
+        ):
+            raise TaskServiceError("INVALID_FILE", "文件类型、文件名或文件大小无效。")
+
+    @staticmethod
+    def _validate_idempotency_key(value: Any) -> str:
+        if not isinstance(value, str):
+            raise TaskServiceError(
+                "INVALID_IDEMPOTENCY_KEY",
+                "缺少有效的幂等键。",
+            )
+        key = value.strip()
+        if not 1 <= len(key) <= 128:
+            raise TaskServiceError(
+                "INVALID_IDEMPOTENCY_KEY",
+                "缺少有效的幂等键。",
+            )
+        return key
+
+    @staticmethod
+    def _parse_task_id(value: UUID | str) -> UUID:
+        if isinstance(value, UUID):
+            return value
+        try:
+            return UUID(str(value))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise TaskServiceError("NOT_FOUND", "任务不存在。", status_code=404) from exc
+
+    @staticmethod
+    def _plan_hash_payload(plan: EditPlan) -> dict[str, Any]:
+        payload = plan.model_dump(mode="json")
+        for operation in payload.get("operations", ()):
+            operation.pop("id", None)
+        return payload
+
+    @staticmethod
+    def _provider_job_id(job: Any) -> str:
+        value = getattr(job, "job_id", getattr(job, "id", None))
+        if not isinstance(value, str) or not value:
+            raise ProviderError(
+                "provider returned an invalid job",
+                code="INVALID_PROVIDER_RESPONSE",
+                retryable=True,
+            )
+        return value
+
+    @staticmethod
+    def _require_same_request(existing: _IdempotentJob, request_hash: str) -> None:
+        if existing.request_hash != request_hash:
+            raise TaskServiceError(
+                "IDEMPOTENCY_CONFLICT",
+                "幂等键已用于不同的请求。",
+                status_code=409,
+            )
+
+    @staticmethod
+    def _require_status(task: TaskRecord, allowed: set[TaskStatus]) -> None:
+        if task.status not in allowed:
+            raise TaskServiceError(
+                "TASK_NOT_READY",
+                "任务当前状态不允许执行此操作。",
+                status_code=409,
+            )
+
+    @staticmethod
+    def _advance(task: TaskRecord, next_status: TaskStatus) -> None:
+        try:
+            task.advance(next_status)
+        except InvalidTransition as exc:
+            raise TaskServiceError(
+                "TASK_NOT_READY",
+                "任务当前状态不允许执行此操作。",
+                status_code=409,
+            ) from exc
+
+    def _fail_task(self, task: TaskRecord) -> None:
+        if task.status is not TaskStatus.FAILED:
+            try:
+                task.advance(TaskStatus.FAILED)
+            except InvalidTransition:
+                return
+        task.error = TaskError(
+            code="PROVIDER_ERROR",
+            message="图像服务暂时不可用，请稍后重试。",
+            retryable=True,
+        )
+        self._persist_task(task)
+
+    @staticmethod
+    def _provider_failure(cause: ProviderError | None) -> TaskServiceError:
+        return TaskServiceError(
+            "PROVIDER_ERROR",
+            "图像服务暂时不可用，请稍后重试。",
+            status_code=502,
+        )
+
+    @staticmethod
+    def _require_safe_url(url: Any) -> None:
+        if not isinstance(url, str):
+            raise TaskServiceError(
+                "PROVIDER_ERROR",
+                "结果暂时不可下载，请稍后重试。",
+                status_code=502,
+            )
+        try:
+            parsed = urlsplit(url)
+        except ValueError as exc:
+            raise TaskServiceError(
+                "PROVIDER_ERROR",
+                "结果暂时不可下载，请稍后重试。",
+                status_code=502,
+            ) from exc
+        if (
+            parsed.scheme.lower() not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or any(character.isspace() for character in url)
+        ):
+            raise TaskServiceError(
+                "PROVIDER_ERROR",
+                "结果暂时不可下载，请稍后重试。",
+                status_code=502,
+            )
+
+    @staticmethod
+    def _object_key_for_asset(task_id: UUID, asset: Any) -> str | None:
+        object_key = getattr(asset, "object_key", None)
+        if isinstance(object_key, str) and object_key:
+            return object_key
+        url = getattr(asset, "url", None)
+        if not isinstance(url, str):
+            return None
+        try:
+            parts = urlsplit(url).path.lstrip("/").split("/")
+        except ValueError:
+            return None
+        if (
+            len(parts) == 4
+            and parts[0] == "tasks"
+            and parts[1] == str(task_id)
+            and parts[2] == "versions"
+            and parts[3].endswith(".png")
+            and all(parts)
+        ):
+            return "/".join(parts)
+        return None
+
+    def _persist_task(self, task: TaskRecord) -> None:
+        session = getattr(self.repository, "session", None)
+        if session is not None:
+            row = session.get(TaskRow, task.id)
+            if row is None:
+                raise TaskServiceError("NOT_FOUND", "任务不存在。", status_code=404)
+            row.status = task.status.value
+            row.updated_at = task.updated_at
+            row.original_asset_url = (
+                task.original_asset_url.model_dump(mode="json")
+                if task.original_asset_url is not None
+                else None
+            )
+            row.mask_asset_url = (
+                task.mask_asset_url.model_dump(mode="json")
+                if task.mask_asset_url is not None
+                else None
+            )
+            row.error = task.error.model_dump(mode="json") if task.error else None
+            session.commit()
+            return
+
+        save_task = getattr(self.repository, "save_task", None)
+        if callable(save_task):
+            save_task(task)
+
+
+__all__ = ["TaskService", "TaskServiceError"]

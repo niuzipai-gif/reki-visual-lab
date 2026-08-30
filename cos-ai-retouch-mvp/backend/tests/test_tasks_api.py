@@ -1,0 +1,351 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from typing import Any
+from uuid import UUID
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.config import Settings
+from app.db import VersionRow
+from app.domain.models import AssetURL, EditPlan, VersionRecord
+from app.services.image_provider import MockImageModelProvider, ProviderError
+from app.services.storage import InMemoryStorageAdapter
+
+
+class CountingProvider:
+    """A test double that preserves the real mock provider behavior."""
+
+    def __init__(self, settings: Settings):
+        self.delegate = MockImageModelProvider(settings)
+        self.analysis_submissions = 0
+        self.edit_submissions = 0
+
+    def submit_analysis(self, source_url: str):
+        self.analysis_submissions += 1
+        return self.delegate.submit_analysis(source_url)
+
+    def submit_edit(self, source_url: str, plan: EditPlan):
+        self.edit_submissions += 1
+        return self.delegate.submit_edit(source_url, plan)
+
+    def poll(self, job_id: str):
+        return self.delegate.poll(job_id)
+
+
+class FailingProvider(CountingProvider):
+    def submit_edit(self, source_url: str, plan: EditPlan):
+        self.edit_submissions += 1
+        raise ProviderError(
+            "provider failed with server-only-secret and upstream body",
+            code="UPSTREAM_ERROR",
+        )
+
+
+@pytest.fixture
+def api_context(repository):
+    from app.main import create_app
+
+    settings = Settings(
+        invite_tokens=["invite-demo"],
+        max_upload_bytes=1024 * 1024,
+        asset_ttl_hours=1,
+    )
+    storage = InMemoryStorageAdapter(settings)
+    provider = CountingProvider(settings)
+    app = create_app(
+        settings=settings,
+        repository=repository,
+        storage=storage,
+        provider=provider,
+    )
+    with TestClient(app) as client:
+        yield client, repository, storage, provider
+
+
+def _create(client: TestClient, **overrides: Any):
+    payload = {
+        "invite_token": "invite-demo",
+        "filename": "cos-photo.jpg",
+        "content_type": "image/jpeg",
+        "byte_size": 1200,
+    }
+    payload.update(overrides)
+    return client.post("/api/v1/tasks", json=payload)
+
+
+def _plan_payload() -> dict[str, Any]:
+    return {
+        "goals": ["natural_retouch"],
+        "regions": [
+            {
+                "id": "face-1",
+                "label": "face",
+                "x": 0.25,
+                "y": 0.2,
+                "width": 0.3,
+                "height": 0.4,
+            }
+        ],
+        "operations": [
+            {
+                "kind": "skin_retouch",
+                "goal": "natural_retouch",
+                "region_ids": ["face-1"],
+                "intensity": 55,
+                "enabled": True,
+            }
+        ],
+    }
+
+
+def _prepare_confirmation(client: TestClient, task_id: str | None = None):
+    task_id = task_id or _create(client).json()["task_id"]
+    analyzed = client.post(
+        f"/api/v1/tasks/{task_id}/analyze",
+        headers={"Idempotency-Key": "analysis-once"},
+    )
+    assert analyzed.status_code == 200
+    assert analyzed.json()["status"] == "awaiting_confirmation"
+    return task_id
+
+
+def test_healthz_and_task_creation_require_invite_and_return_upload_reservation(
+    api_context,
+):
+    client, _repository, _storage, _provider = api_context
+
+    health = client.get("/healthz")
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok"}
+
+    missing = client.post(
+        "/api/v1/tasks",
+        json={
+            "filename": "cos-photo.jpg",
+            "content_type": "image/jpeg",
+            "byte_size": 1200,
+        },
+    )
+    invalid = _create(client, invite_token="not-valid")
+    empty = client.post("/api/v1/tasks")
+    assert missing.status_code == invalid.status_code == empty.status_code == 401
+    assert missing.json()["error"]["code"] == "UNAUTHORIZED"
+    assert invalid.json()["error"]["code"] == "UNAUTHORIZED"
+    assert empty.json()["error"]["code"] == "UNAUTHORIZED"
+
+    created = _create(client)
+    assert created.status_code == 200
+    body = created.json()
+    assert body["task_id"]
+    assert body["upload_url"].startswith("https://")
+    assert body["expires_at"]
+    assert body["status"] == "uploading"
+    assert "invite-demo" not in created.text
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"content_type": "image/gif"},
+        {"content_type": "application/octet-stream"},
+        {"byte_size": 1024 * 1024 + 1},
+        {"filename": None},
+        {"filename": ""},
+    ],
+)
+def test_task_creation_rejects_invalid_files_as_stable_400(overrides, api_context):
+    client, _repository, _storage, _provider = api_context
+
+    response = _create(client, **overrides)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_FILE"
+
+
+def test_analysis_transitions_to_confirmation_and_is_idempotent(api_context):
+    client, repository, _storage, provider = api_context
+    task_id = _create(client).json()["task_id"]
+
+    first = client.post(
+        f"/api/v1/tasks/{task_id}/analyze",
+        headers={"Idempotency-Key": "analysis-once"},
+    )
+    retry = client.post(
+        f"/api/v1/tasks/{task_id}/analyze",
+        headers={"Idempotency-Key": "analysis-once"},
+    )
+    fetched = client.get(f"/api/v1/tasks/{task_id}")
+
+    assert first.status_code == retry.status_code == fetched.status_code == 200
+    assert first.json()["status"] == retry.json()["status"] == "awaiting_confirmation"
+    assert first.json()["analysis"]
+    assert fetched.json()["analysis"] == first.json()["analysis"]
+    assert provider.analysis_submissions == 1
+    assert repository.get_task(UUID(task_id)).status.value == (
+        "awaiting_confirmation"
+    )
+
+
+def test_plan_and_generate_enforce_confirmation_and_enabled_operation(api_context):
+    client, _repository, _storage, provider = api_context
+    task_id = _prepare_confirmation(client)
+
+    before_plan = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers={"Idempotency-Key": "generate-before-plan"},
+    )
+    assert before_plan.status_code == 409
+    assert before_plan.json()["error"]["code"] == "TASK_NOT_READY"
+
+    empty_plan = client.post(f"/api/v1/tasks/{task_id}/plan", json={})
+    assert empty_plan.status_code == 400
+    assert empty_plan.json()["error"]["code"] == "INVALID_PLAN"
+
+    saved = client.post(f"/api/v1/tasks/{task_id}/plan", json=_plan_payload())
+    assert saved.status_code == 200
+    assert saved.json()["plan"]["operations"][0]["enabled"] is True
+    assert saved.json()["status"] == "awaiting_confirmation"
+
+    generated = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers={"Idempotency-Key": "generate-once"},
+    )
+    assert generated.status_code == 200
+    assert generated.json()["status"] == "succeeded"
+    assert len(generated.json()["versions"]) == 1
+    assert provider.edit_submissions == 1
+
+
+def test_generate_is_idempotent_original_is_untouched_and_candidates_are_bounded(
+    api_context,
+):
+    client, repository, _storage, provider = api_context
+    task_id = _prepare_confirmation(client)
+    original = client.get(f"/api/v1/tasks/{task_id}").json()["original_asset_url"]
+    client.post(f"/api/v1/tasks/{task_id}/plan", json=_plan_payload())
+
+    first = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers={"Idempotency-Key": "generate-once"},
+    )
+    retry = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers={"Idempotency-Key": "generate-once"},
+    )
+    assert first.status_code == retry.status_code == 200
+    assert first.json()["versions"] == retry.json()["versions"]
+    assert retry.json()["original_asset_url"] == original
+    assert provider.edit_submissions == 1
+
+    loaded = repository.get_task(UUID(task_id))
+    assert loaded is not None
+    assert len(loaded.versions) <= 2
+    assert loaded.original_asset_url.url == original["url"]
+
+
+def test_generate_rejects_a_task_that_already_has_two_candidates(api_context):
+    client, repository, _storage, provider = api_context
+    task_id = _prepare_confirmation(client)
+    client.post(f"/api/v1/tasks/{task_id}/plan", json=_plan_payload())
+
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    for index in range(2):
+        repository.add_version(
+            UUID(task_id),
+            VersionRecord(
+                asset_url=AssetURL(
+                    kind="version",
+                    url=f"https://storage.example.test/version-{index}.png",
+                    expires_at=expires_at,
+                )
+            ),
+        )
+
+    response = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers={"Idempotency-Key": "generate-over-limit"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "CANDIDATE_LIMIT"
+    assert provider.edit_submissions == 0
+
+
+def test_download_is_only_available_for_successful_unexpired_task(api_context):
+    client, repository, _storage, _provider = api_context
+    task_id = _create(client).json()["task_id"]
+
+    not_ready = client.get(f"/api/v1/tasks/{task_id}/download")
+    assert not_ready.status_code == 409
+    assert not_ready.json()["error"]["code"] == "TASK_NOT_READY"
+
+    _prepare_confirmation(client, task_id)
+    client.post(f"/api/v1/tasks/{task_id}/plan", json=_plan_payload())
+    generated = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers={"Idempotency-Key": "generate-download"},
+    )
+    assert generated.status_code == 200
+
+    available = client.get(f"/api/v1/tasks/{task_id}/download")
+    assert available.status_code == 200
+    assert available.json()["url"].startswith("https://")
+    assert available.json()["expires_at"]
+
+    loaded = repository.get_task(__import__("uuid").UUID(task_id))
+    assert loaded is not None
+    version_row = repository.session.get(VersionRow, loaded.versions[0].id)
+    assert version_row is not None
+    expired_payload = dict(version_row.payload)
+    expired_asset = dict(expired_payload["asset_url"])
+    expired_asset["expires_at"] = (
+        datetime.now(timezone.utc) - timedelta(seconds=1)
+    ).isoformat()
+    expired_payload["asset_url"] = expired_asset
+    version_row.payload = expired_payload
+    repository.session.commit()
+    unavailable = client.get(f"/api/v1/tasks/{task_id}/download")
+    assert unavailable.status_code == 410
+    assert unavailable.json()["error"]["code"] == "TASK_EXPIRED"
+
+
+def test_provider_failure_is_safe_and_never_returns_raw_upstream_body(api_context):
+    client, repository, _storage, _provider = api_context
+    from app.main import create_app
+
+    settings = Settings(invite_tokens=["invite-demo"], asset_ttl_hours=1)
+    failing = FailingProvider(settings)
+    failing_app = create_app(
+        settings=settings,
+        repository=repository,
+        storage=InMemoryStorageAdapter(settings),
+        provider=failing,
+    )
+    with TestClient(failing_app) as failing_client:
+        task_id = _create(failing_client).json()["task_id"]
+        _prepare_confirmation(failing_client, task_id)
+        failing_client.post(f"/api/v1/tasks/{task_id}/plan", json=_plan_payload())
+        response = failing_client.post(
+            f"/api/v1/tasks/{task_id}/generate",
+            headers={"Idempotency-Key": "generate-provider-error"},
+        )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "PROVIDER_ERROR"
+    assert "server-only-secret" not in response.text
+    assert "upstream body" not in response.text
+
+
+def test_missing_task_and_missing_idempotency_key_use_stable_errors(api_context):
+    client, _repository, _storage, _provider = api_context
+
+    missing = client.get("/api/v1/tasks/00000000-0000-0000-0000-000000000000")
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "NOT_FOUND"
+
+    task_id = _create(client).json()["task_id"]
+    missing_key = client.post(f"/api/v1/tasks/{task_id}/analyze")
+    assert missing_key.status_code == 400
+    assert missing_key.json()["error"]["code"] == "INVALID_IDEMPOTENCY_KEY"

@@ -246,6 +246,61 @@ POST /api/v1/maintenance/cleanup
 upload reservation transition. Analyze, plan, and generate endpoints return
 the task shape or a stable error shape.
 
+### Implemented API contract
+
+The task creation request is:
+
+```json
+{
+  "invite_token": "invite-demo",
+  "filename": "cos-photo.jpg",
+  "content_type": "image/jpeg",
+  "byte_size": 1200000
+}
+```
+
+On success, `POST /api/v1/tasks` returns only the upload reservation fields:
+
+```json
+{
+  "task_id": "UUID",
+  "upload_url": "https://storage.example.test/signed-upload",
+  "expires_at": "2026-08-30T12:30:00Z",
+  "status": "uploading"
+}
+```
+
+`POST /api/v1/tasks/{task_id}/analyze` and
+`POST /api/v1/tasks/{task_id}/generate` require an
+`Idempotency-Key` header containing 1–128 opaque characters. The key is scoped
+to the task and operation. Repeating an equivalent request returns the current
+task without submitting another provider job; reusing a key for a different
+request returns `IDEMPOTENCY_CONFLICT`.
+
+`POST /api/v1/tasks/{task_id}/plan` accepts the structured `EditPlan` object
+above and returns the task with the saved plan. At least one operation must be
+enabled before generation. Generation returns the task after validation; it
+can never create more than two candidate versions and never replaces the
+original asset.
+
+`GET /api/v1/tasks/{task_id}/download` returns a short-lived result URL only
+when the task is `succeeded` and the latest version has not expired:
+
+```json
+{
+  "url": "https://storage.example.test/signed-download",
+  "expires_at": "2026-08-30T12:30:00Z"
+}
+```
+
+All API failures use `{ "error": { "code": "...", "message": "..." } }`.
+The API uses `401` for `UNAUTHORIZED`, `400` for `INVALID_FILE` and malformed
+plans, `404` for `NOT_FOUND`, `409` for `TASK_NOT_READY` and workflow guards,
+`410` for `TASK_EXPIRED`, and `502` for `PROVIDER_ERROR`. Invite tokens,
+provider job ids, provider response bodies, provider API keys, storage
+credentials, unsigned storage keys, and local filesystem paths are never
+returned to clients.
+
 ## Boundaries and ownership
 
 - **Frontend:** React/Vite owns invite input, file selection, previews, cards,
