@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from pydantic import (
@@ -12,6 +12,7 @@ from pydantic import (
     ConfigDict,
     Field,
     field_validator,
+    model_validator,
 )
 
 
@@ -96,7 +97,14 @@ class Region(BaseModel):
     width: float = Field(ge=0.0, le=1.0)
     height: float = Field(ge=0.0, le=1.0)
     source: str = "analysis"
-    mask_asset_url: str | None = None
+    mask_asset_url: AssetURL | None = None
+
+    @field_validator("mask_asset_url")
+    @classmethod
+    def require_mask_asset_kind(cls, value: AssetURL | None) -> AssetURL | None:
+        if value is not None and value.kind != "mask":
+            raise ValueError("mask_asset_url must use kind='mask'")
+        return value
 
 
 class AnalysisCard(BaseModel):
@@ -179,6 +187,24 @@ class EditPlan(BaseModel):
             raise ValueError(f"preserve is missing mandatory concepts: {missing_items}")
         return value
 
+    @model_validator(mode="after")
+    def require_bounded_structure_repairs(self) -> "EditPlan":
+        region_ids = {region.id for region in self.regions}
+        for operation in self.operations:
+            if operation.enabled and operation.goal is Goal.STRUCTURE_REPAIR:
+                if not operation.region_ids:
+                    raise ValueError(
+                        "enabled structure repair operations require region_ids"
+                    )
+                missing = set(operation.region_ids).difference(region_ids)
+                if missing:
+                    missing_items = ", ".join(sorted(missing))
+                    raise ValueError(
+                        "structure repair operation references unknown regions: "
+                        f"{missing_items}"
+                    )
+        return self
+
 
 class VersionRecord(BaseModel):
     """A generated candidate and the checks recorded for that candidate."""
@@ -188,7 +214,7 @@ class VersionRecord(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     asset_url: AssetURL
     created_at: UTCDateTime = Field(default_factory=_utc_now)
-    validation: dict[str, Any] = Field(default_factory=dict)
+    validation: dict[str, Literal["pass", "review"]] = Field(default_factory=dict)
     selected: bool = False
 
 

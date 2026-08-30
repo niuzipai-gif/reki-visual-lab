@@ -81,6 +81,7 @@ internally, but a client receives a signed URL with an expiry.
 
 The browser converts display pixels to this form before sending them. It must
 not send screen pixels or re-scale coordinates after a responsive resize.
+When present, `mask_asset_url` is an Asset URL whose `kind` is `mask`.
 
 ### Analysis card
 
@@ -149,8 +150,9 @@ regions require explicit user confirmation.
 `intensity` and operation intensity are integers from `0..100`; the UI maps
 自然 / 标准 / 明显 to `25 / 55 / 80`. `notes` is optional and capped at 500
 characters. A structure-repair operation must reference a confirmed local
-region. The default `preserve` list above is mandatory unless a future contract
-explicitly adds a stronger protection rule.
+region; the domain rejects enabled operations with empty or dangling region
+references. The default `preserve` list above is mandatory unless a future
+contract explicitly adds a stronger protection rule.
 
 ### Version
 
@@ -169,6 +171,8 @@ explicitly adds a stronger protection rule.
   "selected": false
 }
 ```
+
+Validation keys are extensible, but every value is exactly `pass` or `review`.
 
 ### Task and error
 

@@ -200,6 +200,107 @@ def test_domain_models_validate_normalized_regions_and_store_task_shapes():
     assert task.versions[0].asset_url.url.endswith("version-1.jpg")
 
 
+def test_region_mask_asset_url_is_typed_and_serializes_as_a_mask_asset():
+    mask = AssetURL(
+        kind="mask",
+        url="https://assets.example.test/tasks/task-1/mask.png",
+        expires_at=datetime(2026, 8, 30, 12, 30, tzinfo=timezone.utc),
+    )
+    region = Region(
+        id="face-1",
+        label="face",
+        x=0.25,
+        y=0.2,
+        width=0.3,
+        height=0.4,
+        mask_asset_url=mask,
+    )
+
+    payload = region.model_dump(mode="json")
+    assert payload["mask_asset_url"]["kind"] == "mask"
+    assert payload["mask_asset_url"]["url"].endswith("mask.png")
+
+    with pytest.raises(ValidationError):
+        Region(
+            id="bad-mask",
+            label="face",
+            x=0.25,
+            y=0.2,
+            width=0.3,
+            height=0.4,
+            mask_asset_url={
+                "kind": "mask",
+                "url": "https://assets.example.test/tasks/task-1/mask.png",
+            },
+        )
+
+
+def test_enabled_structure_repair_operations_require_existing_regions():
+    region = Region(
+        id="hands-1",
+        label="hands",
+        x=0.1,
+        y=0.2,
+        width=0.2,
+        height=0.2,
+    )
+
+    with pytest.raises(ValidationError):
+        EditPlan(
+            regions=[region],
+            operations=[
+                Operation(
+                    kind="structure_repair",
+                    goal=Goal.STRUCTURE_REPAIR,
+                    region_ids=[],
+                )
+            ],
+        )
+    with pytest.raises(ValidationError):
+        EditPlan(
+            regions=[region],
+            operations=[
+                Operation(
+                    kind="structure_repair",
+                    goal=Goal.STRUCTURE_REPAIR,
+                    region_ids=["missing-region"],
+                )
+            ],
+        )
+
+    plan = EditPlan(
+        regions=[region],
+        operations=[
+            Operation(
+                kind="structure_repair",
+                goal=Goal.STRUCTURE_REPAIR,
+                region_ids=[region.id],
+            )
+        ],
+    )
+    assert plan.operations[0].region_ids == [region.id]
+
+
+def test_version_validation_values_are_limited_to_pass_or_review():
+    asset = AssetURL(
+        kind="version",
+        url="https://assets.example.test/tasks/task-1/version-1.jpg",
+        expires_at=datetime(2026, 8, 30, 12, 30, tzinfo=timezone.utc),
+    )
+    version = VersionRecord(
+        asset_url=asset,
+        validation={"face_identity": "pass", "hands_and_costume": "review"},
+    )
+
+    assert version.validation == {
+        "face_identity": "pass",
+        "hands_and_costume": "review",
+    }
+
+    with pytest.raises(ValidationError):
+        VersionRecord(asset_url=asset, validation={"face_identity": "fail"})
+
+
 def test_typed_assets_errors_and_task_id_serialization_match_contract():
     expires_at = datetime(2026, 8, 30, 12, 30, tzinfo=timezone.utc)
     original = AssetURL(
