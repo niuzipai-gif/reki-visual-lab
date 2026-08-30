@@ -610,16 +610,18 @@ class TaskService:
             entry = self.repository.get_idempotency(task_id, operation, key)
             if entry is None:
                 return
+            update_kwargs: dict[str, Any] = {
+                "request_hash": request_hash,
+                "result_status": TaskStatus.FAILED,
+                "provider_status": "failed",
+            }
+            if operation == "generate":
+                update_kwargs["candidate_position"] = None
             self.repository.update_idempotency(
                 task_id,
                 operation,
                 key,
-                request_hash=request_hash,
-                result_status=TaskStatus.FAILED,
-                provider_status="failed",
-                candidate_position=(
-                    None if operation == "generate" else ...
-                ),
+                **update_kwargs,
             )
         except Exception:
             # The public error remains the same safe provider error even if a

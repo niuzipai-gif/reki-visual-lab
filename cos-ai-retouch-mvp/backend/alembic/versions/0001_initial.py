@@ -31,7 +31,6 @@ def upgrade() -> None:
         sa.Column("original_asset_url", payload, nullable=True),
         sa.Column("mask_asset_url", payload, nullable=True),
         sa.Column("error", payload, nullable=True),
-        sa.Column("idempotency_records", payload, nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_tasks_status", "tasks", ["status"], unique=False)
@@ -105,23 +104,13 @@ def upgrade() -> None:
         sa.Column("payload", payload, nullable=False),
         sa.ForeignKeyConstraint(["task_id"], ["tasks.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "task_id",
-            "position",
-            name="uq_versions_task_position",
-        ),
     )
     op.create_index("ix_versions_task_id", "versions", ["task_id"], unique=False)
     op.create_index(
         "ix_versions_task_position", "versions", ["task_id", "position"], unique=False
     )
 
-
-
 def downgrade() -> None:
-    op.drop_constraint(
-        "uq_versions_task_position", "versions", type_="unique"
-    )
     op.drop_index("ix_versions_task_position", table_name="versions")
     op.drop_index("ix_versions_task_id", table_name="versions")
     op.drop_table("versions")

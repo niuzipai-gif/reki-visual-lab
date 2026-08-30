@@ -91,12 +91,6 @@ class TaskRow(Base):
         JSON_PAYLOAD, nullable=True
     )
     error: Mapped[dict[str, Any] | None] = mapped_column(JSON_PAYLOAD, nullable=True)
-    # Durable operation records.  This is a JSON list rather than a second
-    # table so the task aggregate can be updated with one row-level CAS in
-    # SQLite as well as PostgreSQL.
-    idempotency_records: Mapped[list[dict[str, Any]] | None] = mapped_column(
-        JSON_PAYLOAD, nullable=True
-    )
 
 
 class AssetRow(Base):
@@ -176,6 +170,48 @@ class VersionRow(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON_PAYLOAD, nullable=False)
 
 
+class IdempotencyRow(Base):
+    """Durable provider-operation state used to make retries crash-safe."""
+
+    __tablename__ = "idempotency_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "task_id",
+            "operation",
+            "key",
+            name="uq_idempotency_task_operation_key",
+        ),
+        UniqueConstraint(
+            "task_id",
+            "operation",
+            "candidate_position",
+            name="uq_idempotency_task_operation_candidate",
+        ),
+        Index("ix_idempotency_task_operation", "task_id", "operation"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[UUID] = mapped_column(
+        TASK_ID,
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    operation: Mapped[str] = mapped_column(String(16), nullable=False)
+    key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    result_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_job_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    candidate_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 
 
 # Short aliases are useful to callers that prefer model names without the
@@ -185,6 +221,7 @@ AssetModel = AssetRow
 AnalysisCardModel = AnalysisCardRow
 EditPlanModel = EditPlanRow
 VersionModel = VersionRow
+IdempotencyModel = IdempotencyRow
 
 
 settings = get_settings()

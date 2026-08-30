@@ -227,12 +227,11 @@ The persisted idempotency record has this shape:
 }
 ```
 
-The record is persisted as part of the task aggregate (the current SQLAlchemy
-implementation stores the records in `tasks.idempotency_records`). Its durable
-identity is `(task_id, operation, key)` and the required retry fields are
-`request_hash`, `result_status`, and `created_at`; `updated_at` tracks provider
-progress. A matching hash reuses the stored provider job, including after a
-service restart. A different hash returns `IDEMPOTENCY_CONFLICT`. Provider
+The record is persisted in the independent SQLAlchemy `idempotency_records`
+table. Its durable identity is `(task_id, operation, key)` and the required
+retry fields are `request_hash`, `result_status`, and `created_at`; `updated_at`
+tracks provider progress. A matching hash reuses the stored provider job,
+including after a service restart. A different hash returns `IDEMPOTENCY_CONFLICT`. Provider
 jobs in `queued` or `running` are polled for a bounded number of attempts per
 request; a still-pending record remains retryable and the next request resumes
 polling the same `provider_job_id`.

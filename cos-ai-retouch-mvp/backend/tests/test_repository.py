@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, func, inspect, select
 from sqlalchemy.exc import IntegrityError
 
 from app.config import Settings
-from app.db import AssetRow, Base, VersionRow, _sync_database_url
+from app.db import AssetRow, Base, IdempotencyRow, VersionRow, _sync_database_url
 from app.repositories.tasks import TaskRepository, VersionConflictError
 from app.domain.models import (
     AnalysisCard,
@@ -433,8 +433,15 @@ def test_settings_have_task2_defaults_and_redact_secret_values(monkeypatch):
     assert "storage-secret" not in rendered
 
 
-def test_database_metadata_and_alembic_upgrade_define_the_five_named_tables(tmp_path):
-    expected = {"tasks", "assets", "analysis_cards", "edit_plans", "versions"}
+def test_database_metadata_and_alembic_upgrade_define_the_named_tables(tmp_path):
+    expected = {
+        "tasks",
+        "assets",
+        "analysis_cards",
+        "edit_plans",
+        "versions",
+        "idempotency_records",
+    }
     assert set(Base.metadata.tables) == expected
 
     database_url = f"sqlite:///{tmp_path / 'migration.db'}"
@@ -449,8 +456,112 @@ def test_database_metadata_and_alembic_upgrade_define_the_five_named_tables(tmp_
     try:
         inspector = inspect(engine)
         assert set(inspector.get_table_names()) == expected | {"alembic_version"}
-        for child in ("assets", "analysis_cards", "edit_plans", "versions"):
+        for child in (
+            "assets",
+            "analysis_cards",
+            "edit_plans",
+            "versions",
+            "idempotency_records",
+        ):
             foreign_keys = inspector.get_foreign_keys(child)
             assert any(fk["referred_table"] == "tasks" for fk in foreign_keys)
     finally:
         engine.dispose()
+
+
+def test_two_stage_migration_supports_old_data_repeat_upgrade_and_downgrade(
+    tmp_path,
+):
+    database_url = f"sqlite:///{tmp_path / 'migration-chain.db'}"
+    alembic_ini = Path(__file__).parents[1] / "alembic.ini"
+    alembic_config = Config(str(alembic_ini))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "0001_initial")
+    engine = create_engine(database_url)
+    try:
+        inspector = inspect(engine)
+        assert "idempotency_records" not in inspector.get_table_names()
+        assert not any(
+            item["name"] == "uq_versions_task_position"
+            for item in inspector.get_unique_constraints("versions")
+        )
+    finally:
+        engine.dispose()
+
+    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "head")
+    engine = create_engine(database_url)
+    try:
+        inspector = inspect(engine)
+        assert "idempotency_records" in inspector.get_table_names()
+        assert {
+            "task_id",
+            "operation",
+            "key",
+            "request_hash",
+            "result_status",
+            "created_at",
+            "provider_job_id",
+        }.issubset(
+            {column["name"] for column in inspector.get_columns("idempotency_records")}
+        )
+        assert any(
+            item["name"] == "uq_versions_task_position"
+            for item in inspector.get_unique_constraints("versions")
+        )
+        idempotency_constraints = inspector.get_unique_constraints(
+            "idempotency_records"
+        )
+        assert any(
+            item["name"] == "uq_idempotency_task_operation_key"
+            and item["column_names"] == ["task_id", "operation", "key"]
+            for item in idempotency_constraints
+        )
+    finally:
+        engine.dispose()
+
+    command.downgrade(alembic_config, "0001_initial")
+    command.upgrade(alembic_config, "head")
+    engine = create_engine(database_url)
+    try:
+        inspector = inspect(engine)
+        assert "idempotency_records" in inspector.get_table_names()
+        assert any(
+            item["name"] == "uq_versions_task_position"
+            for item in inspector.get_unique_constraints("versions")
+        )
+    finally:
+        engine.dispose()
+
+
+def test_idempotency_key_is_rejected_by_the_database_when_reused(repository):
+    task = TaskRecord.new()
+    repository.create_task(task)
+    now = datetime.now(timezone.utc)
+    repository.session.add(
+        IdempotencyRow(
+            task_id=task.id,
+            operation="analyze",
+            key="same-key",
+            request_hash="hash-1",
+            result_status=TaskStatus.ANALYZING.value,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    repository.session.commit()
+    repository.session.add(
+        IdempotencyRow(
+            task_id=task.id,
+            operation="analyze",
+            key="same-key",
+            request_hash="hash-2",
+            result_status=TaskStatus.ANALYZING.value,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        repository.session.commit()
+    repository.session.rollback()

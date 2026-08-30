@@ -104,6 +104,50 @@ class ScriptedProvider:
         return ProviderResult(job_id=job_id, status=status)
 
 
+class SimulatedProcessCrash(BaseException):
+    """Crash injected after provider acceptance and before local persistence."""
+
+
+class StableProvider:
+    """Provider double whose idempotency is owned by the provider boundary."""
+
+    def __init__(self):
+        self.submissions = 0
+        self.jobs: dict[tuple[str, str], str] = {}
+
+    def submit_analysis(self, source_url: str):
+        return self._submit("analysis", source_url)
+
+    def submit_edit(self, source_url: str, plan: EditPlan):
+        return self._submit("edit", source_url)
+
+    def _submit(self, operation: str, source_url: str):
+        key = (operation, source_url)
+        existing = self.jobs.get(key)
+        if existing is None:
+            self.submissions += 1
+            existing = f"stable-{operation}-job-1"
+            self.jobs[key] = existing
+        return ProviderJob(job_id=existing, operation=operation, status="queued")
+
+    def poll(self, job_id: str):
+        if job_id.startswith("stable-analysis"):
+            return ProviderResult(
+                job_id=job_id,
+                status="succeeded",
+                analysis=MockImageModelProvider.analysis_fixture,
+            )
+        return ProviderResult(
+            job_id=job_id,
+            status="succeeded",
+            asset_url=AssetURL(
+                kind="version",
+                url=f"https://storage.example.test/{job_id}.png",
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            ),
+        )
+
+
 @pytest.fixture
 def api_context(repository):
     from app.main import create_app
@@ -359,6 +403,52 @@ def test_rebuilt_task_service_uses_persisted_idempotency_without_resubmitting(
     assert record.provider_job_id
     assert record.result_status is TaskStatus.SUCCEEDED
     assert record.provider_status == "succeeded"
+
+
+def test_provider_idempotency_recovers_after_crash_before_job_id_write(
+    repository, monkeypatch
+):
+    settings = Settings(invite_tokens=["invite-demo"], asset_ttl_hours=1)
+    storage = InMemoryStorageAdapter(settings)
+    provider = StableProvider()
+    service = TaskService(
+        repository,
+        storage,
+        provider,
+        settings=settings,
+    )
+    task, _signed = service.create_task(
+        "invite-demo", "cos-photo.jpg", "image/jpeg", 1200
+    )
+    real_update = repository.update_idempotency
+    crashed = False
+
+    def crash_before_write(*args, **kwargs):
+        nonlocal crashed
+        if kwargs.get("provider_job_id") and not crashed:
+            crashed = True
+            raise SimulatedProcessCrash()
+        return real_update(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "update_idempotency", crash_before_write)
+    with pytest.raises(SimulatedProcessCrash):
+        service.analyze(task.id, "analysis-crash-window")
+
+    rebuilt = TaskService(
+        TaskRepository(repository.session),
+        storage,
+        provider,
+        settings=settings,
+    )
+    recovered = rebuilt.analyze(task.id, "analysis-crash-window")
+
+    assert recovered.status is TaskStatus.AWAITING_CONFIRMATION
+    assert provider.submissions == 1
+    record = repository.get_idempotency(
+        task.id, "analyze", "analysis-crash-window"
+    )
+    assert record is not None
+    assert record.provider_job_id == "stable-analysis-job-1"
 
 
 def test_queued_jobs_poll_until_success_with_one_persisted_provider_job(
