@@ -13,6 +13,7 @@ from sqlalchemy import (
     Index,
     Integer,
     JSON,
+    CheckConstraint,
     String,
     UniqueConstraint,
     Uuid,
@@ -149,6 +150,10 @@ class EditPlanRow(Base):
 class VersionRow(Base):
     __tablename__ = "versions"
     __table_args__ = (
+        CheckConstraint(
+            "position IN (0, 1)",
+            name="ck_versions_position_zero_or_one",
+        ),
         UniqueConstraint(
             "task_id",
             "position",

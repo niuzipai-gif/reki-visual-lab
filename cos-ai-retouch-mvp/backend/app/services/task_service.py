@@ -349,10 +349,12 @@ class TaskService:
         )
 
         with self._lock:
+            failure_generation: int | None = None
             try:
                 existing = self.repository.get_idempotency(parsed_id, "generate", key)
                 if existing is not None:
                     self._require_same_request(existing, request_hash)
+                    failure_generation = existing.reservation_generation
                     if existing.result_status is TaskStatus.FAILED:
                         raise self._provider_failure(None)
                     if (
@@ -366,6 +368,7 @@ class TaskService:
                             provider_idempotency_key,
                         )
                         task = self.get_task(parsed_id)
+                        failure_generation = existing.reservation_generation
                     if existing.result_status is TaskStatus.SUCCEEDED:
                         if existing.version_id is not None:
                             return self._finalize_prepared_generation(
@@ -373,6 +376,16 @@ class TaskService:
                             )
                         return self.get_task(parsed_id)
                 else:
+                    # Let an expired reservation release its slot before the
+                    # different key hits the state gate. Fresh reservations
+                    # remain active and continue to block a concurrent run.
+                    self.repository.reclaim_stale_generation_reservations(
+                        parsed_id,
+                        utc_now(),
+                        keep_key=key,
+                        max_age_seconds=300,
+                    )
+                    task = self.get_task(parsed_id)
                     self._require_status(
                         task,
                         {TaskStatus.AWAITING_CONFIRMATION, TaskStatus.FAILED},
@@ -392,6 +405,7 @@ class TaskService:
                             provider_idempotency_key,
                         )
                     )
+                    failure_generation = existing.reservation_generation
 
                 # A prior worker may have durably prepared the version UUID
                 # before crashing. Complete that record without polling or
@@ -421,6 +435,7 @@ class TaskService:
                         request_hash,
                         existing.reservation_generation,
                     )
+                    failure_generation = existing.reservation_generation
                     if (
                         existing.provider_job_id is None
                         and existing.provider_status == "stale_reservation"
@@ -438,6 +453,7 @@ class TaskService:
                             request_hash,
                             existing.reservation_generation,
                         )
+                        failure_generation = existing.reservation_generation
                     if (
                         existing.provider_job_id is None
                         and existing.candidate_position is None
@@ -472,14 +488,36 @@ class TaskService:
                     status_code=409,
                 ) from exc
             except ProviderError as exc:
-                self._fail_task(task)
-                self._mark_provider_failed(parsed_id, "generate", key, request_hash)
+                self._fail_task(
+                    task,
+                    reservation_generation=failure_generation,
+                    key=key,
+                    request_hash=request_hash,
+                )
+                self._mark_provider_failed(
+                    parsed_id,
+                    "generate",
+                    key,
+                    request_hash,
+                    reservation_generation=failure_generation,
+                )
                 raise self._provider_failure(exc) from exc
             except TaskServiceError:
                 raise
             except Exception as exc:
-                self._fail_task(task)
-                self._mark_provider_failed(parsed_id, "generate", key, request_hash)
+                self._fail_task(
+                    task,
+                    reservation_generation=failure_generation,
+                    key=key,
+                    request_hash=request_hash,
+                )
+                self._mark_provider_failed(
+                    parsed_id,
+                    "generate",
+                    key,
+                    request_hash,
+                    reservation_generation=failure_generation,
+                )
                 raise self._provider_failure(None) from exc
 
     def _poll_generation(
@@ -524,7 +562,12 @@ class TaskService:
                 provider_status=provider_status,
             )
             if provider_status == "failed":
-                self._fail_task(task)
+                self._fail_task(
+                    task,
+                    reservation_generation=entry.reservation_generation,
+                    key=entry.key,
+                    request_hash=entry.request_hash,
+                )
                 self.repository.update_idempotency(
                     task.id,
                     "generate",
@@ -539,7 +582,12 @@ class TaskService:
 
             result_asset = getattr(result, "asset_url", None)
             if result_asset is None or getattr(result_asset, "kind", None) != "version":
-                self._fail_task(task)
+                self._fail_task(
+                    task,
+                    reservation_generation=entry.reservation_generation,
+                    key=entry.key,
+                    request_hash=entry.request_hash,
+                )
                 self.repository.update_idempotency(
                     task.id,
                     "generate",
@@ -793,10 +841,25 @@ class TaskService:
         operation: str,
         key: str,
         request_hash: str,
+        *,
+        reservation_generation: int | None = None,
     ) -> None:
         """Best-effort durable failure marker that never leaks provider data."""
 
         try:
+            if reservation_generation is not None and operation == "generate":
+                self.repository.fail_generation_if_current(
+                    task_id,
+                    key,
+                    request_hash,
+                    reservation_generation,
+                    TaskError(
+                        code="PROVIDER_ERROR",
+                        message="图像服务暂时不可用，请稍后重试。",
+                        retryable=True,
+                    ),
+                )
+                return
             entry = self.repository.get_idempotency(task_id, operation, key)
             if entry is None:
                 return
@@ -838,18 +901,54 @@ class TaskService:
                 status_code=409,
             ) from exc
 
-    def _fail_task(self, task: TaskRecord) -> None:
+    def _fail_task(
+        self,
+        task: TaskRecord,
+        *,
+        reservation_generation: int | None = None,
+        key: str | None = None,
+        request_hash: str | None = None,
+    ) -> bool:
+        if reservation_generation is not None:
+            if key is None or request_hash is None:
+                return False
+            return self.repository.fail_generation_if_current(
+                task.id,
+                key,
+                request_hash,
+                reservation_generation,
+                TaskError(
+                    code="PROVIDER_ERROR",
+                    message="图像服务暂时不可用，请稍后重试。",
+                    retryable=True,
+                ),
+            )
+
+        # A worker can hold a stale aggregate after another worker has
+        # already succeeded. Refresh before mutating so a provider exception
+        # cannot attach an error to that newer result.
+        session = getattr(self.repository, "session", None)
+        if session is not None:
+            session.expire_all()
+        current = self.repository.get_task(task.id)
+        if current is None or current.status in {
+            TaskStatus.SUCCEEDED,
+            TaskStatus.EXPIRED,
+        }:
+            return False
+        task = current
         if task.status is not TaskStatus.FAILED:
             try:
                 task.advance(TaskStatus.FAILED)
             except InvalidTransition:
-                return
+                return False
         task.error = TaskError(
             code="PROVIDER_ERROR",
             message="图像服务暂时不可用，请稍后重试。",
             retryable=True,
         )
         self._persist_task(task)
+        return True
 
     @staticmethod
     def _provider_failure(cause: ProviderError | None) -> TaskServiceError:

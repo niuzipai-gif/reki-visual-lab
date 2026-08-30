@@ -19,9 +19,7 @@ _DEFAULT_URL = "sqlite:///./cos-retouch-test.db"
 
 def _configured_url() -> str:
     configured = config.get_main_option("sqlalchemy.url")
-    if not configured or (
-        configured == _DEFAULT_URL and os.getenv("DATABASE_URL")
-    ):
+    if not configured or (configured == _DEFAULT_URL and os.getenv("DATABASE_URL")):
         configured = os.getenv("DATABASE_URL") or _DEFAULT_URL
     return _sync_database_url(configured)
 

@@ -564,6 +564,14 @@ def test_two_stage_migration_supports_old_data_repeat_upgrade_and_downgrade(
         engine.dispose()
 
     command.downgrade(alembic_config, "0001_initial")
+    engine = create_engine(database_url)
+    try:
+        assert not any(
+            item["name"] == "ck_versions_position_zero_or_one"
+            for item in inspect(engine).get_check_constraints("versions")
+        )
+    finally:
+        engine.dispose()
     command.upgrade(alembic_config, "head")
     engine = create_engine(database_url)
     try:
@@ -637,6 +645,214 @@ def test_migration_rejects_duplicate_old_version_positions_before_schema_changes
         engine.dispose()
 
 
+def test_migration_rejects_legacy_version_position_outside_candidate_slots(
+    tmp_path,
+):
+    database_url = f"sqlite:///{tmp_path / 'migration-invalid-position.db'}"
+    alembic_ini = Path(__file__).parents[1] / "alembic.ini"
+    alembic_config = Config(str(alembic_ini))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "0001_initial")
+    task_id = uuid4()
+    invalid_version = VersionRecord(asset_url=_asset("version", "invalid-position.jpg"))
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            now = datetime.now(timezone.utc)
+            connection.execute(
+                TaskRow.__table__.insert().values(
+                    id=task_id,
+                    status=TaskStatus.UPLOADING.value,
+                    created_at=now,
+                    updated_at=now,
+                    idempotency_key=None,
+                    original_asset_url=None,
+                    mask_asset_url=None,
+                    error=None,
+                )
+            )
+            connection.execute(
+                VersionRow.__table__.insert().values(
+                    id=invalid_version.id,
+                    task_id=task_id,
+                    position=2,
+                    payload=invalid_version.model_dump(mode="json"),
+                )
+            )
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="position.*0.*1"):
+        command.upgrade(alembic_config, "head")
+
+
+def _create_legacy_idempotency_table(connection) -> None:
+    connection.exec_driver_sql(
+        """
+        CREATE TABLE idempotency_records (
+            id INTEGER PRIMARY KEY,
+            task_id CHAR(32) NOT NULL,
+            operation VARCHAR(16) NOT NULL,
+            key VARCHAR(128) NOT NULL,
+            request_hash VARCHAR(128) NOT NULL,
+            result_status VARCHAR(32) NOT NULL,
+            provider_job_id VARCHAR(255),
+            provider_status VARCHAR(32),
+            candidate_position INTEGER,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def test_migration_repairs_existing_idempotency_constraints_and_indexes(tmp_path):
+    database_url = f"sqlite:///{tmp_path / 'migration-existing-idempotency.db'}"
+    alembic_ini = Path(__file__).parents[1] / "alembic.ini"
+    alembic_config = Config(str(alembic_ini))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "0001_initial")
+    task_id = uuid4()
+    now = datetime.now(timezone.utc)
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                TaskRow.__table__.insert().values(
+                    id=task_id,
+                    status=TaskStatus.UPLOADING.value,
+                    created_at=now,
+                    updated_at=now,
+                    idempotency_key=None,
+                    original_asset_url=None,
+                    mask_asset_url=None,
+                    error=None,
+                )
+            )
+            _create_legacy_idempotency_table(connection)
+            connection.exec_driver_sql(
+                """
+                INSERT INTO idempotency_records
+                    (id, task_id, operation, key, request_hash,
+                     result_status, provider_job_id, provider_status,
+                     candidate_position, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    1,
+                    task_id.hex,
+                    "generate",
+                    "legacy-key",
+                    "legacy-hash",
+                    TaskStatus.GENERATING.value,
+                    None,
+                    "reserved",
+                    0,
+                    now,
+                    now,
+                ),
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(alembic_config, "head")
+    engine = create_engine(database_url)
+    try:
+        inspector = inspect(engine)
+        columns = {
+            column["name"] for column in inspector.get_columns("idempotency_records")
+        }
+        assert {
+            "provider_idempotency_key",
+            "reservation_generation",
+            "version_id",
+            "result_asset_url",
+        }.issubset(columns)
+        constraints = inspector.get_unique_constraints("idempotency_records")
+        assert any(
+            item["column_names"] == ["task_id", "operation", "key"]
+            for item in constraints
+        )
+        assert any(
+            item["column_names"] == ["task_id", "operation", "candidate_position"]
+            for item in constraints
+        )
+        indexes = inspector.get_indexes("idempotency_records")
+        assert any(item["name"] == "ix_idempotency_records_task_id" for item in indexes)
+        assert any(item["name"] == "ix_idempotency_task_operation" for item in indexes)
+    finally:
+        engine.dispose()
+
+
+def test_migration_rejects_duplicate_existing_idempotency_keys_before_repair(
+    tmp_path,
+):
+    database_url = f"sqlite:///{tmp_path / 'migration-duplicate-idempotency.db'}"
+    alembic_ini = Path(__file__).parents[1] / "alembic.ini"
+    alembic_config = Config(str(alembic_ini))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "0001_initial")
+    task_id = uuid4()
+    now = datetime.now(timezone.utc)
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                TaskRow.__table__.insert().values(
+                    id=task_id,
+                    status=TaskStatus.UPLOADING.value,
+                    created_at=now,
+                    updated_at=now,
+                    idempotency_key=None,
+                    original_asset_url=None,
+                    mask_asset_url=None,
+                    error=None,
+                )
+            )
+            _create_legacy_idempotency_table(connection)
+            connection.exec_driver_sql(
+                """
+                INSERT INTO idempotency_records
+                    (id, task_id, operation, key, request_hash,
+                     result_status, candidate_position, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        1,
+                        task_id.hex,
+                        "analyze",
+                        "duplicate-key",
+                        "hash-1",
+                        TaskStatus.ANALYZING.value,
+                        None,
+                        now,
+                        now,
+                    ),
+                    (
+                        2,
+                        task_id.hex,
+                        "analyze",
+                        "duplicate-key",
+                        "hash-2",
+                        TaskStatus.ANALYZING.value,
+                        None,
+                        now,
+                        now,
+                    ),
+                ],
+            )
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="duplicate.*idempotency"):
+        command.upgrade(alembic_config, "head")
+
+
 def test_idempotency_key_is_rejected_by_the_database_when_reused(repository):
     task = TaskRecord.new()
     repository.create_task(task)
@@ -662,6 +878,23 @@ def test_idempotency_key_is_rejected_by_the_database_when_reused(repository):
             result_status=TaskStatus.ANALYZING.value,
             created_at=now,
             updated_at=now,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        repository.session.commit()
+    repository.session.rollback()
+
+
+def test_database_rejects_version_positions_outside_candidate_slots(repository):
+    task = TaskRecord.new()
+    repository.create_task(task)
+    version = VersionRecord(asset_url=_asset("version", "out-of-range.jpg"))
+    repository.session.add(
+        VersionRow(
+            id=version.id,
+            task_id=task.id,
+            position=2,
+            payload=version.model_dump(mode="json"),
         )
     )
     with pytest.raises(IntegrityError):

@@ -26,6 +26,7 @@ from app.domain.models import (
     AssetURL,
     EditPlan,
     TaskRecord,
+    TaskError,
     TaskStatus,
     VersionRecord,
 )
@@ -678,6 +679,60 @@ class TaskRepository:
         if result.rowcount:
             self._commit()
         return self.get_idempotency(task_id, "generate", key)  # type: ignore[return-value]
+
+    def fail_generation_if_current(
+        self,
+        task_id: UUID,
+        key: str,
+        request_hash: str,
+        reservation_generation: int,
+        error: TaskError,
+    ) -> bool:
+        """Persist a generation failure only for the current reservation.
+
+        Provider exceptions can arrive after a stale worker has been
+        reclaimed and replaced.  Updating the idempotency row and task row in
+        one transaction prevents that old worker from downgrading a newer
+        successful result.
+        """
+
+        row = self.session.scalar(
+            select(IdempotencyRow)
+            .where(
+                IdempotencyRow.task_id == task_id,
+                IdempotencyRow.operation == "generate",
+                IdempotencyRow.key == key,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise ValueError("idempotency record does not exist")
+        existing = self._as_idempotency(row)
+        self._require_idempotency_hash(existing, request_hash)
+        if (
+            existing.reservation_generation != reservation_generation
+            or existing.result_status is TaskStatus.SUCCEEDED
+            or existing.provider_status == "stale_reservation"
+        ):
+            return False
+
+        task_row = self._task_row(task_id)
+        if task_row.status in {
+            TaskStatus.SUCCEEDED.value,
+            TaskStatus.EXPIRED.value,
+        }:
+            return False
+        now = utc_now()
+        row.result_status = TaskStatus.FAILED.value
+        row.provider_status = "failed"
+        row.candidate_position = None
+        row.updated_at = now
+        task_row.status = TaskStatus.FAILED.value
+        task_row.error = _payload(error)
+        task_row.updated_at = now
+        self._commit()
+        self.session.expire_all()
+        return True
 
     def reserve_generation_and_mark_task_generating(
         self,

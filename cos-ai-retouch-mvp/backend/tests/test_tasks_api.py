@@ -693,6 +693,111 @@ def test_reclaim_reopens_task_for_new_key_and_old_key_recovery(repository):
     )
 
 
+def test_old_generation_failure_cannot_overwrite_new_success(repository):
+    settings = Settings(invite_tokens=["invite-demo"], asset_ttl_hours=1)
+    storage = InMemoryStorageAdapter(settings)
+    provider = StableProvider()
+    service = TaskService(repository, storage, provider, settings=settings)
+    task, _signed = service.create_task(
+        "invite-demo", "cos-photo.jpg", "image/jpeg", 1200
+    )
+    service.analyze(task.id, "analysis-before-stale-failure")
+    plan = EditPlan.model_validate(_plan_payload())
+    service.save_plan(task.id, plan)
+    request_hash = _request_hash(service._plan_hash_payload(plan))
+    provider_key = service._provider_idempotency_key(
+        "edit", task.original_asset_url.url, plan
+    )
+    old_key = "generate-old-failure"
+    old_entry = repository.reserve_generation_and_mark_task_generating(
+        task.id, old_key, request_hash, provider_key
+    )
+    old_entry = repository.begin_provider_submission(
+        task.id, old_key, request_hash, old_entry.reservation_generation
+    )
+    old_task = service.get_task(task.id)
+    row = repository.session.scalar(
+        select(IdempotencyRow).where(
+            IdempotencyRow.task_id == task.id,
+            IdempotencyRow.key == old_key,
+        )
+    )
+    row.updated_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    repository.session.commit()
+    repository.reclaim_stale_generation_reservations(
+        task.id, datetime.now(timezone.utc) - timedelta(minutes=5)
+    )
+
+    rebuilt = TaskService(
+        TaskRepository(repository.session), storage, provider, settings=settings
+    )
+    succeeded = rebuilt.generate(task.id, "generate-new-worker")
+
+    assert succeeded.status is TaskStatus.SUCCEEDED
+    assert (
+        service._fail_task(
+            old_task,
+            reservation_generation=old_entry.reservation_generation,
+            key=old_key,
+            request_hash=request_hash,
+        )
+        is False
+    )
+    current = repository.get_task(task.id)
+    assert current.status is TaskStatus.SUCCEEDED
+    assert current.error is None
+
+
+def test_new_generate_key_reclaims_stale_submitting_through_api(api_context):
+    client, repository, storage, provider = api_context
+    task_id = _prepare_confirmation(client)
+    saved = client.post(
+        f"/api/v1/tasks/{task_id}/plan",
+        json=_plan_payload(),
+        headers=INVITE_HEADERS,
+    )
+    assert saved.status_code == 200
+    task = repository.get_task(UUID(task_id))
+    assert task is not None and task.plan is not None
+    settings = Settings(invite_tokens=["invite-demo"], asset_ttl_hours=1)
+    service = TaskService(repository, storage, provider, settings=settings)
+    request_hash = _request_hash(service._plan_hash_payload(task.plan))
+    provider_key = service._provider_idempotency_key(
+        "edit", task.original_asset_url.url, task.plan
+    )
+    old_entry = repository.reserve_generation_and_mark_task_generating(
+        task.id, "generate-submitting-old", request_hash, provider_key
+    )
+    submitting = repository.begin_provider_submission(
+        task.id,
+        "generate-submitting-old",
+        request_hash,
+        old_entry.reservation_generation,
+    )
+    assert submitting.provider_status == "submitting"
+    row = repository.session.scalar(
+        select(IdempotencyRow).where(
+            IdempotencyRow.task_id == task.id,
+            IdempotencyRow.key == "generate-submitting-old",
+        )
+    )
+    row.updated_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    repository.session.commit()
+
+    response = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers=_authenticated_headers(**{"Idempotency-Key": "generate-new-key"}),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "succeeded"
+    assert provider.edit_submissions == 1
+    stale = repository.get_idempotency(task.id, "generate", "generate-submitting-old")
+    assert stale is not None
+    assert stale.provider_status == "stale_reservation"
+    assert stale.candidate_position is None
+
+
 def test_follow_up_task_endpoints_require_header_without_leaking_existence(
     api_context,
 ):
