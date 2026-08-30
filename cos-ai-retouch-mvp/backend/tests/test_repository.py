@@ -159,23 +159,97 @@ def test_mark_expired_before_only_changes_older_non_expired_tasks(repository):
     assert repository.get_task(newer.id).created_at == newer.created_at
 
 
-def test_settings_have_task2_defaults_and_redact_secret_values(monkeypatch):
-    monkeypatch.setenv("IMAGE_PROVIDER_API_KEY", "provider-secret")
-    monkeypatch.setenv("STORAGE_ACCESS_KEY", "storage-access-secret")
-    monkeypatch.setenv("STORAGE_SECRET_KEY", "storage-secret")
+def test_settings_have_task2_defaults_and_secret_values_are_accessible(monkeypatch):
+    for name in (
+        "DATABASE_URL",
+        "INVITE_TOKENS",
+        "IMAGE_PROVIDER_API_KEY",
+        "STORAGE_ACCESS_KEY",
+        "STORAGE_SECRET_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
     settings = Settings()
 
-    assert settings.database_url == "sqlite+aiosqlite:///./cos-retouch-test.db"
+    assert settings.database_url.get_secret_value() == (
+        "sqlite+aiosqlite:///./cos-retouch-test.db"
+    )
     assert settings.allowed_origins == ["http://localhost:5173"]
     assert settings.invite_tokens == []
     assert settings.asset_ttl_hours == 24
     assert settings.max_upload_bytes == 20 * 1024 * 1024
     assert settings.image_provider_mode == "mock"
     assert settings.image_provider_model == "cos-retouch-default"
-    assert settings.image_provider_api_key == "provider-secret"
-    assert settings.storage_access_key == "storage-access-secret"
-    assert settings.storage_secret_key == "storage-secret"
+
+
+def test_settings_redact_all_secret_values_from_public_serializations(monkeypatch):
+    database_url = "postgresql://retouch:db-password@example.test/retouch"
+    secrets = {
+        "DATABASE_URL": database_url,
+        "INVITE_TOKENS": '["invite-secret-1", "invite-secret-2"]',
+        "IMAGE_PROVIDER_API_KEY": "provider-secret",
+        "STORAGE_ACCESS_KEY": "storage-access-secret",
+        "STORAGE_SECRET_KEY": "storage-secret",
+    }
+    for name, value in secrets.items():
+        monkeypatch.setenv(name, value)
+
+    settings = Settings()
+
+    assert settings.database_url.get_secret_value() == database_url
+    assert settings.get_invite_tokens() == ("invite-secret-1", "invite-secret-2")
+    assert settings.image_provider_api_key.get_secret_value() == "provider-secret"
+    assert settings.storage_access_key.get_secret_value() == "storage-access-secret"
+    assert settings.storage_secret_key.get_secret_value() == "storage-secret"
+
+    dumped = settings.model_dump()
+    assert str(dumped["database_url"]) == "**********"
+    assert tuple(str(token) for token in dumped["invite_tokens"]) == (
+        "**********",
+        "**********",
+    )
+    assert str(dumped["image_provider_api_key"]) == "**********"
+    assert str(dumped["storage_access_key"]) == "**********"
+    assert str(dumped["storage_secret_key"]) == "**********"
+
+    serialized_values = (
+        repr(settings),
+        repr(dumped),
+        settings.model_dump_json(),
+    )
+    for secret in (
+        "db-password",
+        "invite-secret-1",
+        "invite-secret-2",
+        "provider-secret",
+        "storage-access-secret",
+        "storage-secret",
+    ):
+        for serialized in serialized_values:
+            assert secret not in serialized
+
+
+def test_settings_have_task2_defaults_and_redact_secret_values(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("INVITE_TOKENS", raising=False)
+    monkeypatch.setenv("IMAGE_PROVIDER_API_KEY", "provider-secret")
+    monkeypatch.setenv("STORAGE_ACCESS_KEY", "storage-access-secret")
+    monkeypatch.setenv("STORAGE_SECRET_KEY", "storage-secret")
+
+    settings = Settings()
+
+    assert settings.database_url.get_secret_value() == (
+        "sqlite+aiosqlite:///./cos-retouch-test.db"
+    )
+    assert settings.allowed_origins == ["http://localhost:5173"]
+    assert settings.invite_tokens == []
+    assert settings.asset_ttl_hours == 24
+    assert settings.max_upload_bytes == 20 * 1024 * 1024
+    assert settings.image_provider_mode == "mock"
+    assert settings.image_provider_model == "cos-retouch-default"
+    assert settings.image_provider_api_key.get_secret_value() == "provider-secret"
+    assert settings.storage_access_key.get_secret_value() == "storage-access-secret"
+    assert settings.storage_secret_key.get_secret_value() == "storage-secret"
     rendered = repr(settings)
     assert "provider-secret" not in rendered
     assert "storage-access-secret" not in rendered

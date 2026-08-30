@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
+from pydantic import SecretStr
 from sqlalchemy import (
     DateTime,
     ForeignKey,
@@ -24,9 +25,11 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from app.config import get_settings
 
 
-def _sync_database_url(database_url: str) -> str:
+def _sync_database_url(database_url: str | SecretStr) -> str:
     """Adapt the configured SQLite async URL for this synchronous repository."""
 
+    if isinstance(database_url, SecretStr):
+        database_url = database_url.get_secret_value()
     if database_url.startswith("sqlite+aiosqlite://"):
         return database_url.replace("sqlite+aiosqlite://", "sqlite://", 1)
     return database_url
@@ -159,7 +162,7 @@ VersionModel = VersionRow
 
 
 settings = get_settings()
-engine = create_db_engine(settings.database_url)
+engine = create_db_engine(settings.get_database_url())
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 

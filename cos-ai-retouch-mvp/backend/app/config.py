@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,24 +22,47 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    database_url: str = "sqlite+aiosqlite:///./cos-retouch-test.db"
+    database_url: SecretStr = SecretStr("sqlite+aiosqlite:///./cos-retouch-test.db")
     allowed_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173"]
     )
-    invite_tokens: list[str] = Field(default_factory=list)
+    invite_tokens: list[SecretStr] = Field(default_factory=list)
     asset_ttl_hours: int = 24
     max_upload_bytes: int = 20 * 1024 * 1024
     image_provider_mode: Literal["mock", "external"] = "mock"
-    image_provider_api_key: str | None = Field(default=None, repr=False)
+    image_provider_api_key: SecretStr | None = Field(default=None, repr=False)
     image_provider_base_url: str | None = None
     image_provider_model: str = "cos-retouch-default"
 
     storage_endpoint: str | None = Field(default=None, repr=False)
     storage_bucket: str | None = None
     storage_region: str | None = None
-    storage_access_key: str | None = Field(default=None, repr=False)
-    storage_secret_key: str | None = Field(default=None, repr=False)
+    storage_access_key: SecretStr | None = Field(default=None, repr=False)
+    storage_secret_key: SecretStr | None = Field(default=None, repr=False)
     storage_public_url: str | None = None
+
+    def get_database_url(self) -> str:
+        """Return the database URL for trusted server-side engine setup."""
+
+        return self.database_url.get_secret_value()
+
+    def get_invite_tokens(self) -> tuple[str, ...]:
+        """Return invite tokens for trusted server-side authentication checks."""
+
+        return tuple(token.get_secret_value() for token in self.invite_tokens)
+
+    @staticmethod
+    def _get_secret(value: SecretStr | None) -> str | None:
+        return value.get_secret_value() if value is not None else None
+
+    def get_image_provider_api_key(self) -> str | None:
+        return self._get_secret(self.image_provider_api_key)
+
+    def get_storage_access_key(self) -> str | None:
+        return self._get_secret(self.storage_access_key)
+
+    def get_storage_secret_key(self) -> str | None:
+        return self._get_secret(self.storage_secret_key)
 
 
 @lru_cache(maxsize=1)
