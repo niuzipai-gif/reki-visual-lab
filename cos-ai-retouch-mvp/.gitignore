@@ -8,6 +8,8 @@ frontend/coverage/
 .venv/
 venv/
 backend/.venv/
+backend/build/
+backend/dist/
 __pycache__/
 *.py[cod]
 *.egg-info/

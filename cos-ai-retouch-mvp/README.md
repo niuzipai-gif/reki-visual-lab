@@ -4,9 +4,11 @@ This repository contains an invite-only, single-photo COS retouch MVP. The guide
 
 The application is intentionally split into a React/Vite frontend, a FastAPI backend, S3-compatible object storage, and an image-provider boundary. The frontend must never call an image model directly.
 
-## Local development
+## Full-MVP local commands
 
 Node.js 20+ and Python 3.11+ are required.
+
+The commands below are the full-MVP development, test, and build commands. They become runnable after later tasks add the frontend `src/`, backend `app/`, and test files. This bootstrap task intentionally does not add application UI or business logic.
 
 Frontend:
 
@@ -26,6 +28,24 @@ python -m venv .venv
 .venv\Scripts\python -m pip install -e .[test]
 .venv\Scripts\python -m pytest -q
 .venv\Scripts\python -m uvicorn app.main:app --reload --port 8000
+```
+
+## Current bootstrap verification
+
+At this bootstrap stage, only the project manifests and shared contract exist. Run these checks from the corresponding directories to verify the dependency metadata and lockfile without expecting the full application commands above to run yet:
+
+Frontend:
+
+```text
+cd frontend
+npm ci --dry-run
+```
+
+Backend:
+
+```text
+cd backend
+python -m pip install -e .[test]
 ```
 
 ## Provider and secret boundary
