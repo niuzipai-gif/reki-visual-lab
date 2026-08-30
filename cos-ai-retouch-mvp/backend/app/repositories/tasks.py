@@ -157,7 +157,7 @@ class TaskRepository:
         return TaskRecord.model_validate(aggregate)
 
     def save_analysis(self, task_id: UUID, cards: list[AnalysisCard]) -> None:
-        self._task_row(task_id)
+        task_row = self._task_row(task_id)
         validated_cards = _CARDS_ADAPTER.validate_python(cards)
         self.session.execute(
             delete(AnalysisCardRow).where(AnalysisCardRow.task_id == task_id)
@@ -171,19 +171,21 @@ class TaskRepository:
                     payload=_payload(card),
                 )
             )
+        task_row.updated_at = utc_now()
         self.session.commit()
 
     def save_plan(self, task_id: UUID, plan: EditPlan) -> None:
-        self._task_row(task_id)
+        task_row = self._task_row(task_id)
         validated_plan = EditPlan.model_validate(plan)
         self.session.execute(delete(EditPlanRow).where(EditPlanRow.task_id == task_id))
         self.session.add(
             EditPlanRow(task_id=task_id, payload=_payload(validated_plan))
         )
+        task_row.updated_at = utc_now()
         self.session.commit()
 
     def add_version(self, task_id: UUID, version: VersionRecord) -> None:
-        self._task_row(task_id)
+        task_row = self._task_row(task_id)
         validated_version = VersionRecord.model_validate(version)
         existing = self.session.get(VersionRow, validated_version.id)
         if existing is not None:
@@ -206,7 +208,8 @@ class TaskRepository:
                     payload=_payload(validated_version),
                 )
             )
-        self._save_asset(task_id, validated_version.asset_url)
+            self._save_asset(task_id, validated_version.asset_url)
+        task_row.updated_at = utc_now()
         self.session.commit()
 
     def mark_expired_before(self, cutoff: datetime) -> int:

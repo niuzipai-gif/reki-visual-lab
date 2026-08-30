@@ -4,10 +4,10 @@ from uuid import UUID, uuid4
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, func, inspect, select
 
 from app.config import Settings
-from app.db import Base
+from app.db import AssetRow, Base
 from app.domain.models import (
     AnalysisCard,
     AssetURL,
@@ -103,8 +103,11 @@ def test_repository_round_trips_the_full_typed_task_aggregate(repository):
     loaded = repository.get_task(task.id)
 
     assert created.id == task.id
-    assert loaded == task
     assert loaded is not task
+    assert loaded.id == task.id
+    assert loaded.status is task.status
+    assert loaded.created_at == task.created_at
+    assert loaded.updated_at > task.updated_at
     assert isinstance(loaded.original_asset_url, AssetURL)
     assert loaded.analysis == (card,)
     assert loaded.analysis[0].regions == (card.regions[0],)
@@ -117,6 +120,63 @@ def test_repository_round_trips_the_full_typed_task_aggregate(repository):
 
 def test_repository_returns_none_for_a_missing_task(repository):
     assert repository.get_task(uuid4()) is None
+
+
+def test_backend_declares_a_sync_postgresql_driver():
+    pyproject = Path(__file__).parents[1] / "pyproject.toml"
+
+    assert '"psycopg[binary]' in pyproject.read_text(encoding="utf-8")
+
+
+def test_add_version_is_idempotent_without_duplicate_assets(repository, db_session):
+    task = TaskRecord.new()
+    version = VersionRecord(asset_url=_asset("version", "version-1.jpg"))
+    repository.create_task(task)
+
+    repository.add_version(task.id, version)
+    repository.add_version(task.id, version)
+
+    loaded = repository.get_task(task.id)
+    asset_count = db_session.scalar(
+        select(func.count(AssetRow.id)).where(AssetRow.task_id == task.id)
+    )
+
+    assert loaded.versions == (version,)
+    assert asset_count == 1
+
+
+def test_child_writes_refresh_task_updated_at_as_utc(repository):
+    old = datetime(2000, 1, 1, tzinfo=timezone.utc)
+    task = TaskRecord(
+        id=uuid4(),
+        created_at=old,
+        updated_at=old,
+    )
+    card = AnalysisCard(
+        id="card-1",
+        category="face",
+        title="Face detail",
+    )
+    plan = EditPlan()
+    version = VersionRecord(asset_url=_asset("version", "version-1.jpg"))
+    repository.create_task(task)
+
+    before_analysis = repository.get_task(task.id).updated_at
+    repository.save_analysis(task.id, [card])
+    after_analysis = repository.get_task(task.id).updated_at
+
+    repository.save_plan(task.id, plan)
+    after_plan = repository.get_task(task.id).updated_at
+
+    repository.add_version(task.id, version)
+    after_version = repository.get_task(task.id).updated_at
+
+    for timestamp in (after_analysis, after_plan, after_version):
+        assert timestamp > before_analysis
+        assert timestamp.tzinfo == timezone.utc
+        assert timestamp.utcoffset() == timedelta(0)
+    assert after_plan >= after_analysis
+    assert after_version >= after_plan
 
 
 def test_mark_expired_before_only_changes_older_non_expired_tasks(repository):
