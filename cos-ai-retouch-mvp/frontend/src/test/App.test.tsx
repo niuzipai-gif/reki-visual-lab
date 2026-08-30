@@ -267,6 +267,43 @@ describe("COS retouch app", () => {
     );
   });
 
+  it("skips plan saving when the first generation was accepted but status lookup failed", async () => {
+    const user = userEvent.setup();
+    const client = makeClient(plannedTask);
+    const generatingTask: TaskView = { ...plannedTask, status: "generating" };
+    client.getTask
+      .mockResolvedValueOnce(plannedTask)
+      .mockResolvedValueOnce(plannedTask)
+      .mockRejectedValueOnce(new Error("status lookup failed"))
+      .mockResolvedValueOnce(generatingTask);
+    render(<App apiClient={client} />);
+
+    await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
+    await user.click(screen.getByRole("button", { name: "进入工作台" }));
+    await user.upload(
+      screen.getByLabelText("选择 JPG 或 PNG 原图"),
+      new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
+    );
+    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await screen.findByRole("heading", { name: "AI 分析" });
+
+    const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
+    await user.click(faceSwitch);
+    await user.click(screen.getByRole("button", { name: "确认并生成候选图" }));
+    const retryButton = await screen.findByRole("button", { name: "重试生成" });
+
+    expect(client.savePlan).toHaveBeenCalledTimes(1);
+    expect(faceSwitch).toBeDisabled();
+    expect(screen.getByLabelText("自然修图")).toBeDisabled();
+    await user.click(retryButton);
+
+    await waitFor(() => expect(client.startGeneration).toHaveBeenCalledTimes(2));
+    expect(client.savePlan).toHaveBeenCalledTimes(1);
+    expect(client.startGeneration.mock.calls[0][2]).toBe(
+      client.startGeneration.mock.calls[1][2],
+    );
+  });
+
   it("retries generation with the same idempotency key after a request failure", async () => {
     const user = userEvent.setup();
     const client = makeClient(plannedTask);

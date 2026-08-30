@@ -77,6 +77,13 @@ function selectedGoal(goal: Goal | "both"): Goal[] {
   return goal === "both" ? ["natural_retouch", "structure_repair"] : [goal];
 }
 
+const GENERATION_ACTIVE_STATUSES = new Set<string>([
+  "generating",
+  "queued",
+  "running",
+  "validating",
+]);
+
 export function buildEditPlan(
   cards: AnalysisCard[],
   enabledIds: Set<string>,
@@ -125,6 +132,14 @@ export default function AnalysisPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generationRetryable, setGenerationRetryable] = useState(false);
+  const [generationOperationStarted, setGenerationOperationStarted] = useState(
+    () => GENERATION_ACTIVE_STATUSES.has(task.status) || (task.status === "failed" && Boolean(task.plan)),
+  );
+  const generationAlreadyStarted =
+    generationOperationStarted ||
+    generationRetryable ||
+    GENERATION_ACTIVE_STATUSES.has(task.status) ||
+    (task.status === "failed" && Boolean(task.plan));
 
   function toggleCard(cardId: string) {
     setEnabledIds((current) => {
@@ -165,8 +180,9 @@ export default function AnalysisPanel({
 
   async function handleGenerate() {
     setGenerationRetryable(false);
-    const saved = await savePlan();
+    const saved = generationAlreadyStarted ? task : await savePlan();
     if (!saved) return;
+    setGenerationOperationStarted(true);
     setBusy(true);
     setError(null);
     try {
@@ -230,6 +246,7 @@ export default function AnalysisPanel({
               name="goal"
               value={value}
               checked={goal === value}
+              disabled={generationAlreadyStarted || busy}
               onChange={() => setGoal(value)}
             />
             {label}
@@ -252,6 +269,7 @@ export default function AnalysisPanel({
                     role="switch"
                     aria-label={`${categoryLabel}处理开关`}
                     checked={enabledIds.has(card.id)}
+                    disabled={generationAlreadyStarted || busy}
                     onChange={() => toggleCard(card.id)}
                   />
                   <span>启用</span>
@@ -275,7 +293,12 @@ export default function AnalysisPanel({
       </div>
       {error && <p className="error-text" role="alert">{error}</p>}
       <div className="analysis-actions">
-        <button className="secondary-button" type="button" disabled={busy} onClick={() => void savePlan()}>
+        <button
+          className="secondary-button"
+          type="button"
+          disabled={busy || generationAlreadyStarted}
+          onClick={() => void savePlan()}
+        >
           保存修图计划
         </button>
         <button className="primary-button" type="button" disabled={busy} onClick={() => void handleGenerate()}>
