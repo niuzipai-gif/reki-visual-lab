@@ -207,4 +207,32 @@ describe("ResultPanel", () => {
     await user.click(regenerate);
     expect(api.startGeneration).not.toHaveBeenCalled();
   });
+
+  it("focuses the result comparison when validation review recovery is requested", async () => {
+    const user = userEvent.setup();
+    const task = {
+      ...taskWithVersions([version("v1", "候选 1")]),
+      status: "failed" as const,
+      error: {
+        code: "VALIDATION_REVIEW",
+        message: "候选图需要人工复核，请查看结果后再决定。",
+        retryable: false,
+      },
+    };
+
+    render(
+      <ResultPanel
+        task={task}
+        originalUrl={originalUrl}
+        inviteToken="invite-demo"
+        apiClient={client()}
+        onTaskUpdate={vi.fn()}
+      />,
+    );
+
+    const comparison = screen.getByTestId("before-after-comparison");
+    await user.click(screen.getByRole("button", { name: "查看复核结果" }));
+
+    expect(document.activeElement).toBe(comparison);
+  });
 });

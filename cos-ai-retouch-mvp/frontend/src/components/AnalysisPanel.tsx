@@ -39,6 +39,7 @@ interface AnalysisPanelProps {
   /** Task 7 can mount MaskCanvas here without changing this workflow. */
   renderRegionEditor?: (props: RegionEditorProps) => ReactNode;
   onBackToUpload?: () => void;
+  onReviewResults?: () => void;
 }
 
 const CATEGORY_META: Array<{ key: TaskCategory; label: string; fallback: string }> = [
@@ -177,6 +178,7 @@ export default function AnalysisPanel({
   getOperationKey,
   renderRegionEditor,
   onBackToUpload,
+  onReviewResults,
 }: AnalysisPanelProps) {
   const cards = useMemo(
     () => CATEGORY_META.map(({ key }) => cardForCategory(task.analysis, key)),
@@ -370,6 +372,10 @@ export default function AnalysisPanel({
   function handleRecovery(action: ErrorRecoveryAction) {
     if (action === "retry") {
       void (generationAlreadyStarted ? handleGenerate() : savePlan());
+      return;
+    }
+    if (action === "review") {
+      onReviewResults?.();
       return;
     }
     if (action === "back" || action === "reupload" || action === "invite") {

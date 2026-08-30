@@ -95,6 +95,7 @@ describe("typed task API client", () => {
   });
 
   it("sends the invite header on every subsequent task request", async () => {
+    const downloadExpiry = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     fetchMock
       .mockResolvedValueOnce(jsonResponse(taskWire))
       .mockResolvedValueOnce(jsonResponse(taskWire))
@@ -103,7 +104,7 @@ describe("typed task API client", () => {
       .mockResolvedValueOnce(
         jsonResponse({
           url: "https://storage.example/download",
-          expires_at: "2026-08-31T01:00:00Z",
+          expires_at: downloadExpiry,
         }),
       );
 
@@ -123,6 +124,41 @@ describe("typed task API client", () => {
     for (const [, init] of fetchMock.mock.calls) {
       expect(new Headers(init.headers).get("X-Invite-Token")).toBe(inviteToken);
     }
+  });
+
+  it("returns a download URL only when the URL and short-lived expiry are valid", async () => {
+    const downloadUrl = "https://storage.example/download?signature=opaque";
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ url: downloadUrl, expires_at: expiresAt }),
+    );
+
+    const { getDownloadUrl } = await import("../app/api");
+
+    await expect(getDownloadUrl("task-123", "invite-in-memory")).resolves.toBe(
+      downloadUrl,
+    );
+  });
+
+  it.each([
+    ["missing url", { expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString() }],
+    ["missing expiry", { url: "https://storage.example/download" }],
+    ["invalid expiry", { url: "https://storage.example/download", expires_at: "not-a-date" }],
+    ["expired", { url: "https://storage.example/download", expires_at: new Date(Date.now() - 1000).toISOString() }],
+    ["not short-lived", { url: "https://storage.example/download", expires_at: new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString() }],
+    ["invalid URL", { url: "storage://private/download", expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString() }],
+  ])("rejects a download response with %s without exposing response details", async (_label, payload) => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(payload));
+    const { getDownloadUrl } = await import("../app/api");
+    const result = getDownloadUrl("task-123", "invite-in-memory");
+
+    await expect(result).rejects.toMatchObject({
+      code: "DOWNLOAD_URL_INVALID",
+      message: "下载链接暂不可用，请重试。",
+    });
+    await expect(result).rejects.not.toThrow(
+      /storage:|expires|not-a-date/,
+    );
   });
 
   it("sends a complete structured plan body including mask strokes", async () => {

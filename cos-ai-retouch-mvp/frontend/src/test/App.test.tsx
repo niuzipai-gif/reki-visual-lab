@@ -423,4 +423,45 @@ describe("COS retouch app", () => {
     expect(screen.getByRole("alert")).not.toHaveTextContent("Traceback");
     expect(screen.getByLabelText("邀请 token")).toBeVisible();
   });
+
+  it("opens the result review interface from a validation review recovery action", async () => {
+    const user = userEvent.setup();
+    const client = makeClient({
+      ...plannedTask,
+      status: "failed",
+      error: {
+        code: "VALIDATION_REVIEW",
+        message: "候选图需要人工复核，请查看结果后再决定。",
+        retryable: false,
+      },
+      versions: [
+        {
+          id: "version-1",
+          assetUrl: {
+            kind: "version",
+            url: "https://storage.example/version-1.png",
+            expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          },
+          createdAt: "2026-08-31T00:02:00Z",
+          validation: { face_identity: "pass" },
+          selected: true,
+        },
+      ],
+    });
+    render(<App apiClient={client} />);
+
+    await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
+    await user.click(screen.getByRole("button", { name: "进入工作台" }));
+    await user.upload(
+      screen.getByLabelText("选择 JPG 或 PNG 原图"),
+      new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
+    );
+    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await screen.findByRole("heading", { name: "AI 分析" });
+
+    await user.click(screen.getAllByRole("button", { name: "查看复核结果" })[0]);
+
+    expect(await screen.findByRole("heading", { name: "生成结果" })).toBeVisible();
+    expect(screen.getByTestId("before-after-comparison")).toBeVisible();
+  });
 });

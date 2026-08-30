@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import path from "node:path";
 
 const taskId = "smoke-task-001";
-const expiry = "2026-09-01T12:00:00Z";
+const expiry = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 const originalAsset = {
   kind: "original",
   url: "https://mock-storage.test/smoke/original.jpg?signature=original",
@@ -70,7 +70,7 @@ test("completes the invite-only single-photo workflow with the mock provider", a
     uploadBody = route.request().postDataBuffer();
     await route.fulfill({ status: 200, body: "" });
   });
-  await page.route("**/api/v1/tasks/*", async (route) => {
+  await page.route(/\/api\/v1\/tasks\/[^/]+\/(?:analyze|plan|generate|download)$/, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const action = url.pathname.split("/").at(-1);
@@ -96,7 +96,7 @@ test("completes the invite-only single-photo workflow with the mock provider", a
     }
     if (request.method() === "GET" && action === "download") {
       expect(request.headers()["x-invite-token"]).toBe("invite-demo");
-      await route.fulfill({ json: { url: "https://mock-storage.test/download.png?expires=2026-09-01T12%3A00%3A00Z", expires_at: expiry } });
+      await route.fulfill({ json: { url: `https://mock-storage.test/download.png?expires=${encodeURIComponent(expiry)}`, expires_at: expiry } });
       return;
     }
     if (request.method() === "GET") {

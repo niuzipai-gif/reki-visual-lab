@@ -102,6 +102,11 @@ const USER_ERROR_COPY: Record<string, UserErrorCopy> = {
     action: "retry",
     actionLabel: "重试处理",
   },
+  DOWNLOAD_URL_INVALID: {
+    message: "下载链接暂不可用，请重试。",
+    action: "retry",
+    actionLabel: "重试下载",
+  },
   IDEMPOTENCY_CONFLICT: {
     message: "请求正在处理中，请稍后重试。",
     action: "retry",
@@ -154,6 +159,50 @@ function numberValue(value: unknown): number | null {
 
 function errorCopy(code: string): UserErrorCopy {
   return USER_ERROR_COPY[code] || USER_ERROR_COPY.REQUEST_FAILED;
+}
+
+const MAX_DOWNLOAD_URL_TTL_MS = 24 * 60 * 60 * 1000;
+
+function invalidDownloadUrlError(): ApiError {
+  return new ApiError(
+    "DOWNLOAD_URL_INVALID",
+    errorCopy("DOWNLOAD_URL_INVALID").message,
+    502,
+    true,
+  );
+}
+
+function parseDownloadUrlPayload(payload: unknown): string {
+  if (!isRecord(payload)) throw invalidDownloadUrlError();
+
+  const rawUrl = payload.url;
+  const rawExpiresAt = payload.expires_at;
+  if (typeof rawUrl !== "string" || !rawUrl.trim() || typeof rawExpiresAt !== "string") {
+    throw invalidDownloadUrlError();
+  }
+
+  const url = rawUrl.trim();
+  try {
+    const parsedUrl = new URL(url);
+    if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
+      throw invalidDownloadUrlError();
+    }
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw invalidDownloadUrlError();
+  }
+
+  const expiresAt = Date.parse(rawExpiresAt);
+  const remainingTtl = expiresAt - Date.now();
+  if (
+    !Number.isFinite(expiresAt) ||
+    remainingTtl <= 0 ||
+    remainingTtl > MAX_DOWNLOAD_URL_TTL_MS
+  ) {
+    throw invalidDownloadUrlError();
+  }
+
+  return url;
 }
 
 export function getUserSafeErrorState(error: unknown): UserSafeErrorState {
@@ -524,10 +573,7 @@ export async function getDownloadUrl(
     `/api/v1/tasks/${encodeURIComponent(taskId)}/download`,
     { method: "GET" },
     inviteToken,
-    (payload) => {
-      const value = isRecord(payload) ? payload : {};
-      return stringValue(value.url);
-    },
+    parseDownloadUrlPayload,
   );
 }
 

@@ -47,6 +47,7 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   const [gateError, setGateError] = useState<string | null>(null);
   const [task, setTask] = useState<TaskView | null>(null);
+  const [reviewRequested, setReviewRequested] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [operationKeyStore] = useState(createOperationKeyStore);
   const previewUrlRef = useRef<string | null>(null);
@@ -89,6 +90,7 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
     previewUrlRef.current = null;
     setPreviewUrl(null);
     setTask(null);
+    setReviewRequested(false);
   }
 
   function handleRecovery(action: ErrorRecoveryAction) {
@@ -96,6 +98,10 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
       setGateError(task?.error?.message || "邀请 token 无效，请重新输入。");
       setInviteToken(null);
       setTask(null);
+      return;
+    }
+    if (action === "review") {
+      setReviewRequested(true);
       return;
     }
     if (action === "back" || action === "reupload") resetWorkflow();
@@ -109,16 +115,19 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
     );
   }
 
-  const showAnalysis = Boolean(
+  const showResult = Boolean(
     task &&
+      task.taskId !== "local-upload" &&
+      (task.status === "succeeded" || (reviewRequested && task.versions.length > 0)),
+  );
+  const showAnalysis = Boolean(
+    !showResult &&
+      task &&
       task.taskId !== "local-upload" &&
       (task.status === "awaiting_confirmation" ||
         task.status === "generating" ||
         task.status === "validating" ||
         (task.status === "failed" && Boolean(task.plan))),
-  );
-  const showResult = Boolean(
-    task && task.taskId !== "local-upload" && task.status === "succeeded",
   );
 
   return (
@@ -148,10 +157,11 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
               inviteToken={inviteToken}
               apiClient={apiClient}
               getOperationKey={operationKeyStore.get}
-            onTaskUpdate={handleTaskUpdate}
-            previewUrl={previewUrl ?? task.originalAssetUrl?.url ?? null}
-            onBackToUpload={resetWorkflow}
-          />
+              onTaskUpdate={handleTaskUpdate}
+              previewUrl={previewUrl ?? task.originalAssetUrl?.url ?? null}
+              onBackToUpload={resetWorkflow}
+              onReviewResults={() => setReviewRequested(true)}
+            />
           )}
           {showResult && task && (
             <ResultPanel

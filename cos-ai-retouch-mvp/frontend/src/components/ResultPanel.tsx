@@ -221,6 +221,10 @@ export default function ResultPanel({
       void (failedAction === "download" ? downloadCurrentResult() : regenerate());
       return;
     }
+    if (action === "review") {
+      comparisonRef.current?.focus();
+      return;
+    }
     if (action === "back" || action === "reupload" || action === "invite") onResetWorkflow?.();
   }
 
@@ -239,6 +243,8 @@ export default function ResultPanel({
         className="before-after-comparison"
         data-testid="before-after-comparison"
         ref={comparisonRef}
+        tabIndex={-1}
+        aria-label="结果复核界面"
         onPointerDown={handlePointerDown}
         onMouseDown={handleMouseDown}
         onTouchStart={handleTouchStart}
@@ -334,6 +340,9 @@ export default function ResultPanel({
       </div>
 
       {task.status === "expired" && <TaskProgress status="expired" onRecover={handleRecovery} />}
+      {task.status === "failed" && task.error?.code === "VALIDATION_REVIEW" && (
+        <TaskProgress status="failed" error={task.error} onRecover={handleRecovery} />
+      )}
       {error && <p className="error-text" role="alert">{error}</p>}
       {taskError && <TaskProgress status="failed" error={taskError} onRecover={handleRecovery} />}
       <div className="analysis-actions result-actions">
