@@ -91,6 +91,12 @@ class TaskRow(Base):
         JSON_PAYLOAD, nullable=True
     )
     error: Mapped[dict[str, Any] | None] = mapped_column(JSON_PAYLOAD, nullable=True)
+    # Durable operation records.  This is a JSON list rather than a second
+    # table so the task aggregate can be updated with one row-level CAS in
+    # SQLite as well as PostgreSQL.
+    idempotency_records: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSON_PAYLOAD, nullable=True
+    )
 
 
 class AssetRow(Base):
@@ -151,6 +157,11 @@ class EditPlanRow(Base):
 class VersionRow(Base):
     __tablename__ = "versions"
     __table_args__ = (
+        UniqueConstraint(
+            "task_id",
+            "position",
+            name="uq_versions_task_position",
+        ),
         Index("ix_versions_task_position", "task_id", "position"),
     )
 
@@ -163,6 +174,8 @@ class VersionRow(Base):
     )
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON_PAYLOAD, nullable=False)
+
+
 
 
 # Short aliases are useful to callers that prefer model names without the

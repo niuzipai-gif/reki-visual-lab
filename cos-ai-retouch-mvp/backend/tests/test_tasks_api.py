@@ -6,12 +6,20 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 from app.config import Settings
 from app.db import VersionRow
-from app.domain.models import AssetURL, EditPlan, VersionRecord
-from app.services.image_provider import MockImageModelProvider, ProviderError
+from app.domain.models import AssetURL, EditPlan, TaskStatus, VersionRecord
+from app.repositories.tasks import TaskRepository
+from app.services.image_provider import (
+    MockImageModelProvider,
+    ProviderError,
+    ProviderJob,
+    ProviderResult,
+)
 from app.services.storage import InMemoryStorageAdapter
+from app.services.task_service import TaskService
 
 
 class CountingProvider:
@@ -43,6 +51,59 @@ class FailingProvider(CountingProvider):
         )
 
 
+class ScriptedProvider:
+    """Provider double that makes polling behavior observable and deterministic."""
+
+    def __init__(
+        self,
+        *,
+        analysis_statuses: tuple[str, ...] = ("succeeded",),
+        edit_statuses: tuple[str, ...] = ("succeeded",),
+    ):
+        self.analysis_statuses = analysis_statuses
+        self.edit_statuses = edit_statuses
+        self.analysis_submissions = 0
+        self.edit_submissions = 0
+        self.poll_counts: dict[str, int] = {}
+
+    def submit_analysis(self, source_url: str):
+        self.analysis_submissions += 1
+        job_id = f"analysis-job-{self.analysis_submissions}"
+        return ProviderJob(job_id=job_id, operation="analysis", status="queued")
+
+    def submit_edit(self, source_url: str, plan: EditPlan):
+        self.edit_submissions += 1
+        job_id = f"edit-job-{self.edit_submissions}"
+        return ProviderJob(job_id=job_id, operation="edit", status="queued")
+
+    def poll(self, job_id: str):
+        count = self.poll_counts.get(job_id, 0) + 1
+        self.poll_counts[job_id] = count
+        statuses = (
+            self.analysis_statuses
+            if job_id.startswith("analysis-")
+            else self.edit_statuses
+        )
+        status = statuses[min(count - 1, len(statuses) - 1)]
+        if status == "succeeded":
+            if job_id.startswith("analysis-"):
+                return ProviderResult(
+                    job_id=job_id,
+                    status="succeeded",
+                    analysis=MockImageModelProvider.analysis_fixture,
+                )
+            return ProviderResult(
+                job_id=job_id,
+                status="succeeded",
+                asset_url=AssetURL(
+                    kind="version",
+                    url=f"https://storage.example.test/{job_id}.png",
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                ),
+            )
+        return ProviderResult(job_id=job_id, status=status)
+
+
 @pytest.fixture
 def api_context(repository):
     from app.main import create_app
@@ -62,6 +123,27 @@ def api_context(repository):
     )
     with TestClient(app) as client:
         yield client, repository, storage, provider
+
+
+@pytest.fixture
+def scripted_context(repository):
+    from app.main import create_app
+
+    settings = Settings(
+        invite_tokens=["invite-demo"],
+        max_upload_bytes=1024 * 1024,
+        asset_ttl_hours=1,
+    )
+    storage = InMemoryStorageAdapter(settings)
+    provider = ScriptedProvider()
+    app = create_app(
+        settings=settings,
+        repository=repository,
+        storage=storage,
+        provider=provider,
+    )
+    with TestClient(app) as client:
+        yield client, repository, storage, provider, settings
 
 
 def _create(client: TestClient, **overrides: Any):
@@ -243,6 +325,156 @@ def test_generate_is_idempotent_original_is_untouched_and_candidates_are_bounded
     assert loaded is not None
     assert len(loaded.versions) <= 2
     assert loaded.original_asset_url.url == original["url"]
+
+
+def test_rebuilt_task_service_uses_persisted_idempotency_without_resubmitting(
+    api_context,
+):
+    client, repository, storage, provider = api_context
+    task_id = _prepare_confirmation(client)
+    client.post(f"/api/v1/tasks/{task_id}/plan", json=_plan_payload())
+
+    first = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers={"Idempotency-Key": "generate-rebuild"},
+    )
+    assert first.status_code == 200
+    assert provider.edit_submissions == 1
+
+    rebuilt = TaskService(
+        TaskRepository(repository.session),
+        storage,
+        provider,
+        settings=Settings(invite_tokens=["invite-demo"], asset_ttl_hours=1),
+    )
+    retried = rebuilt.generate(UUID(task_id), "generate-rebuild")
+    record = repository.get_idempotency(
+        UUID(task_id), "generate", "generate-rebuild"
+    )
+
+    assert retried.status is TaskStatus.SUCCEEDED
+    assert len(retried.versions) == 1
+    assert provider.edit_submissions == 1
+    assert record is not None
+    assert record.provider_job_id
+    assert record.result_status is TaskStatus.SUCCEEDED
+    assert record.provider_status == "succeeded"
+
+
+def test_queued_jobs_poll_until_success_with_one_persisted_provider_job(
+    scripted_context,
+):
+    client, repository, _storage, provider, _settings = scripted_context
+    provider.analysis_statuses = ("queued", "succeeded")
+    provider.edit_statuses = ("queued", "succeeded")
+    task_id = _create(client).json()["task_id"]
+
+    analyzed = client.post(
+        f"/api/v1/tasks/{task_id}/analyze",
+        headers={"Idempotency-Key": "analysis-queued"},
+    )
+    assert analyzed.status_code == 200
+    assert analyzed.json()["status"] == "awaiting_confirmation"
+    assert provider.analysis_submissions == 1
+    assert provider.poll_counts["analysis-job-1"] == 2
+
+    client.post(f"/api/v1/tasks/{task_id}/plan", json=_plan_payload())
+    generated = client.post(
+        f"/api/v1/tasks/{task_id}/generate",
+        headers={"Idempotency-Key": "generate-queued"},
+    )
+    record = repository.get_idempotency(
+        UUID(task_id), "generate", "generate-queued"
+    )
+
+    assert generated.status_code == 200
+    assert generated.json()["status"] == "succeeded"
+    assert provider.edit_submissions == 1
+    assert provider.poll_counts["edit-job-1"] == 2
+    assert record is not None
+    assert record.provider_status == "succeeded"
+
+
+def test_queued_job_poll_limit_returns_retryable_task_and_reuses_job_on_retry(
+    scripted_context,
+):
+    client, repository, _storage, provider, _settings = scripted_context
+    provider.analysis_statuses = ("queued",)
+    task_id = _create(client).json()["task_id"]
+
+    first = client.post(
+        f"/api/v1/tasks/{task_id}/analyze",
+        headers={"Idempotency-Key": "analysis-timeout"},
+    )
+    retry = client.post(
+        f"/api/v1/tasks/{task_id}/analyze",
+        headers={"Idempotency-Key": "analysis-timeout"},
+    )
+    record = repository.get_idempotency(
+        UUID(task_id), "analyze", "analysis-timeout"
+    )
+
+    assert first.status_code == retry.status_code == 200
+    assert first.json()["status"] == retry.json()["status"] == "analyzing"
+    assert provider.analysis_submissions == 1
+    assert provider.poll_counts["analysis-job-1"] == 6
+    assert record is not None
+    assert record.provider_job_id == "analysis-job-1"
+    assert record.result_status is TaskStatus.ANALYZING
+    assert record.provider_status == "queued"
+
+
+def test_provider_failure_persists_failed_idempotency_state_before_safe_error(
+    scripted_context,
+):
+    client, repository, _storage, provider, _settings = scripted_context
+    provider.analysis_statuses = ("failed",)
+    task_id = _create(client).json()["task_id"]
+
+    response = client.post(
+        f"/api/v1/tasks/{task_id}/analyze",
+        headers={"Idempotency-Key": "analysis-failed"},
+    )
+    record = repository.get_idempotency(UUID(task_id), "analyze", "analysis-failed")
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "PROVIDER_ERROR"
+    assert record is not None
+    assert record.provider_job_id == "analysis-job-1"
+    assert record.result_status is TaskStatus.FAILED
+    assert record.provider_status == "failed"
+
+
+def test_database_rejects_duplicate_version_positions_for_one_task(api_context):
+    client, repository, _storage, _provider = api_context
+    task_id = _create(client).json()["task_id"]
+    first = VersionRecord(
+        asset_url=AssetURL(
+            kind="version",
+            url="https://storage.example.test/first.png",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+    )
+    second = VersionRecord(
+        asset_url=AssetURL(
+            kind="version",
+            url="https://storage.example.test/second.png",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+    )
+    repository.add_version(UUID(task_id), first, position=0)
+
+    with pytest.raises(IntegrityError):
+        repository.session.add(
+            VersionRow(
+                id=second.id,
+                task_id=UUID(task_id),
+                position=0,
+                payload=second.model_dump(mode="json"),
+            )
+        )
+        repository.session.commit()
+    repository.session.rollback()
 
 
 def test_generate_rejects_a_task_that_already_has_two_candidates(api_context):

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -25,7 +24,12 @@ from app.domain.models import (
     VersionRecord,
 )
 from app.domain.state import InvalidTransition
-from app.repositories.tasks import TaskRepository
+from app.repositories.tasks import (
+    CandidateLimitError,
+    IdempotencyConflictError,
+    IdempotencyEntry,
+    TaskRepository,
+)
 from app.services.image_provider import (
     ImageModelProvider,
     ProviderError,
@@ -41,12 +45,6 @@ class TaskServiceError(RuntimeError):
         self.code = code
         self.message = message
         self.status_code = status_code
-
-
-@dataclass(frozen=True)
-class _IdempotentJob:
-    request_hash: str
-    provider_job_id: str
 
 
 _ALLOWED_CONTENT_TYPES = frozenset({"image/jpeg", "image/png"})
@@ -80,10 +78,12 @@ def _public_asset(asset: SignedAsset | AssetURL) -> AssetURL:
 class TaskService:
     """Orchestrate task state, persistence, storage signing, and provider jobs.
 
-    The repository is deliberately kept as the existing TaskRepository.  Its
-    public persistence methods cover child records, while this service updates
-    the aggregate status through the repository-owned SQLAlchemy session.
+    Provider operation records live in the repository.  The service may use a
+    process lock to keep its own calls tidy, but correctness never depends on
+    process memory surviving a restart.
     """
+
+    MAX_POLL_ATTEMPTS = 3
 
     def __init__(
         self,
@@ -96,7 +96,6 @@ class TaskService:
         self.storage = storage
         self.provider = provider
         self.settings = settings or get_settings()
-        self._jobs: dict[tuple[UUID, str, str], _IdempotentJob] = {}
         self._version_keys: dict[tuple[UUID, UUID], str] = {}
         self._lock = RLock()
 
@@ -147,14 +146,8 @@ class TaskService:
         request_hash = _request_hash({"operation": "analyze"})
 
         with self._lock:
-            existing = self._jobs.get((parsed_id, "analyze", key))
-            if existing is not None:
-                self._require_same_request(existing, request_hash)
-                return self.get_task(parsed_id)
-
             if task.status is TaskStatus.AWAITING_CONFIRMATION and task.analysis:
                 return task
-            self._require_status(task, {TaskStatus.UPLOADING, TaskStatus.FAILED})
             if task.original_asset_url is None:
                 raise TaskServiceError(
                     "TASK_NOT_READY",
@@ -162,42 +155,121 @@ class TaskService:
                     status_code=409,
                 )
 
-            if task.status is not TaskStatus.ANALYZING:
-                self._advance(task, TaskStatus.ANALYZING)
-                self._persist_task(task)
-
             try:
-                job = self.provider.submit_analysis(task.original_asset_url.url)
-                provider_job_id = self._provider_job_id(job)
-                self._jobs[(parsed_id, "analyze", key)] = _IdempotentJob(
-                    request_hash=request_hash,
-                    provider_job_id=provider_job_id,
+                existing = self.repository.get_idempotency(
+                    parsed_id, "analyze", key
                 )
-                result = self.provider.poll(provider_job_id)
+                if existing is not None:
+                    self._require_same_request(existing, request_hash)
+                    if existing.result_status is TaskStatus.FAILED:
+                        raise self._provider_failure(None)
+                    if (
+                        existing.result_status is TaskStatus.AWAITING_CONFIRMATION
+                        or task.status is TaskStatus.AWAITING_CONFIRMATION
+                    ):
+                        return self.get_task(parsed_id)
+                else:
+                    self._require_status(
+                        task, {TaskStatus.UPLOADING, TaskStatus.FAILED}
+                    )
+                    if task.status is not TaskStatus.ANALYZING:
+                        self._advance(task, TaskStatus.ANALYZING)
+                        self._persist_task(task)
+                    existing = self.repository.create_idempotency(
+                        parsed_id,
+                        "analyze",
+                        key,
+                        request_hash,
+                        TaskStatus.ANALYZING,
+                    )
+
+                if existing.provider_job_id is None:
+                    job = self.provider.submit_analysis(task.original_asset_url.url)
+                    provider_job_id = self._provider_job_id(job)
+                    existing = self.repository.update_idempotency(
+                        parsed_id,
+                        "analyze",
+                        key,
+                        request_hash=request_hash,
+                        provider_job_id=provider_job_id,
+                        provider_status=self._provider_status(job),
+                        result_status=TaskStatus.ANALYZING,
+                    )
+                return self._poll_analysis(task, existing)
+            except IdempotencyConflictError as exc:
+                raise TaskServiceError(
+                    "IDEMPOTENCY_CONFLICT",
+                    "幂等键已用于不同的请求。",
+                    status_code=409,
+                ) from exc
             except ProviderError as exc:
                 self._fail_task(task)
+                self._mark_provider_failed(
+                    parsed_id, "analyze", key, request_hash
+                )
                 raise self._provider_failure(exc) from exc
+            except TaskServiceError:
+                raise
             except Exception as exc:
                 self._fail_task(task)
+                self._mark_provider_failed(
+                    parsed_id, "analyze", key, request_hash
+                )
                 raise self._provider_failure(None) from exc
 
-            result_status = getattr(result, "status", None)
-            if result_status == "failed":
+    def _poll_analysis(
+        self, task: TaskRecord, entry: IdempotencyEntry
+    ) -> TaskRecord:
+        if entry.provider_job_id is None:
+            return task
+        for _attempt in range(self.MAX_POLL_ATTEMPTS):
+            result = self.provider.poll(entry.provider_job_id)
+            provider_status = self._result_status(result)
+            entry = self.repository.update_idempotency(
+                task.id,
+                "analyze",
+                entry.key,
+                result_status=TaskStatus.ANALYZING,
+                provider_status=provider_status,
+            )
+            if provider_status == "failed":
                 self._fail_task(task)
+                self.repository.update_idempotency(
+                    task.id,
+                    "analyze",
+                    entry.key,
+                    result_status=TaskStatus.FAILED,
+                    provider_status="failed",
+                )
                 raise self._provider_failure(None)
-            if result_status != "succeeded":
-                return task
+            if provider_status != "succeeded":
+                continue
 
             analysis = getattr(result, "analysis", None)
             if not isinstance(analysis, (list, tuple)):
                 self._fail_task(task)
+                self.repository.update_idempotency(
+                    task.id,
+                    "analyze",
+                    entry.key,
+                    result_status=TaskStatus.FAILED,
+                    provider_status="failed",
+                )
                 raise self._provider_failure(None)
-            self.repository.save_analysis(parsed_id, list(analysis))
+            self.repository.save_analysis(task.id, list(analysis))
             task.set_analysis(analysis)
             self._advance(task, TaskStatus.AWAITING_CONFIRMATION)
             task.error = None
             self._persist_task(task)
+            self.repository.update_idempotency(
+                task.id,
+                "analyze",
+                entry.key,
+                result_status=TaskStatus.AWAITING_CONFIRMATION,
+                provider_status="succeeded",
+            )
             return task
+        return self.get_task(task.id)
 
     def save_plan(self, task_id: UUID | str, plan: Any) -> TaskRecord:
         parsed_id = self._parse_task_id(task_id)
@@ -244,51 +316,116 @@ class TaskService:
         request_hash = _request_hash(self._plan_hash_payload(plan))
 
         with self._lock:
-            existing = self._jobs.get((parsed_id, "generate", key))
-            if existing is not None:
-                self._require_same_request(existing, request_hash)
-                return self.get_task(parsed_id)
+            try:
+                existing = self.repository.get_idempotency(
+                    parsed_id, "generate", key
+                )
+                if existing is not None:
+                    self._require_same_request(existing, request_hash)
+                    if existing.result_status is TaskStatus.FAILED:
+                        raise self._provider_failure(None)
+                    if existing.result_status is TaskStatus.SUCCEEDED:
+                        return self.get_task(parsed_id)
+                else:
+                    self._require_status(
+                        task,
+                        {TaskStatus.AWAITING_CONFIRMATION, TaskStatus.FAILED},
+                    )
+                    if task.original_asset_url is None:
+                        raise TaskServiceError(
+                            "TASK_NOT_READY",
+                            "原图尚未准备好生成。",
+                            status_code=409,
+                        )
+                    existing = self.repository.reserve_generation(
+                        parsed_id, key, request_hash
+                    )
+                    if task.status is not TaskStatus.GENERATING:
+                        self._advance(task, TaskStatus.GENERATING)
+                        self._persist_task(task)
 
-            if len(task.versions) >= 2:
+                if existing.provider_job_id is None:
+                    job = self.provider.submit_edit(task.original_asset_url.url, plan)
+                    provider_job_id = self._provider_job_id(job)
+                    existing = self.repository.update_idempotency(
+                        parsed_id,
+                        "generate",
+                        key,
+                        request_hash=request_hash,
+                        provider_job_id=provider_job_id,
+                        provider_status=self._provider_status(job),
+                        result_status=TaskStatus.GENERATING,
+                    )
+                return self._poll_generation(task, existing)
+            except CandidateLimitError as exc:
                 raise TaskServiceError(
                     "CANDIDATE_LIMIT",
                     "一个任务最多生成两个候选版本。",
                     status_code=409,
-                )
-            self._require_status(task, {TaskStatus.AWAITING_CONFIRMATION, TaskStatus.FAILED})
-            if task.original_asset_url is None:
+                ) from exc
+            except IdempotencyConflictError as exc:
                 raise TaskServiceError(
-                    "TASK_NOT_READY",
-                    "原图尚未准备好生成。",
+                    "IDEMPOTENCY_CONFLICT",
+                    "幂等键已用于不同的请求。",
                     status_code=409,
-                )
-
-            self._advance(task, TaskStatus.GENERATING)
-            self._persist_task(task)
-            try:
-                job = self.provider.submit_edit(task.original_asset_url.url, plan)
-                provider_job_id = self._provider_job_id(job)
-                self._jobs[(parsed_id, "generate", key)] = _IdempotentJob(
-                    request_hash=request_hash,
-                    provider_job_id=provider_job_id,
-                )
-                result = self.provider.poll(provider_job_id)
+                ) from exc
             except ProviderError as exc:
                 self._fail_task(task)
+                self._mark_provider_failed(
+                    parsed_id, "generate", key, request_hash
+                )
                 raise self._provider_failure(exc) from exc
+            except TaskServiceError:
+                raise
             except Exception as exc:
                 self._fail_task(task)
+                self._mark_provider_failed(
+                    parsed_id, "generate", key, request_hash
+                )
                 raise self._provider_failure(None) from exc
 
-            result_status = getattr(result, "status", None)
-            if result_status == "failed":
+    def _poll_generation(
+        self,
+        task: TaskRecord,
+        entry: IdempotencyEntry,
+    ) -> TaskRecord:
+        if entry.provider_job_id is None:
+            return task
+        for _attempt in range(self.MAX_POLL_ATTEMPTS):
+            result = self.provider.poll(entry.provider_job_id)
+            provider_status = self._result_status(result)
+            entry = self.repository.update_idempotency(
+                task.id,
+                "generate",
+                entry.key,
+                result_status=TaskStatus.GENERATING,
+                provider_status=provider_status,
+            )
+            if provider_status == "failed":
                 self._fail_task(task)
+                self.repository.update_idempotency(
+                    task.id,
+                    "generate",
+                    entry.key,
+                    result_status=TaskStatus.FAILED,
+                    provider_status="failed",
+                    candidate_position=None,
+                )
                 raise self._provider_failure(None)
-            if result_status != "succeeded":
-                return task
+            if provider_status != "succeeded":
+                continue
+
             result_asset = getattr(result, "asset_url", None)
             if result_asset is None or getattr(result_asset, "kind", None) != "version":
                 self._fail_task(task)
+                self.repository.update_idempotency(
+                    task.id,
+                    "generate",
+                    entry.key,
+                    result_status=TaskStatus.FAILED,
+                    provider_status="failed",
+                    candidate_position=None,
+                )
                 raise self._provider_failure(None)
 
             self._advance(task, TaskStatus.VALIDATING)
@@ -297,15 +434,38 @@ class TaskService:
                 asset_url=result_asset,
                 validation=dict(_VALIDATION_RESULT),
             )
-            self.repository.add_version(parsed_id, version)
+            try:
+                self.repository.add_version(
+                    task.id,
+                    version,
+                    position=entry.candidate_position,
+                )
+            except CandidateLimitError:
+                self.repository.update_idempotency(
+                    task.id,
+                    "generate",
+                    entry.key,
+                    result_status=TaskStatus.FAILED,
+                    provider_status="failed",
+                    candidate_position=None,
+                )
+                raise
             task.add_version(version)
-            object_key = self._object_key_for_asset(parsed_id, result_asset)
+            object_key = self._object_key_for_asset(task.id, result_asset)
             if isinstance(object_key, str):
-                self._version_keys[(parsed_id, version.id)] = object_key
+                self._version_keys[(task.id, version.id)] = object_key
             self._advance(task, TaskStatus.SUCCEEDED)
             task.error = None
             self._persist_task(task)
+            self.repository.update_idempotency(
+                task.id,
+                "generate",
+                entry.key,
+                result_status=TaskStatus.SUCCEEDED,
+                provider_status="succeeded",
+            )
             return task
+        return self.get_task(task.id)
 
     def download(self, task_id: UUID | str) -> AssetURL:
         parsed_id = self._parse_task_id(task_id)
@@ -418,13 +578,53 @@ class TaskService:
         return value
 
     @staticmethod
-    def _require_same_request(existing: _IdempotentJob, request_hash: str) -> None:
+    def _require_same_request(
+        existing: IdempotencyEntry, request_hash: str
+    ) -> None:
         if existing.request_hash != request_hash:
             raise TaskServiceError(
                 "IDEMPOTENCY_CONFLICT",
                 "幂等键已用于不同的请求。",
                 status_code=409,
             )
+
+    @staticmethod
+    def _provider_status(value: Any) -> str:
+        status = getattr(value, "status", None)
+        return status if status in {"queued", "running", "succeeded", "failed"} else "queued"
+
+    @classmethod
+    def _result_status(cls, value: Any) -> str:
+        return cls._provider_status(value)
+
+    def _mark_provider_failed(
+        self,
+        task_id: UUID,
+        operation: str,
+        key: str,
+        request_hash: str,
+    ) -> None:
+        """Best-effort durable failure marker that never leaks provider data."""
+
+        try:
+            entry = self.repository.get_idempotency(task_id, operation, key)
+            if entry is None:
+                return
+            self.repository.update_idempotency(
+                task_id,
+                operation,
+                key,
+                request_hash=request_hash,
+                result_status=TaskStatus.FAILED,
+                provider_status="failed",
+                candidate_position=(
+                    None if operation == "generate" else ...
+                ),
+            )
+        except Exception:
+            # The public error remains the same safe provider error even if a
+            # secondary persistence failure occurs while handling an outage.
+            return
 
     @staticmethod
     def _require_status(task: TaskRecord, allowed: set[TaskStatus]) -> None:

@@ -221,9 +221,26 @@ The persisted idempotency record has this shape:
   "key": "client-generated-opaque-key",
   "request_hash": "sha256:...",
   "result_status": "generating",
+  "provider_job_id": "provider-job-id-or-null",
+  "provider_status": "queued|running|succeeded|failed",
   "created_at": "2026-08-30T12:10:00Z"
 }
 ```
+
+The record is persisted as part of the task aggregate (the current SQLAlchemy
+implementation stores the records in `tasks.idempotency_records`). Its durable
+identity is `(task_id, operation, key)` and the required retry fields are
+`request_hash`, `result_status`, and `created_at`; `updated_at` tracks provider
+progress. A matching hash reuses the stored provider job, including after a
+service restart. A different hash returns `IDEMPOTENCY_CONFLICT`. Provider
+jobs in `queued` or `running` are polled for a bounded number of attempts per
+request; a still-pending record remains retryable and the next request resumes
+polling the same `provider_job_id`.
+
+Generation reserves candidate positions transactionally in the database. A
+task can have positions `0` and `1` only, so concurrent requests cannot create
+more than two candidates. The original asset is never replaced by a generated
+version.
 
 ## API paths
 
