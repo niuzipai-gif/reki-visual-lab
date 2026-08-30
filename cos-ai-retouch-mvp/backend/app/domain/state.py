@@ -1,6 +1,7 @@
 """State transition rules for a COS AI retouch task."""
 
-from typing import Final
+from types import MappingProxyType
+from typing import Final, Mapping
 
 from .models import TaskStatus
 
@@ -9,23 +10,25 @@ class InvalidTransition(ValueError):
     """Raised when a task requests a status transition outside the contract."""
 
 
-transition_table: Final[dict[TaskStatus, frozenset[TaskStatus]]] = {
-    TaskStatus.CREATED: frozenset({TaskStatus.UPLOADING}),
-    TaskStatus.UPLOADING: frozenset({TaskStatus.ANALYZING, TaskStatus.FAILED}),
-    TaskStatus.ANALYZING: frozenset(
-        {TaskStatus.AWAITING_CONFIRMATION, TaskStatus.FAILED}
-    ),
-    TaskStatus.AWAITING_CONFIRMATION: frozenset(
-        {TaskStatus.GENERATING, TaskStatus.FAILED}
-    ),
-    TaskStatus.GENERATING: frozenset({TaskStatus.VALIDATING, TaskStatus.FAILED}),
-    TaskStatus.VALIDATING: frozenset({TaskStatus.SUCCEEDED, TaskStatus.FAILED}),
-    TaskStatus.FAILED: frozenset(
-        {TaskStatus.ANALYZING, TaskStatus.GENERATING, TaskStatus.EXPIRED}
-    ),
-    TaskStatus.SUCCEEDED: frozenset({TaskStatus.EXPIRED}),
-    TaskStatus.EXPIRED: frozenset(),
-}
+transition_table: Final[Mapping[TaskStatus, frozenset[TaskStatus]]] = MappingProxyType(
+    {
+        TaskStatus.CREATED: frozenset({TaskStatus.UPLOADING}),
+        TaskStatus.UPLOADING: frozenset({TaskStatus.ANALYZING, TaskStatus.FAILED}),
+        TaskStatus.ANALYZING: frozenset(
+            {TaskStatus.AWAITING_CONFIRMATION, TaskStatus.FAILED}
+        ),
+        TaskStatus.AWAITING_CONFIRMATION: frozenset(
+            {TaskStatus.GENERATING, TaskStatus.FAILED}
+        ),
+        TaskStatus.GENERATING: frozenset({TaskStatus.VALIDATING, TaskStatus.FAILED}),
+        TaskStatus.VALIDATING: frozenset({TaskStatus.SUCCEEDED, TaskStatus.FAILED}),
+        TaskStatus.FAILED: frozenset(
+            {TaskStatus.ANALYZING, TaskStatus.GENERATING, TaskStatus.EXPIRED}
+        ),
+        TaskStatus.SUCCEEDED: frozenset({TaskStatus.EXPIRED}),
+        TaskStatus.EXPIRED: frozenset(),
+    }
+)
 
 # The uppercase alias is convenient for callers that treat the table as a constant.
 TRANSITIONS = transition_table

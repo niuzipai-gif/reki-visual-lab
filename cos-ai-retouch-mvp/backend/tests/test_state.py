@@ -6,10 +6,13 @@ from pydantic import ValidationError
 
 from app.domain.models import (
     AnalysisCard,
+    AssetURL,
     EditPlan,
     Goal,
+    IdempotencyRecord,
     Operation,
     Region,
+    TaskError,
     TaskRecord,
     TaskStatus,
     VersionRecord,
@@ -41,6 +44,16 @@ def test_task_cannot_generate_before_plan_confirmation():
     message = str(exc_info.value)
     assert TaskStatus.ANALYZING.value in message
     assert TaskStatus.GENERATING.value in message
+
+
+def test_task_status_cannot_be_changed_by_direct_assignment():
+    task = TaskRecord.new()
+
+    with pytest.raises(ValidationError):
+        task.status = TaskStatus.UPLOADING
+
+    task.advance(TaskStatus.UPLOADING)
+    assert task.status is TaskStatus.UPLOADING
 
 
 @pytest.mark.parametrize(
@@ -114,7 +127,7 @@ def test_task_record_new_has_uuid_created_status_and_utc_timestamps():
 def test_edit_plan_preserves_the_default_protected_attributes():
     plan = EditPlan()
 
-    assert plan.preserve == [
+    assert plan.preserve == (
         "face identity",
         "composition",
         "main pose",
@@ -124,7 +137,19 @@ def test_edit_plan_preserves_the_default_protected_attributes():
         "perspective",
         "depth of field",
         "noise consistency",
-    ]
+    )
+    assert isinstance(plan.preserve, tuple)
+
+    with pytest.raises(ValidationError):
+        EditPlan(preserve=[])
+
+    with pytest.raises(AttributeError):
+        plan.preserve.remove("face identity")
+
+
+def test_transition_table_cannot_be_mutated_at_runtime():
+    with pytest.raises(TypeError):
+        transition_table[TaskStatus.CREATED] = frozenset()
 
 
 def test_domain_models_validate_normalized_regions_and_store_task_shapes():
@@ -158,7 +183,11 @@ def test_domain_models_validate_normalized_regions_and_store_task_shapes():
         operations=[operation],
     )
     version = VersionRecord(
-        asset_url="https://assets.example.test/tasks/task-1/version-1.jpg",
+        asset_url=AssetURL(
+            kind="version",
+            url="https://assets.example.test/tasks/task-1/version-1.jpg",
+            expires_at=datetime(2026, 8, 30, 12, 30, tzinfo=timezone.utc),
+        ),
         validation={"face": "pass"},
     )
     task = TaskRecord.new()
@@ -168,7 +197,104 @@ def test_domain_models_validate_normalized_regions_and_store_task_shapes():
 
     assert task.analysis[0].regions[0].x == 0.25
     assert task.plan.operations[0].goal is Goal.NATURAL_RETOUCH
-    assert task.versions[0].asset_url.endswith("version-1.jpg")
+    assert task.versions[0].asset_url.url.endswith("version-1.jpg")
+
+
+def test_typed_assets_errors_and_task_id_serialization_match_contract():
+    expires_at = datetime(2026, 8, 30, 12, 30, tzinfo=timezone.utc)
+    original = AssetURL(
+        kind="original",
+        url="https://assets.example.test/tasks/task-1/original.jpg",
+        expires_at=expires_at,
+    )
+    mask = AssetURL(
+        kind="mask",
+        url="https://assets.example.test/tasks/task-1/mask.png",
+        expires_at=expires_at,
+    )
+    error = TaskError(
+        code="ANALYSIS_FAILED",
+        message="Analysis is temporarily unavailable.",
+        retryable=True,
+    )
+    task = TaskRecord(
+        original_asset_url=original,
+        mask_asset_url=mask,
+        error=error,
+    )
+
+    assert task.original_asset_url.kind == "original"
+    assert task.mask_asset_url.kind == "mask"
+    assert task.error is error
+    assert task.model_dump(by_alias=True)["task_id"] == task.id
+
+    with pytest.raises(ValidationError):
+        AssetURL(kind="other", url="https://assets.example.test/object", expires_at=expires_at)
+    with pytest.raises(ValidationError):
+        TaskRecord(error={"traceback": "Traceback (most recent call last)"})
+
+
+def test_idempotency_record_is_scoped_to_supported_operations_and_key_length():
+    record = IdempotencyRecord(
+        task_id=UUID("00000000-0000-0000-0000-000000000001"),
+        operation="analyze",
+        key="retry-1",
+        request_hash="sha256:abc",
+        result_status=TaskStatus.ANALYZING,
+        created_at=datetime(2026, 8, 30, 12, 30, tzinfo=timezone.utc),
+    )
+
+    assert record.operation == "analyze"
+    assert record.key == "retry-1"
+
+    base = {
+        "task_id": record.task_id,
+        "operation": "generate",
+        "request_hash": record.request_hash,
+        "result_status": TaskStatus.GENERATING,
+        "created_at": record.created_at,
+    }
+    with pytest.raises(ValidationError):
+        IdempotencyRecord(**base, key="")
+    with pytest.raises(ValidationError):
+        IdempotencyRecord(**base, key="x" * 129)
+    with pytest.raises(ValidationError):
+        IdempotencyRecord(**{**base, "operation": "upload"})
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda: AssetURL(
+            kind="original",
+            url="https://assets.example.test/object",
+            expires_at=datetime(2026, 8, 30, 12, 30),
+        ),
+        lambda: VersionRecord(
+            asset_url=AssetURL(
+                kind="version",
+                url="https://assets.example.test/object",
+                expires_at=datetime(2026, 8, 30, 12, 30, tzinfo=timezone.utc),
+            ),
+            created_at=datetime(2026, 8, 30, 12, 30),
+        ),
+        lambda: TaskRecord(
+            created_at=datetime(2026, 8, 30, 12, 30),
+            updated_at=datetime(2026, 8, 30, 12, 30, tzinfo=timezone.utc),
+        ),
+        lambda: IdempotencyRecord(
+            task_id=UUID("00000000-0000-0000-0000-000000000001"),
+            operation="analyze",
+            key="retry-1",
+            request_hash="sha256:abc",
+            result_status=TaskStatus.ANALYZING,
+            created_at=datetime(2026, 8, 30, 12, 30),
+        ),
+    ],
+)
+def test_timestamp_fields_reject_naive_datetimes(factory):
+    with pytest.raises(ValidationError):
+        factory()
 
 
 @pytest.mark.parametrize(

@@ -176,7 +176,10 @@ explicitly adds a stronger protection rule.
 {
   "task_id": "UUID",
   "status": "awaiting_confirmation",
+  "created_at": "2026-08-30T12:00:00Z",
+  "updated_at": "2026-08-30T12:10:00Z",
   "original_asset_url": {/* Asset URL with kind=original */},
+  "mask_asset_url": {/* Asset URL with kind=mask, or null */},
   "analysis": [/* Analysis card */],
   "plan": {/* Edit plan, or null */},
   "versions": [/* Version */],
