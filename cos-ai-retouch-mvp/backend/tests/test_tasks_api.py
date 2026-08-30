@@ -157,7 +157,9 @@ class LateFailureProvider:
         self.edit_submissions = 0
 
     def submit_analysis(self, source_url: str):
-        return ProviderJob(job_id="analysis-job-1", operation="analysis", status="queued")
+        return ProviderJob(
+            job_id="analysis-job-1", operation="analysis", status="queued"
+        )
 
     def submit_edit(self, source_url: str, plan: EditPlan):
         self.edit_submissions += 1
@@ -835,9 +837,7 @@ def test_late_generation_poll_failure_cannot_overwrite_new_generation(
         provider_status="queued",
         provider_idempotency_key=provider_key,
     )
-    succeeded = service._poll_generation(
-        service.get_task(task.id), new_entry
-    )
+    succeeded = service._poll_generation(service.get_task(task.id), new_entry)
     assert succeeded.status is TaskStatus.SUCCEEDED
 
     late_result = service._poll_generation(old_task, old_entry)
@@ -845,9 +845,7 @@ def test_late_generation_poll_failure_cannot_overwrite_new_generation(
     current = repository.get_task(task.id)
     assert current is not None
     assert current.status is TaskStatus.SUCCEEDED
-    new_record = repository.get_idempotency(
-        task.id, "generate", new_key
-    )
+    new_record = repository.get_idempotency(task.id, "generate", new_key)
     assert new_record is not None
     assert new_record.result_status is TaskStatus.SUCCEEDED
     old_record = repository.get_idempotency(task.id, "generate", old_key)

@@ -528,9 +528,7 @@ class TaskService:
         # A reclaimer or another worker may have advanced this reservation
         # after this worker captured its entry.  Do not reconcile a version
         # or poll a provider job from an obsolete generation.
-        current_entry = self.repository.get_idempotency(
-            task.id, "generate", entry.key
-        )
+        current_entry = self.repository.get_idempotency(task.id, "generate", entry.key)
         if current_entry is None:
             return self.get_task(task.id)
         if current_entry.request_hash != entry.request_hash:
