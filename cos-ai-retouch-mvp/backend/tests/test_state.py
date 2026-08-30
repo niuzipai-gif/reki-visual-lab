@@ -419,7 +419,11 @@ def test_typed_assets_errors_and_task_id_serialization_match_contract():
     assert task.model_dump(by_alias=True)["task_id"] == task.id
 
     with pytest.raises(ValidationError):
-        AssetURL(kind="other", url="https://assets.example.test/object", expires_at=expires_at)
+        AssetURL(
+            kind="other",
+            url="https://assets.example.test/object",
+            expires_at=expires_at,
+        )
     with pytest.raises(ValidationError):
         TaskRecord(error={"traceback": "Traceback (most recent call last)"})
 

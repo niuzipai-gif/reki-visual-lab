@@ -425,7 +425,13 @@ class TaskRepository:
         keep_key: str | None = None,
         max_age_seconds: int | None = None,
     ) -> int:
-        """Release abandoned pre-submit slots without deleting retry records."""
+        """Release abandoned pre-submit slots without deleting retry records.
+
+        ``submitting`` is included once its lease is older than the cutoff:
+        this covers a process that crashed after claiming the reservation but
+        before it persisted the provider job.  The generation increment makes
+        any late callback from that worker unable to claim the reacquired slot.
+        """
 
         cutoff = _require_utc(cutoff)
         if max_age_seconds is not None:
@@ -439,6 +445,7 @@ class TaskRepository:
             or_(
                 IdempotencyRow.provider_status.is_(None),
                 IdempotencyRow.provider_status == "reserved",
+                IdempotencyRow.provider_status == "submitting",
             ),
         ]
         if keep_key is not None:
@@ -566,9 +573,10 @@ class TaskRepository:
 
         The generation check makes a worker that captured an old reservation
         harmless after a reclaimer has released that reservation.  A
-        ``submitting`` row is intentionally left owned by its current worker;
-        a same-key retry may reconcile it through the provider's stable
-        idempotency key, while a different key cannot steal the slot.
+        A fresh ``submitting`` row is left owned by its current worker.  Once
+        its lease is stale, the reclaimer advances its generation and a
+        same-key retry may safely reacquire it through the provider's stable
+        idempotency key.
         """
 
         row = self.session.scalar(

@@ -743,6 +743,61 @@ def test_submit_race_preserves_reservation_generation_and_rejects_late_worker(
     assert accepted.provider_job_id == "recovered-job"
 
 
+def test_stale_submitting_reservation_is_reclaimed_and_late_worker_is_ignored(
+    repository,
+):
+    task = TaskRecord.new()
+    repository.create_task(task)
+    reserved = repository.reserve_generation_and_mark_task_generating(
+        task.id, "submitting-timeout", "hash-timeout", "provider-key-timeout"
+    )
+    submitting = repository.begin_provider_submission(
+        task.id,
+        "submitting-timeout",
+        "hash-timeout",
+        reserved.reservation_generation,
+    )
+    assert submitting.provider_status == "submitting"
+
+    row = repository.session.scalar(
+        select(IdempotencyRow).where(
+            IdempotencyRow.task_id == task.id,
+            IdempotencyRow.key == "submitting-timeout",
+        )
+    )
+    row.updated_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    repository.session.commit()
+
+    assert (
+        repository.reclaim_stale_generation_reservations(
+            task.id, datetime.now(timezone.utc) - timedelta(minutes=5)
+        )
+        == 1
+    )
+    stale = repository.get_idempotency(task.id, "generate", "submitting-timeout")
+    assert stale.provider_status == "stale_reservation"
+    assert stale.candidate_position is None
+    assert stale.reservation_generation > submitting.reservation_generation
+    assert repository.get_task(task.id).status is TaskStatus.FAILED
+
+    late = repository.record_provider_submission(
+        task.id,
+        "submitting-timeout",
+        "hash-timeout",
+        submitting.reservation_generation,
+        provider_job_id="late-submit-must-not-win",
+        provider_status="queued",
+    )
+    assert late.provider_job_id is None
+    assert late.reservation_generation == stale.reservation_generation
+
+    recovered = repository.reacquire_generation_slot(
+        task.id, "submitting-timeout", "hash-timeout", "provider-key-timeout"
+    )
+    assert recovered.provider_status == "reserved"
+    assert recovered.candidate_position is not None
+
+
 def test_stale_unsubmitted_generation_reservation_can_be_reclaimed(repository):
     task = TaskRecord.new()
     repository.create_task(task)
