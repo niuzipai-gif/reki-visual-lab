@@ -13,6 +13,7 @@ from app.config import Settings
 from app.db import (
     AssetRow,
     Base,
+    EditPlanRow,
     IdempotencyRow,
     TaskRow,
     VersionRow,
@@ -73,6 +74,18 @@ def _aggregate() -> tuple[TaskRecord, AnalysisCard, EditPlan, VersionRecord]:
                 instructions="Keep the original costume silhouette.",
             ),
         ),
+        mask_strokes=(
+            {
+                "mode": "add",
+                "width": 14,
+                "points": [{"x": 0.2, "y": 0.3}, {"x": 0.4, "y": 0.5}],
+            },
+            {
+                "mode": "erase",
+                "width": 7,
+                "points": [{"x": 0.25, "y": 0.35}],
+            },
+        ),
         intensity=62,
         notes="Preserve identity and lighting.",
     )
@@ -103,7 +116,7 @@ def _aggregate() -> tuple[TaskRecord, AnalysisCard, EditPlan, VersionRecord]:
     return task, card, plan, version
 
 
-def test_repository_round_trips_the_full_typed_task_aggregate(repository):
+def test_repository_round_trips_the_full_typed_task_aggregate(repository, db_session):
     task, card, plan, version = _aggregate()
 
     created = repository.create_task(task)
@@ -113,6 +126,10 @@ def test_repository_round_trips_the_full_typed_task_aggregate(repository):
     repository.save_analysis(task.id, [card])
     repository.save_plan(task.id, plan)
     repository.add_version(task.id, version)
+
+    stored_plan = db_session.scalar(
+        select(EditPlanRow).where(EditPlanRow.task_id == task.id)
+    )
 
     loaded = repository.get_task(task.id)
 
@@ -128,6 +145,12 @@ def test_repository_round_trips_the_full_typed_task_aggregate(repository):
     assert loaded.analysis[0].regions == (card.regions[0],)
     assert loaded.plan == plan
     assert loaded.plan.operations[0].goal is Goal.STRUCTURE_REPAIR
+    assert loaded.plan.mask_strokes == plan.mask_strokes
+    assert stored_plan is not None
+    assert (
+        stored_plan.payload["mask_strokes"]
+        == plan.model_dump(mode="json")["mask_strokes"]
+    )
     assert loaded.versions == (version,)
     assert loaded.versions[0].validation == version.validation
     assert isinstance(loaded.error, TaskError)
@@ -135,6 +158,38 @@ def test_repository_round_trips_the_full_typed_task_aggregate(repository):
 
 def test_repository_returns_none_for_a_missing_task(repository):
     assert repository.get_task(uuid4()) is None
+
+
+def test_repository_reads_legacy_plan_without_mask_strokes_as_empty(
+    repository, db_session
+):
+    task = TaskRecord(
+        id=uuid4(),
+        status=TaskStatus.AWAITING_CONFIRMATION,
+    )
+    repository.create_task(task)
+    db_session.add(
+        EditPlanRow(
+            task_id=task.id,
+            payload={
+                "goals": ["natural_retouch"],
+                "preserve": list(EditPlan().preserve),
+                "regions": [],
+                "operations": [],
+                "intensity": 55,
+                "integration": [],
+                "validation": [],
+                "notes": None,
+            },
+        )
+    )
+    db_session.commit()
+
+    loaded = repository.get_task(task.id)
+
+    assert loaded is not None
+    assert loaded.plan is not None
+    assert loaded.plan.mask_strokes == ()
 
 
 def test_backend_declares_a_sync_postgresql_driver():

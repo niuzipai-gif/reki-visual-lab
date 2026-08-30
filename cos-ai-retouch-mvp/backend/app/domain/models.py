@@ -13,6 +13,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictFloat,
     field_validator,
     field_serializer,
     model_validator,
@@ -139,6 +140,25 @@ class Operation(BaseModel):
     instructions: str | None = Field(default=None, max_length=500)
 
 
+class MaskPoint(BaseModel):
+    """One normalized point in a user-authored mask stroke."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    x: StrictFloat = Field(ge=0.0, le=1.0)
+    y: StrictFloat = Field(ge=0.0, le=1.0)
+
+
+class MaskStroke(BaseModel):
+    """One ordered add/erase stroke stored in image-relative coordinates."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mode: Literal["add", "erase"]
+    width: StrictFloat = Field(gt=0.0)
+    points: tuple[MaskPoint, ...] = Field(min_length=1)
+
+
 _DEFAULT_PRESERVE = (
     "face identity",
     "composition",
@@ -155,12 +175,17 @@ _DEFAULT_PRESERVE = (
 class EditPlan(BaseModel):
     """The structured, confirmed inputs passed to an image provider."""
 
-    model_config = ConfigDict(validate_assignment=True, frozen=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        validate_assignment=True,
+        frozen=True,
+    )
 
     goals: tuple[Goal, ...] = Field(default_factory=tuple)
     preserve: tuple[str, ...] = Field(default_factory=lambda: tuple(_DEFAULT_PRESERVE))
     regions: tuple[Region, ...] = Field(default_factory=tuple)
     operations: tuple[Operation, ...] = Field(default_factory=tuple)
+    mask_strokes: tuple[MaskStroke, ...] = Field(default_factory=tuple)
     intensity: int = Field(default=55, ge=0, le=100)
     integration: tuple[str, ...] = Field(
         default_factory=lambda: (

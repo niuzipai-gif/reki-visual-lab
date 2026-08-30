@@ -175,6 +175,10 @@ and the domain rejects enabled operations with empty or dangling region
 references. The default `preserve` list above is mandatory unless a future
 contract explicitly adds a stronger protection rule.
 
+The backend persists `mask_strokes` inside the existing `edit_plans.payload`
+JSON column. Legacy plan payloads that omit this field read back as an empty
+list, while newly saved plans always include it.
+
 ### Version
 
 ```pseudo-json

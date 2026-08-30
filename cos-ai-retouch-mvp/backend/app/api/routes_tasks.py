@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from math import isfinite
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Header, Request, Response
@@ -81,6 +82,55 @@ def _set_retry_after(response: Response, service: TaskService, task: Any) -> Non
         response.headers["Retry-After"] = str(service.retry_after_seconds)
 
 
+def _has_enabled_structure_repair(payload: Any) -> bool:
+    if not isinstance(payload, dict) or not isinstance(payload.get("operations"), list):
+        return False
+    return any(
+        isinstance(operation, dict)
+        and operation.get("goal") == "structure_repair"
+        and operation.get("enabled", True) is not False
+        for operation in payload["operations"]
+    )
+
+
+def _has_invalid_mask_strokes(payload: Any) -> bool:
+    strokes = payload.get("mask_strokes") if isinstance(payload, dict) else None
+    if not isinstance(strokes, list) or not strokes:
+        return True
+    for stroke in strokes:
+        if not isinstance(stroke, dict):
+            return True
+        if stroke.get("mode") not in {"add", "erase"}:
+            return True
+        width = stroke.get("width")
+        points = stroke.get("points")
+        if (
+            not isinstance(width, (int, float))
+            or isinstance(width, bool)
+            or not isfinite(width)
+            or width <= 0
+            or not isinstance(points, list)
+            or not points
+        ):
+            return True
+        for point in points:
+            if not isinstance(point, dict):
+                return True
+            x, y = point.get("x"), point.get("y")
+            if (
+                not isinstance(x, (int, float))
+                or isinstance(x, bool)
+                or not isfinite(x)
+                or not 0 <= x <= 1
+                or not isinstance(y, (int, float))
+                or isinstance(y, bool)
+                or not isfinite(y)
+                or not 0 <= y <= 1
+            ):
+                return True
+    return False
+
+
 @router.post("")
 def create_task(
     payload: CreateTaskRequest | None = Body(default=None),
@@ -136,7 +186,12 @@ def save_plan(
     try:
         plan = EditPlan.model_validate(payload)
     except Exception as exc:
-        raise TaskServiceError("INVALID_PLAN", "处理计划格式无效。") from exc
+        message = "处理计划格式无效。"
+        if _has_enabled_structure_repair(payload) and _has_invalid_mask_strokes(
+            payload
+        ):
+            message = "结构修复需要至少一笔有效的局部蒙版。"
+        raise TaskServiceError("INVALID_PLAN", message) from exc
     return _task_view(service.save_plan(task_id, plan))
 
 

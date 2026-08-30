@@ -12,6 +12,7 @@ from app.domain.models import (
     IdempotencyRecord,
     Operation,
     Region,
+    MaskStroke,
     TaskError,
     TaskRecord,
     TaskStatus,
@@ -156,6 +157,53 @@ def test_edit_plan_preserves_the_default_protected_attributes():
 
     with pytest.raises(AttributeError):
         plan.preserve.remove("face identity")
+
+
+def test_edit_plan_strictly_round_trips_normalized_add_and_erase_mask_strokes():
+    plan = EditPlan(
+        mask_strokes=(
+            {
+                "mode": "add",
+                "width": 18,
+                "points": [{"x": 0.125, "y": 0.25}, {"x": 0.5, "y": 0.75}],
+            },
+            {
+                "mode": "erase",
+                "width": 9.5,
+                "points": [{"x": 1, "y": 0}],
+            },
+        )
+    )
+
+    assert plan.model_dump(mode="json")["mask_strokes"] == [
+        {
+            "mode": "add",
+            "width": 18.0,
+            "points": [{"x": 0.125, "y": 0.25}, {"x": 0.5, "y": 0.75}],
+        },
+        {"mode": "erase", "width": 9.5, "points": [{"x": 1.0, "y": 0.0}]},
+    ]
+    assert isinstance(plan.mask_strokes[0], MaskStroke)
+
+
+@pytest.mark.parametrize(
+    "stroke",
+    [
+        {"mode": "paint", "width": 10, "points": [{"x": 0.5, "y": 0.5}]},
+        {"mode": "add", "width": 0, "points": [{"x": 0.5, "y": 0.5}]},
+        {"mode": "add", "width": 10, "points": [{"x": 1.01, "y": 0.5}]},
+        {"mode": "add", "width": 10, "points": [{"x": 0.5}]},
+        {"mode": "add", "width": 10, "points": []},
+        {
+            "mode": "add",
+            "width": 10,
+            "points": [{"x": 0.5, "y": 0.5, "z": 1}],
+        },
+    ],
+)
+def test_edit_plan_rejects_invalid_mask_stroke_shape(stroke):
+    with pytest.raises(ValidationError):
+        EditPlan(mask_strokes=[stroke])
 
 
 def test_transition_table_cannot_be_mutated_at_runtime():

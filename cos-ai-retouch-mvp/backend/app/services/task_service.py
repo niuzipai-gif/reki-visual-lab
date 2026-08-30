@@ -20,6 +20,8 @@ from app.db import TaskRow, utc_now
 from app.domain.models import (
     AssetURL,
     EditPlan,
+    Goal,
+    MaskStroke,
     TaskError,
     TaskRecord,
     TaskStatus,
@@ -303,13 +305,23 @@ class TaskService:
 
     def save_plan(self, task_id: UUID | str, plan: Any) -> TaskRecord:
         parsed_id = self._parse_task_id(task_id)
-        if not isinstance(plan, EditPlan):
-            try:
-                plan = EditPlan.model_validate(plan)
-            except (ValidationError, TypeError, ValueError) as exc:
-                raise TaskServiceError("INVALID_PLAN", "处理计划格式无效。") from exc
+        try:
+            plan_payload = (
+                plan.model_dump(mode="python") if isinstance(plan, EditPlan) else plan
+            )
+            plan = EditPlan.model_validate(plan_payload)
+        except (ValidationError, TypeError, ValueError) as exc:
+            raise TaskServiceError("INVALID_PLAN", "处理计划格式无效。") from exc
         task = self.get_task(parsed_id)
         self._require_status(task, {TaskStatus.AWAITING_CONFIRMATION})
+        if any(
+            operation.enabled and operation.goal is Goal.STRUCTURE_REPAIR
+            for operation in plan.operations
+        ) and not self._has_valid_mask(plan.mask_strokes):
+            raise TaskServiceError(
+                "INVALID_PLAN",
+                "结构修复需要至少一笔有效的局部蒙版。",
+            )
         if not any(operation.enabled for operation in plan.operations):
             raise TaskServiceError(
                 "INVALID_PLAN",
@@ -325,6 +337,16 @@ class TaskService:
         task.updated_at = utc_now()
         self._persist_task(task)
         return task
+
+    @staticmethod
+    def _has_valid_mask(strokes: Any) -> bool:
+        """Require at least one fully validated user stroke for repair."""
+
+        if not isinstance(strokes, (tuple, list)) or not strokes:
+            return False
+        return all(
+            isinstance(stroke, MaskStroke) and bool(stroke.points) for stroke in strokes
+        )
 
     def generate(self, task_id: UUID | str, idempotency_key: Any) -> TaskRecord:
         parsed_id = self._parse_task_id(task_id)

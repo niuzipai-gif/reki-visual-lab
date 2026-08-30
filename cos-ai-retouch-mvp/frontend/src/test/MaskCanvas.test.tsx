@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "./setup";
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import AnalysisPanel, { buildEditPlan } from "../components/AnalysisPanel";
@@ -230,6 +230,22 @@ describe("MaskCanvas", () => {
 });
 
 describe("structured edit plan", () => {
+  it.each([
+    [25, "自然"],
+    [55, "标准"],
+    [80, "明显"],
+  ])("maps %s intensity exactly for the %s option", (value) => {
+    const plan = buildEditPlan(
+      [makeCard()],
+      new Set(["face-card"]),
+      "natural_retouch",
+      value,
+    );
+
+    expect(plan.intensity).toBe(value);
+    expect(plan.operations[0].intensity).toBe(value);
+  });
+
   it("maps selected cards, strokes, intensity and protection rules into a plan", () => {
     const stroke: MaskStroke = {
       mode: "erase",
@@ -271,6 +287,63 @@ describe("structured edit plan", () => {
         enabled: true,
       }),
     ]);
+  });
+
+  it("keeps all eight protection rules and caps notes without dropping structured fields", async () => {
+    const savePlan = vi.fn().mockResolvedValue(undefined);
+    const getTask = vi.fn().mockResolvedValue(makeTask());
+    render(
+      <AnalysisPanel
+        task={makeTask()}
+        inviteToken="invite-in-memory"
+        onTaskUpdate={vi.fn()}
+        apiClient={{
+          createTask: vi.fn(),
+          uploadOriginal: vi.fn(),
+          startAnalysis: vi.fn(),
+          getTask,
+          savePlan,
+          startGeneration: vi.fn(),
+          getDownloadUrl: vi.fn(),
+        }}
+      />,
+    );
+
+    for (const label of [
+      "脸部身份",
+      "服装设计",
+      "主体姿势",
+      "构图",
+      "背景结构",
+      "光线方向",
+      "透视关系",
+      "噪点一致性",
+    ]) {
+      expect(screen.getByText(label, { exact: true })).toBeVisible();
+    }
+    fireEvent.click(screen.getByRole("switch", { name: "面部处理开关" }));
+    fireEvent.change(screen.getByLabelText("补充说明"), {
+      target: { value: "x".repeat(501) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存修图计划" }));
+
+    await waitFor(() => expect(savePlan).toHaveBeenCalledTimes(1));
+    const submitted = savePlan.mock.calls[0][1];
+    expect(submitted.notes).toHaveLength(500);
+    expect(submitted.goals).toEqual(["natural_retouch"]);
+    expect(submitted.operations).toHaveLength(1);
+    expect(submitted.preserve).toEqual(
+      expect.arrayContaining([
+        "face identity",
+        "costume design",
+        "main pose",
+        "composition",
+        "background structure",
+        "original light direction",
+        "perspective",
+        "noise consistency",
+      ]),
+    );
   });
 
   it("does not save a structure-repair plan when the mask is empty", async () => {

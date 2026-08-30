@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from app.config import Settings
-from app.domain.models import EditPlan, Goal, Operation
+from app.domain.models import EditPlan, Goal, MaskStroke, Operation
 from app.services.image_provider import (
     ExternalImageModelProvider,
     MockImageModelProvider,
@@ -36,7 +36,15 @@ def test_mock_edit_submission_is_idempotent_and_marks_the_demo_copy_asset():
     source_url = (
         "https://assets.example.test/tasks/task-1/original/look.png?signature=old"
     )
-    plan = EditPlan()
+    plan = EditPlan(
+        mask_strokes=(
+            MaskStroke(
+                mode="erase",
+                width=12,
+                points=({"x": 0.2, "y": 0.3},),
+            ),
+        )
+    )
 
     first = provider.submit_edit(source_url, plan)
     retry = provider.submit_edit(
@@ -81,7 +89,15 @@ def test_external_provider_sends_a_structured_plan_and_normalizes_jobs():
     )
     client = httpx.Client(transport=httpx.MockTransport(handler))
     provider = ExternalImageModelProvider(settings, http_client=client)
-    plan = EditPlan()
+    plan = EditPlan(
+        mask_strokes=(
+            MaskStroke(
+                mode="erase",
+                width=12,
+                points=({"x": 0.2, "y": 0.3},),
+            ),
+        )
+    )
 
     job = provider.submit_edit("https://assets.example.test/original.png", plan)
     result = provider.poll(job.job_id)
@@ -92,6 +108,9 @@ def test_external_provider_sends_a_structured_plan_and_normalizes_jobs():
     assert payload["model"] == "retouch-v3"
     assert payload["source_url"] == "https://assets.example.test/original.png"
     assert payload["plan"] == plan.model_dump(mode="json")
+    assert payload["plan"]["mask_strokes"] == [
+        {"mode": "erase", "width": 12.0, "points": [{"x": 0.2, "y": 0.3}]}
+    ]
     assert "prompt" not in payload
     assert job.job_id == "job-42"
     assert job.status == "queued"

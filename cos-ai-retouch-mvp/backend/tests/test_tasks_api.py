@@ -11,7 +11,16 @@ from sqlalchemy.exc import IntegrityError
 
 from app.config import Settings
 from app.db import IdempotencyRow, TaskRow, VersionRow
-from app.domain.models import AssetURL, EditPlan, TaskStatus, VersionRecord
+from app.domain.models import (
+    AssetURL,
+    EditPlan,
+    Goal,
+    MaskStroke,
+    Operation,
+    Region,
+    TaskStatus,
+    VersionRecord,
+)
 from app.repositories.tasks import TaskRepository
 from app.services.image_provider import (
     MockImageModelProvider,
@@ -20,7 +29,7 @@ from app.services.image_provider import (
     ProviderResult,
 )
 from app.services.storage import InMemoryStorageAdapter
-from app.services.task_service import TaskService
+from app.services.task_service import TaskService, TaskServiceError
 from app.services.task_service import _request_hash
 
 
@@ -393,6 +402,128 @@ def test_plan_and_generate_enforce_confirmation_and_enabled_operation(api_contex
     assert generated.json()["status"] == "succeeded"
     assert len(generated.json()["versions"]) == 1
     assert provider.edit_submissions == 1
+
+
+def test_save_plan_persists_and_returns_mask_strokes(api_context):
+    client, repository, _storage, _provider = api_context
+    task_id = _prepare_confirmation(client)
+    payload = {
+        **_plan_payload(),
+        "mask_strokes": [
+            {
+                "mode": "add",
+                "width": 16,
+                "points": [{"x": 0.1, "y": 0.2}, {"x": 0.3, "y": 0.4}],
+            },
+            {"mode": "erase", "width": 8, "points": [{"x": 0.5, "y": 0.6}]},
+        ],
+    }
+
+    saved = client.post(
+        f"/api/v1/tasks/{task_id}/plan", json=payload, headers=INVITE_HEADERS
+    )
+    fetched = client.get(f"/api/v1/tasks/{task_id}", headers=INVITE_HEADERS)
+
+    assert saved.status_code == fetched.status_code == 200
+    expected = payload["mask_strokes"]
+    assert saved.json()["plan"]["mask_strokes"] == expected
+    assert fetched.json()["plan"]["mask_strokes"] == expected
+    loaded = repository.get_task(UUID(task_id))
+    assert loaded is not None and loaded.plan is not None
+    assert loaded.plan.model_dump(mode="json")["mask_strokes"] == expected
+
+
+@pytest.mark.parametrize(
+    "mask_strokes",
+    [
+        [],
+        [{"mode": "add", "width": 10, "points": []}],
+        [{"mode": "paint", "width": 10, "points": [{"x": 0.2, "y": 0.2}]}],
+    ],
+)
+def test_save_plan_rejects_empty_or_invalid_structure_mask_with_safe_error(
+    mask_strokes, api_context
+):
+    client, repository, _storage, _provider = api_context
+    task_id = _prepare_confirmation(client)
+    payload = {
+        **_plan_payload(),
+        "goals": ["structure_repair"],
+        "operations": [
+            {
+                **_plan_payload()["operations"][0],
+                "goal": "structure_repair",
+            }
+        ],
+        "mask_strokes": mask_strokes,
+    }
+
+    response = client.post(
+        f"/api/v1/tasks/{task_id}/plan", json=payload, headers=INVITE_HEADERS
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": {
+            "code": "INVALID_PLAN",
+            "message": "结构修复需要至少一笔有效的局部蒙版。",
+        }
+    }
+    assert repository.get_task(UUID(task_id)).plan is None
+
+
+def test_service_save_plan_rejects_structure_repair_without_mask(repository):
+    settings = Settings(invite_tokens=["invite-demo"], asset_ttl_hours=1)
+    service = TaskService(
+        repository,
+        InMemoryStorageAdapter(settings),
+        CountingProvider(settings),
+        settings=settings,
+    )
+    task, _signed = service.create_task(
+        "invite-demo", "cos-photo.jpg", "image/jpeg", 1200
+    )
+    service.analyze(task.id, "analysis-before-empty-mask")
+    region = Region(id="body-1", label="body", x=0.1, y=0.1, width=0.3, height=0.3)
+    plan = EditPlan(
+        goals=(Goal.STRUCTURE_REPAIR,),
+        regions=(region,),
+        operations=(
+            Operation(
+                kind="body_pose_repair",
+                goal=Goal.STRUCTURE_REPAIR,
+                region_ids=(region.id,),
+            ),
+        ),
+        mask_strokes=(),
+    )
+
+    with pytest.raises(TaskServiceError) as exc_info:
+        service.save_plan(task.id, plan)
+
+    assert exc_info.value.code == "INVALID_PLAN"
+    assert str(exc_info.value) == "结构修复需要至少一笔有效的局部蒙版。"
+    assert repository.get_task(task.id).plan is None
+
+
+def test_plan_hash_changes_when_only_mask_strokes_change(repository):
+    settings = Settings(invite_tokens=["invite-demo"], asset_ttl_hours=1)
+    service = TaskService(
+        repository,
+        InMemoryStorageAdapter(settings),
+        CountingProvider(settings),
+        settings=settings,
+    )
+    first = EditPlan(mask_strokes=())
+    second = EditPlan(
+        mask_strokes=(MaskStroke(mode="add", width=10, points=({"x": 0.5, "y": 0.5},)),)
+    )
+
+    assert service._plan_hash_payload(first)["mask_strokes"] == []
+    assert service._plan_hash_payload(second)["mask_strokes"]
+    assert _request_hash(service._plan_hash_payload(first)) != _request_hash(
+        service._plan_hash_payload(second)
+    )
 
 
 def test_generate_is_idempotent_original_is_untouched_and_candidates_are_bounded(

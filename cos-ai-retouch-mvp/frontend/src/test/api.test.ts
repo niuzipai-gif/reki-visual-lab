@@ -125,6 +125,87 @@ describe("typed task API client", () => {
     }
   });
 
+  it("sends a complete structured plan body including mask strokes", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({}));
+    const { savePlan } = await import("../app/api");
+    const plan = {
+      goals: ["natural_retouch" as const],
+      preserve: ["face identity"],
+      regions: [],
+      maskStrokes: [
+        { mode: "erase" as const, width: 14, points: [{ x: 0.2, y: 0.3 }] },
+      ],
+      operations: [
+        {
+          kind: "skin_retouch",
+          goal: "natural_retouch" as const,
+          regionIds: ["face-1"],
+          intensity: 25,
+          enabled: true,
+        },
+      ],
+      intensity: 25,
+      integration: ["perspective"],
+      validation: ["face identity"],
+      notes: "只补充，不替代结构化字段",
+    };
+
+    await savePlan("task-123", plan, "invite-in-memory");
+
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(requestBody).toMatchObject({
+      goals: ["natural_retouch"],
+      mask_strokes: [
+        { mode: "erase", width: 14, points: [{ x: 0.2, y: 0.3 }] },
+      ],
+      intensity: 25,
+      preserve: ["face identity"],
+      integration: ["perspective"],
+      validation: ["face identity"],
+      notes: "只补充，不替代结构化字段",
+    });
+    expect(requestBody.operations).toHaveLength(1);
+  });
+
+  it("maps persisted mask strokes on task readback and hides invalid-plan details", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        ...taskWire,
+        plan: {
+          goals: ["natural_retouch"],
+          preserve: ["face identity"],
+          regions: [],
+          mask_strokes: [
+            { mode: "add", width: 10, points: [{ x: 0.4, y: 0.6 }] },
+          ],
+          operations: [],
+          intensity: 55,
+          integration: [],
+          validation: [],
+          notes: "补充",
+        },
+      }),
+    );
+    const { getTask } = await import("../app/api");
+    const task = await getTask("task-123", "invite-in-memory");
+    expect(task.plan?.maskStrokes).toEqual([
+      { mode: "add", width: 10, points: [{ x: 0.4, y: 0.6 }] },
+    ]);
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        { error: { code: "INVALID_PLAN", message: "internal validation details" } },
+        400,
+      ),
+    );
+    const { savePlan } = await import("../app/api");
+    await expect(savePlan("task-123", { goals: [], operations: [] }, "invite-in-memory"))
+      .rejects.toMatchObject({
+        code: "INVALID_PLAN",
+        message: "修图计划格式无效，请重新确认修图区域。",
+      });
+  });
+
   it("adds idempotency keys to analyze and generate requests", async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse(taskWire))
