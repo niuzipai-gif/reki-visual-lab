@@ -120,6 +120,47 @@ Run these checks only after an authorized deployment and set
 This Task 10 configuration has not executed a real GitHub Pages or Render
 deployment; the checklist above remains pending live-environment verification.
 
+## Final known limitations and acceptance boundary
+
+This section defines the final MVP handoff boundary. It records what can be
+accepted from the current workflow and what still requires an authorized,
+real-environment or model-backed check; it does not claim that those checks
+have already been run.
+
+- `IMAGE_PROVIDER_MODE=mock` verifies the workflow, API state transitions,
+  masking, and result-handling path only. A mock result is not evidence of
+  image quality and must not be used to pass the 20-image visual QA checklist.
+- External-provider image quality depends on the selected model, endpoint,
+  parameters, provider availability, and the input image. This MVP owns the
+  server-side provider boundary and validation status; it does not guarantee a
+  particular visual result across models.
+- Pose repair is local and region-bounded. It requires a confirmed region and
+  mask, and does not authorize full-body redraw, unrestricted pose generation,
+  camera changes, or silent expansion into unrelated image areas.
+- PSD export, batch processing, user accounts, billing, and local GPU
+  inference are outside this MVP and are not acceptance requirements for this
+  release.
+- Real GitHub Pages and Render smoke verification is still pending authorized
+  deployment. Local tests, configuration, or a successful build must not be
+  reported as proof that the live Pages/Render path has been deployed or
+  verified.
+
+### Acceptance boundary
+
+- **Workflow acceptance:** the invite-only, single-photo flow can be checked
+  locally with the deterministic mock provider, including bounded plan
+  submission, result comparison, original-image recovery, and visible
+  validation status.
+- **Visual acceptance:** use an external provider/model and complete every row
+  in [`docs/qa-checklist.md`](docs/qa-checklist.md). A photo passes only when
+  face identity, pose/composition, hands/costume, background geometry, and
+  lighting/noise are all recorded as `pass`; any unresolved `review` blocks
+  handoff.
+- **Deployment acceptance:** only an authorized live run of the Pages URL,
+  Render health/CORS/auth checks, and a mock task smoke can establish the
+  deployment boundary. Until then, the live-environment result remains
+  pending.
+
 ## Scope
 
 This MVP does not include accounts, payments, public sharing, batch processing, PSD export, or a prompt editor. The shared workflow contract is documented in [`shared/task-contract.md`](shared/task-contract.md).
