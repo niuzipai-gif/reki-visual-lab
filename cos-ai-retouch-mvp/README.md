@@ -78,9 +78,13 @@ Actions-provided `GITHUB_REPOSITORY` as the Pages base path (for example,
 hard-coding a repository name into the frontend.
 
 The Render Blueprint is at [`infra/render.yaml`](infra/render.yaml) and
-defines one small `free` Python web service. Render free services can sleep
+defines one small `free` Python web service. When creating the Blueprint in
+Render, set the custom **Blueprint Path** to
+`cos-ai-retouch-mvp/infra/render.yaml`. Render free services can sleep
 and have cold starts, so they are suitable for low-volume validation only.
-Render's local filesystem is ephemeral: originals, masks, and generated
+The Blueprint sets `RUNTIME_ENVIRONMENT=production`; the API refuses to start
+without `STORAGE_BUCKET` in that environment instead of silently using its
+in-memory test adapter. Render's local filesystem is ephemeral: originals, masks, and generated
 results must be stored in S3-compatible object storage, and no Render disk is
 configured for image persistence.
 

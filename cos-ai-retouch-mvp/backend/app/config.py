@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     invite_tokens: list[SecretStr] = Field(default_factory=list)
     asset_ttl_hours: int = 24
     max_upload_bytes: int = 20 * 1024 * 1024
+    runtime_environment: Literal["development", "production", "test"] = "development"
     image_provider_mode: Literal["mock", "external"] = "mock"
     image_provider_api_key: SecretStr | None = Field(default=None, repr=False)
     image_provider_base_url: str | None = None

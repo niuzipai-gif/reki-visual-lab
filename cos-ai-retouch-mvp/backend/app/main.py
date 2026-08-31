@@ -110,6 +110,17 @@ def create_app(
     )
 
     default_production_path = repository is None
+    if (
+        default_production_path
+        and storage is None
+        and resolved.runtime_environment == "production"
+        and not resolved.storage_bucket
+    ):
+        raise RuntimeError(
+            "STORAGE_BUCKET must be configured for the default production "
+            "storage path."
+        )
+
     if default_production_path:
         _upgrade_schema(resolved.get_database_url())
         engine = create_db_engine(resolved.get_database_url())
