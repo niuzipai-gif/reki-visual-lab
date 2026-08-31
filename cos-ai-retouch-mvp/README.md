@@ -65,6 +65,57 @@ python -m compileall -q app tests
 
 Uploaded originals, masks, and generated versions are intended for S3-compatible object storage rather than the backend's local filesystem. The initial asset-retention target is 24 hours.
 
+## Small-scale deployment
+
+GitHub Pages is reserved for invite-only internal validation of this MVP. It
+is not a commercial public deployment. The Pages workflow builds from
+`cos-ai-retouch-mvp/frontend` and reads the repository Actions variable
+`VITE_API_BASE_URL` from `${{ vars.VITE_API_BASE_URL }}`; add that value under
+GitHub repository **Settings → Secrets and variables → Actions → Variables**,
+not under Secrets. The Vite configuration uses the final segment of the
+Actions-provided `GITHUB_REPOSITORY` as the Pages base path (for example,
+`/<repository>/`), and uses `/` during local development. This avoids
+hard-coding a repository name into the frontend.
+
+The Render Blueprint is at [`infra/render.yaml`](infra/render.yaml) and
+defines one small `free` Python web service. Render free services can sleep
+and have cold starts, so they are suitable for low-volume validation only.
+Render's local filesystem is ephemeral: originals, masks, and generated
+results must be stored in S3-compatible object storage, and no Render disk is
+configured for image persistence.
+
+The Blueprint intentionally leaves runtime configuration for the Render
+Dashboard. In the service's **Environment** settings, add
+`IMAGE_PROVIDER_API_KEY` with the exact key supplied by the provider, then
+save and redeploy the service. Keep this value in Render's secret environment
+settings only; never put it in this README, the repository, Pages variables,
+or browser code. Fill `DATABASE_URL`, `ALLOWED_ORIGINS`, `INVITE_TOKENS`, and
+the storage credentials there as well. For the mock provider smoke flow,
+keep `IMAGE_PROVIDER_MODE=mock`; switch to `external` only after the provider
+endpoint, model, and API key have been configured server-side.
+
+Before a commercial public launch, move the frontend to a Render Static Site
+(or equivalent production static host) and migrate to persistent production
+infrastructure for database, object storage, and any required background
+processing. Do not treat a free Render instance or its filesystem as durable
+production infrastructure.
+
+### Deployment smoke checklist
+
+Run these checks only after an authorized deployment and set
+`RENDER_API_URL` to the actual Render service URL:
+
+- [ ] `GET $RENDER_API_URL/healthz` returns HTTP 200.
+- [ ] The Pages URL loads over HTTPS and serves the built frontend under its
+      repository base path.
+- [ ] An `OPTIONS` task request returns the expected configured CORS origin.
+- [ ] An invalid invite token returns HTTP 401.
+- [ ] Mock analysis can create and advance a task without exposing provider or
+      storage secrets to the browser.
+
+This Task 10 configuration has not executed a real GitHub Pages or Render
+deployment; the checklist above remains pending live-environment verification.
+
 ## Scope
 
 This MVP does not include accounts, payments, public sharing, batch processing, PSD export, or a prompt editor. The shared workflow contract is documented in [`shared/task-contract.md`](shared/task-contract.md).
