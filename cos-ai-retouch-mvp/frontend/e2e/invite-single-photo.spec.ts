@@ -141,7 +141,7 @@ test("completes the invite-only single-photo workflow with the mock provider", a
   await page.mouse.up();
 
   await page.getByRole("button", { name: "生成我的预览" }).click();
-  await expect(page.getByRole("heading", { name: "生成结果" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "选一张最像你的" })).toBeVisible();
   expect(uploadBody?.length).toBeGreaterThan(0);
   expect(planBody?.goals).toEqual(["natural_retouch", "structure_repair"]);
   expect(planBody?.mask_strokes).toHaveLength(1);

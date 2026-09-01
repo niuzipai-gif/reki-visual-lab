@@ -473,7 +473,7 @@ describe("COS retouch app", () => {
 
     await user.click(screen.getAllByRole("button", { name: "查看复核结果" })[0]);
 
-    expect(await screen.findByRole("heading", { name: "生成结果" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "选一张最像你的" })).toBeVisible();
     expect(screen.getByTestId("before-after-comparison")).toBeVisible();
   });
 });

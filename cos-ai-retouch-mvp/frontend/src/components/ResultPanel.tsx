@@ -232,12 +232,12 @@ export default function ResultPanel({
     <section className="panel result-panel" aria-labelledby="result-title">
       <div className="panel-heading">
         <div>
-          <p className="eyebrow">STEP 3 · RESULT REVIEW</p>
-          <h2 id="result-title">生成结果</h2>
+          <p className="eyebrow">第三步 · 挑选预览</p>
+          <h2 id="result-title">选一张最像你的</h2>
         </div>
         <span className="badge">原图永远保留</span>
       </div>
-      <p className="muted">拖动中间分界线查看原图与候选图；原图始终位于左侧。</p>
+      <p className="muted">左右拖动，看看哪一张更接近你心里的角色。</p>
 
       <div
         className="before-after-comparison"
@@ -313,8 +313,8 @@ export default function ResultPanel({
               <img src={version.assetUrl.url} alt={`候选版本 ${index + 1}`} />
             </button>
             <div className="candidate-heading">
-              <h3>候选 {index + 1}</h3>
-              <span className="muted">{version.selected ? "已保留" : "待选择"}</span>
+              <h3>预览 {index + 1}</h3>
+              <span className="muted">{version.selected ? "已保留" : "先看看"}</span>
             </div>
             <div className="validation-list" aria-label={`候选 ${index + 1} 校验结果`}>
               {Object.entries(VALIDATION_LABELS).map(([key, label]) => {

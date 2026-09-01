@@ -89,6 +89,13 @@ describe("ResultPanel", () => {
       />,
     );
 
+    expect(screen.getByText("第三步 · 挑选预览")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "选一张最像你的" })).toBeVisible();
+    expect(screen.getByText("原图永远保留")).toBeVisible();
+    expect(screen.getByText("左右拖动，看看哪一张更接近你心里的角色。")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "预览 1" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "预览 2" })).toBeVisible();
+    expect(screen.getAllByText("先看看")).toHaveLength(2);
     const comparison = screen.getByTestId("before-after-comparison");
     expect(comparison.firstElementChild).toHaveAttribute("data-testid", "comparison-before");
     expect(screen.getByTestId("comparison-before")).toHaveAttribute("data-asset-kind", "original");
