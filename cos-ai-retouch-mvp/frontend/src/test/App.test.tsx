@@ -102,7 +102,7 @@ describe("COS retouch app", () => {
     await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
     await user.click(screen.getByRole("button", { name: "开始我的修图" }));
 
-    expect(await screen.findByRole("heading", { name: "上传原图" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "先放一张你喜欢的照片" })).toBeVisible();
     expect(screen.getByText("COS AI 角色写真")).toBeVisible();
     expect(screen.getByRole("heading", { name: "把喜欢的角色，好好留在照片里" })).toBeVisible();
     expect(screen.getByText("你的照片只用于本次修图")).toBeVisible();
@@ -152,7 +152,7 @@ describe("COS retouch app", () => {
     await user.upload(screen.getByLabelText("选择 JPG 或 PNG 原图"), file);
 
     expect(await screen.findByAltText("待处理原图预览")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
     await waitFor(() => expect(client.createTask).toHaveBeenCalledTimes(1));
     expect(client.uploadOriginal).toHaveBeenCalledWith(
       "https://storage.example/signed-upload",
@@ -204,7 +204,7 @@ describe("COS retouch app", () => {
         screen.getByLabelText("选择 JPG 或 PNG 原图"),
         new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
       );
-      await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+      await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
 
       const analysisPreview = await screen.findByAltText("原图分析预览");
       expect(analysisPreview).toHaveAttribute("src", "blob:cos-preview");
@@ -246,9 +246,9 @@ describe("COS retouch app", () => {
       screen.getByLabelText("选择 JPG 或 PNG 原图"),
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
     );
-    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
 
-    const retryButton = await screen.findByRole("button", { name: "重试分析" });
+    const retryButton = await screen.findByRole("button", { name: "再试一次" });
     await user.click(retryButton);
 
     await waitFor(() => expect(client.startAnalysis).toHaveBeenCalledTimes(2));
@@ -268,7 +268,7 @@ describe("COS retouch app", () => {
       screen.getByLabelText("选择 JPG 或 PNG 原图"),
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
     );
-    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
     await screen.findByRole("heading", { name: "AI 分析" });
 
     const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
@@ -299,7 +299,7 @@ describe("COS retouch app", () => {
       screen.getByLabelText("选择 JPG 或 PNG 原图"),
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
     );
-    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
     await screen.findByRole("heading", { name: "AI 分析" });
 
     const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
@@ -333,7 +333,7 @@ describe("COS retouch app", () => {
       screen.getByLabelText("选择 JPG 或 PNG 原图"),
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
     );
-    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
     await screen.findByRole("heading", { name: "AI 分析" });
 
     const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
@@ -373,7 +373,7 @@ describe("COS retouch app", () => {
       screen.getByLabelText("选择 JPG 或 PNG 原图"),
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
     );
-    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
     await screen.findByRole("heading", { name: "AI 分析" });
 
     const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
@@ -402,7 +402,7 @@ describe("COS retouch app", () => {
       screen.getByLabelText("选择 JPG 或 PNG 原图"),
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
     );
-    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
     await screen.findByRole("heading", { name: "AI 分析" });
 
     expect(screen.getByRole("button", { name: "保存修图计划" })).toBeDisabled();
@@ -428,7 +428,7 @@ describe("COS retouch app", () => {
       screen.getByLabelText("选择 JPG 或 PNG 原图"),
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
     );
-    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
 
     expect(await screen.findByRole("heading", { name: "进入我的写真工作室" })).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent("邀请 token 无效，请重新输入。");
@@ -468,7 +468,7 @@ describe("COS retouch app", () => {
       screen.getByLabelText("选择 JPG 或 PNG 原图"),
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
     );
-    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
     await screen.findByRole("heading", { name: "AI 分析" });
 
     await user.click(screen.getAllByRole("button", { name: "查看复核结果" })[0]);
