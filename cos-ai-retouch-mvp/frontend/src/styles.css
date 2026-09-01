@@ -10,17 +10,15 @@
   --surface-strong: #fffaf7;
   --surface-input: #fffdfb;
   --ink: #493d4a;
-  --muted: #887787;
-  --faint: #a797a4;
+  --muted: #6f606b;
+  --faint: #796874;
   --line: rgba(128, 91, 113, .16);
   --line-strong: rgba(128, 91, 113, .28);
   --accent: #b56b8e;
-  --cyan: #c48aa5;
-  --cyan-soft: rgba(196, 138, 165, .14);
   --violet-soft: rgba(181, 107, 142, .12);
-  --success: #729f88;
-  --warning: #b78358;
-  --danger: #c66c78;
+  --success: #4f7a65;
+  --warning: #8a6242;
+  --danger: #9f4f5b;
   --shadow: 0 22px 60px rgba(126, 83, 103, .14);
 }
 
@@ -68,7 +66,7 @@ h3 { margin: 4px 0 0; font-size: 1rem; letter-spacing: -.025em; }
 .preview-wrap span { font-family: "DM Mono", ui-monospace, monospace; }
 
 .primary-button, .secondary-button, .invite-form button { min-height: 43px; border-radius: 11px; padding: 11px 17px; font-size: .85rem; font-weight: 800; letter-spacing: -.01em; transition: transform .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease, color .16s ease; }
-.primary-button, .invite-form button { border: 1px solid transparent; color: #fffdfb; background: linear-gradient(105deg, #b56b8e, #d697ae); box-shadow: 0 9px 27px rgba(181, 107, 142, .18); }
+.primary-button, .invite-form button { border: 1px solid transparent; color: #fffdfb; background: linear-gradient(105deg, #8f476a, #a35476); box-shadow: 0 9px 27px rgba(181, 107, 142, .18); }
 .primary-button:hover:not(:disabled), .invite-form button:hover:not(:disabled) { box-shadow: 0 12px 32px rgba(181, 107, 142, .24); transform: translateY(-1px); }
 .secondary-button { border: 1px solid var(--accent); color: #9c587b; background: var(--surface-strong); }
 .secondary-button:hover:not(:disabled) { border-color: #9c587b; color: #804b68; background: rgba(181, 107, 142, .08); transform: translateY(-1px); }
