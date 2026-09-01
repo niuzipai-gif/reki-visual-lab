@@ -387,12 +387,12 @@ export default function AnalysisPanel({
     <section className="panel analysis-panel" aria-labelledby="analysis-title">
       <div className="panel-heading">
         <div>
-          <p className="eyebrow">STEP 2 · REVIEW</p>
-          <h2 id="analysis-title">AI 分析</h2>
+          <p className="eyebrow">第二步 · 选择细节</p>
+          <h2 id="analysis-title">看看哪里可以更好</h2>
         </div>
-        <span className="badge">局部建议 · 手动确认</span>
+        <span className="badge">由你确认 · 更安心</span>
       </div>
-      <p className="muted">建议默认关闭。请逐卡确认需要处理的区域，低置信度区域不会自动进入修图计划。</p>
+      <p className="muted">我们先给你几个温柔的建议，你可以自己决定要不要处理。</p>
       {previewUrl && (
         <div className="analysis-preview" aria-label="原图与区域标注">
           <MaskCanvas
@@ -421,11 +421,11 @@ export default function AnalysisPanel({
         </div>
       )}
       <div className="goal-picker" aria-label="修图目标">
-        <span className="control-label">修图目标</span>
+        <span className="control-label">想怎么变好看</span>
         {([
-          ["natural_retouch", "自然修图"],
-          ["structure_repair", "结构修复"],
-          ["both", "自然 + 结构"],
+          ["natural_retouch", "自然变好看"],
+          ["structure_repair", "修复小瑕疵"],
+          ["both", "整理细节"],
         ] as const).map(([value, label]) => (
           <label key={value}>
             <input
@@ -441,7 +441,7 @@ export default function AnalysisPanel({
         ))}
       </div>
       <fieldset className="intensity-picker" disabled={generationAlreadyStarted || busy}>
-        <legend className="control-label">处理强度</legend>
+        <legend className="control-label">修图力度</legend>
         {([
           [25, "自然"],
           [55, "标准"],
@@ -461,7 +461,7 @@ export default function AnalysisPanel({
         ))}
       </fieldset>
       <div className="preserve-checklist" aria-label="始终保护清单">
-        <div className="control-label">始终保护</div>
+        <div className="control-label">这些请一定保留</div>
         <ul>
           {PRESERVE_LABELS.map(({ value, label }) => (
             <li key={value}>
@@ -509,7 +509,7 @@ export default function AnalysisPanel({
         })}
       </div>
       <label className="notes-field">
-        补充说明（可选）
+        想补充什么吗？
         <textarea
           value={notes}
           maxLength={500}
@@ -528,7 +528,7 @@ export default function AnalysisPanel({
           disabled={busy || planSaveLocked}
           onClick={() => void savePlan()}
         >
-          保存修图计划
+          保存这份选择
         </button>
         <button
           className="primary-button"
@@ -536,7 +536,7 @@ export default function AnalysisPanel({
           disabled={busy || generationButtonLocked}
           onClick={() => void handleGenerate()}
         >
-          {busy ? "处理中…" : generationRetryAvailable ? "重试生成" : "确认并生成候选图"}
+          {busy ? "处理中…" : generationRetryAvailable ? "重试生成" : "生成我的预览"}
         </button>
       </div>
       {task.status === "generating" || task.status === "validating" || task.status === "succeeded" || task.status === "failed" ? (

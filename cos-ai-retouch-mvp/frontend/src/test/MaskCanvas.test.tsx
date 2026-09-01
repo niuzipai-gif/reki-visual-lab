@@ -173,7 +173,7 @@ describe("MaskCanvas", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "擦除笔画" }));
+    fireEvent.click(screen.getByRole("button", { name: "擦掉多余区域" }));
     const canvas = screen.getByTestId("mask-canvas-user");
     dispatchPointer(canvas, "pointerdown", { clientX: 60, clientY: 45, pointerId: 2 });
     dispatchPointer(canvas, "pointerup", { clientX: 60, clientY: 45, pointerId: 2 });
@@ -195,7 +195,7 @@ describe("MaskCanvas", () => {
         onChange={onChange}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "撤销最后一笔" }));
+    fireEvent.click(screen.getByRole("button", { name: "撤回上一笔" }));
 
     expect(onChange).toHaveBeenLastCalledWith([firstStroke]);
   });
@@ -279,7 +279,7 @@ describe("structured edit plan", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("switch", { name: "面部处理开关" })).toBeChecked();
-      expect(screen.getByLabelText("结构修复")).toBeChecked();
+      expect(screen.getByLabelText("修复小瑕疵")).toBeChecked();
     });
   });
 
@@ -302,7 +302,7 @@ describe("structured edit plan", () => {
       />,
     );
     fireEvent.click(screen.getByRole("switch", { name: "面部处理开关" }));
-    fireEvent.click(screen.getByLabelText("结构修复"));
+    fireEvent.click(screen.getByLabelText("修复小瑕疵"));
 
     const serverTask = makeTask();
     serverTask.plan = {
@@ -326,7 +326,7 @@ describe("structured edit plan", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("switch", { name: "面部处理开关" })).toBeChecked();
-      expect(screen.getByLabelText("结构修复")).toBeChecked();
+      expect(screen.getByLabelText("修复小瑕疵")).toBeChecked();
     });
   });
 
@@ -371,9 +371,9 @@ describe("structured edit plan", () => {
     );
 
     expect(screen.getByRole("switch", { name: "面部处理开关" })).toBeDisabled();
-    expect(screen.getByLabelText("自然修图")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "确认并生成候选图" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "确认并生成候选图" }));
+    expect(screen.getByLabelText("自然变好看")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "生成我的预览" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "生成我的预览" }));
     expect(startGeneration).not.toHaveBeenCalled();
   });
 
@@ -417,7 +417,7 @@ describe("structured edit plan", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("switch", { name: "面部处理开关" })).not.toBeDisabled();
-      expect(screen.getByRole("button", { name: "确认并生成候选图" })).not.toBeDisabled();
+      expect(screen.getByRole("button", { name: "生成我的预览" })).not.toBeDisabled();
     });
   });
 
@@ -516,7 +516,7 @@ describe("structured edit plan", () => {
     fireEvent.change(screen.getByLabelText("补充说明"), {
       target: { value: "x".repeat(501) },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存修图计划" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存这份选择" }));
 
     await waitFor(() => expect(savePlan).toHaveBeenCalledTimes(1));
     const submitted = savePlan.mock.calls[0][1];
@@ -564,9 +564,9 @@ describe("structured edit plan", () => {
       />,
     );
 
-    fireEvent.click(screen.getByLabelText("结构修复"));
+    fireEvent.click(screen.getByLabelText("修复小瑕疵"));
     fireEvent.click(screen.getByRole("switch", { name: "身体 / 姿态处理开关" }));
-    fireEvent.click(screen.getByRole("button", { name: "保存修图计划" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存这份选择" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "结构修复需要至少绘制一笔局部蒙版",

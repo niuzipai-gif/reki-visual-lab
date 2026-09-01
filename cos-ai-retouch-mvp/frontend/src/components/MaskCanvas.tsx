@@ -289,23 +289,23 @@ export default function MaskCanvas({
       />
       <div className="mask-canvas-controls" style={{ position: "absolute", left: 12, right: 12, bottom: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <button type="button" className="secondary-button" aria-pressed={mode === "add"} disabled={disabled} onClick={() => setMode("add")}>
-          添加笔画
+          画出要处理的地方
         </button>
         <button type="button" className="secondary-button" aria-pressed={mode === "erase"} disabled={disabled} onClick={() => setMode("erase")}>
-          擦除笔画
+          擦掉多余区域
         </button>
         <button type="button" className="secondary-button" disabled={disabled || strokes.length === 0} onClick={undoLastStroke}>
-          撤销最后一笔
+          撤回上一笔
         </button>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 10, background: "rgba(255, 253, 248, .92)", fontSize: ".78rem" }}>
-          画笔宽度
+          画笔大小
           <input
             type="range"
             min="4"
             max="80"
             step="1"
             value={brushWidth}
-            aria-label="画笔宽度"
+            aria-label="画笔大小"
             disabled={disabled}
             onChange={(event) => setBrushWidth(Number(event.target.value))}
           />

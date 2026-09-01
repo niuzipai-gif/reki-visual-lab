@@ -165,7 +165,7 @@ describe("COS retouch app", () => {
     );
     expect(client.getTask).toHaveBeenCalledWith("task-123", "invite-in-memory");
 
-    expect(await screen.findByRole("heading", { name: "AI 分析" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "看看哪里可以更好" })).toBeVisible();
     for (const label of ["面部", "头发", "服装", "身体 / 姿态", "背景", "光线"]) {
       expect(screen.getByText(label)).toBeVisible();
     }
@@ -175,9 +175,9 @@ describe("COS retouch app", () => {
       "aria-label",
       "区域 face-1",
     );
-    expect(screen.getByLabelText("自然修图")).toBeVisible();
-    expect(screen.getByLabelText("结构修复")).toBeVisible();
-    expect(screen.getByLabelText("自然 + 结构")).toBeVisible();
+    expect(screen.getByLabelText("自然变好看")).toBeVisible();
+    expect(screen.getByLabelText("修复小瑕疵")).toBeVisible();
+    expect(screen.getByLabelText("整理细节")).toBeVisible();
   });
 
   it("keeps the preview Blob URL alive across the upload-to-analysis switch and releases it on app unmount", async () => {
@@ -269,11 +269,11 @@ describe("COS retouch app", () => {
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
     );
     await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
-    await screen.findByRole("heading", { name: "AI 分析" });
+    await screen.findByRole("heading", { name: "看看哪里可以更好" });
 
     const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
     if (!(faceSwitch as HTMLInputElement).checked) await user.click(faceSwitch);
-    await user.click(screen.getByRole("button", { name: "确认并生成候选图" }));
+    await user.click(screen.getByRole("button", { name: "生成我的预览" }));
 
     await waitFor(() => expect(client.startGeneration).toHaveBeenCalledTimes(1));
     expect(client.savePlan).toHaveBeenCalledTimes(1);
@@ -300,16 +300,16 @@ describe("COS retouch app", () => {
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
     );
     await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
-    await screen.findByRole("heading", { name: "AI 分析" });
+    await screen.findByRole("heading", { name: "看看哪里可以更好" });
 
     const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
     if (!(faceSwitch as HTMLInputElement).checked) await user.click(faceSwitch);
-    await user.click(screen.getByRole("button", { name: "确认并生成候选图" }));
+    await user.click(screen.getByRole("button", { name: "生成我的预览" }));
     const retryButton = await screen.findByRole("button", { name: "重试生成" });
 
     expect(client.savePlan).toHaveBeenCalledTimes(1);
     expect(faceSwitch).toBeDisabled();
-    expect(screen.getByLabelText("自然修图")).toBeDisabled();
+    expect(screen.getByLabelText("自然变好看")).toBeDisabled();
     await user.click(retryButton);
 
     await waitFor(() => expect(client.startGeneration).toHaveBeenCalledTimes(2));
@@ -334,11 +334,11 @@ describe("COS retouch app", () => {
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
     );
     await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
-    await screen.findByRole("heading", { name: "AI 分析" });
+    await screen.findByRole("heading", { name: "看看哪里可以更好" });
 
     const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
     if (!(faceSwitch as HTMLInputElement).checked) await user.click(faceSwitch);
-    await user.click(screen.getByRole("button", { name: "确认并生成候选图" }));
+    await user.click(screen.getByRole("button", { name: "生成我的预览" }));
     const retryButton = await screen.findByRole("button", { name: "重试生成" });
     await user.click(retryButton);
 
@@ -374,11 +374,11 @@ describe("COS retouch app", () => {
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
     );
     await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
-    await screen.findByRole("heading", { name: "AI 分析" });
+    await screen.findByRole("heading", { name: "看看哪里可以更好" });
 
     const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
     if (!(faceSwitch as HTMLInputElement).checked) await user.click(faceSwitch);
-    await user.click(screen.getByRole("button", { name: "确认并生成候选图" }));
+    await user.click(screen.getByRole("button", { name: "生成我的预览" }));
 
     await waitFor(() => expect(screen.getAllByText("处理失败").length).toBeGreaterThan(0));
     expect(
@@ -403,9 +403,9 @@ describe("COS retouch app", () => {
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
     );
     await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
-    await screen.findByRole("heading", { name: "AI 分析" });
+    await screen.findByRole("heading", { name: "看看哪里可以更好" });
 
-    expect(screen.getByRole("button", { name: "保存修图计划" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存这份选择" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "重试生成" })).toBeEnabled();
     expect(client.savePlan).not.toHaveBeenCalled();
   });
@@ -469,7 +469,7 @@ describe("COS retouch app", () => {
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
     );
     await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
-    await screen.findByRole("heading", { name: "AI 分析" });
+    await screen.findByRole("heading", { name: "看看哪里可以更好" });
 
     await user.click(screen.getAllByRole("button", { name: "查看复核结果" })[0]);
 
