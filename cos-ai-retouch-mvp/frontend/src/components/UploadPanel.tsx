@@ -211,15 +211,15 @@ export default function UploadPanel({
     <section className="panel upload-panel" aria-labelledby="upload-title">
       <div className="panel-heading">
         <div>
-          <p className="eyebrow">STEP 1 · ORIGINAL</p>
-          <h2 id="upload-title">上传原图</h2>
+          <p className="eyebrow">第一步 · 上传照片</p>
+          <h2 id="upload-title">先放一张你喜欢的照片</h2>
         </div>
         <span className="badge">JPG / PNG · ≤ 20MB</span>
       </div>
-      <p className="muted">原图会保持不变。上传后，系统只分析局部修图建议，不会把提示词或模型密钥暴露到浏览器。</p>
+      <p className="muted">我们会保留你的脸、姿势和服装设计，只帮你把细节变得更好。</p>
       <label className="file-drop" htmlFor="source-image">
         <span className="file-drop-icon" aria-hidden="true">＋</span>
-        <strong>选择一张 COS 原图</strong>
+        <strong>把 COS 照片放在这里</strong>
         <span className="muted">支持 JPG、PNG，最大 20MB</span>
         <input
           id="source-image"
@@ -242,7 +242,7 @@ export default function UploadPanel({
       )}
       {error && <p className="error-text" role="alert">{error}</p>}
       <button className="primary-button" type="button" disabled={!file || busy} onClick={() => void handleUpload()}>
-        {busy ? "正在准备…" : retryableAnalysis ? "重试分析" : "上传并开始分析"}
+        {busy ? "正在准备预览…" : retryableAnalysis ? "再试一次" : "开始看看哪里可以更好"}
       </button>
       {busy || progressStatus !== "created" || taskError ? (
         <TaskProgress status={progressStatus} error={taskError} onRecover={handleRecovery} />

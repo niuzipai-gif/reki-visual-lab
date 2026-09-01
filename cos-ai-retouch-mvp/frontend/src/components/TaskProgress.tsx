@@ -11,11 +11,11 @@ interface TaskProgressProps {
 }
 
 const STATUS_COPY: Record<TaskStatus, { label: string; percent: number }> = {
-  created: { label: "准备上传", percent: 10 },
-  uploading: { label: "上传原图", percent: 30 },
-  analyzing: { label: "AI 分析中", percent: 58 },
-  awaiting_confirmation: { label: "分析完成，等待确认", percent: 70 },
-  generating: { label: "生成候选图", percent: 82 },
+  created: { label: "准备你的修图", percent: 10 },
+  uploading: { label: "正在收好原图", percent: 30 },
+  analyzing: { label: "正在看看细节", percent: 58 },
+  awaiting_confirmation: { label: "可以开始挑选了", percent: 70 },
+  generating: { label: "正在生成预览", percent: 82 },
   validating: { label: "检查候选图", percent: 94 },
   succeeded: { label: "处理完成", percent: 100 },
   failed: { label: "处理失败", percent: 100 },

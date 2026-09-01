@@ -27,6 +27,30 @@ afterEach(() => {
 });
 
 describe("UploadPanel file identity", () => {
+  it("uses the welcoming upload flow copy", () => {
+    render(
+      <UploadPanel
+        inviteToken="invite-in-memory"
+        apiClient={{
+          createTask: vi.fn(),
+          uploadOriginal: vi.fn(),
+          startAnalysis: vi.fn(),
+          getTask: vi.fn(),
+          savePlan: vi.fn(),
+          startGeneration: vi.fn(),
+          getDownloadUrl: vi.fn(),
+        }}
+        onTaskUpdate={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("第一步 · 上传照片")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "先放一张你喜欢的照片" })).toBeVisible();
+    expect(screen.getByText("我们会保留你的脸、姿势和服装设计，只帮你把细节变得更好。")).toBeVisible();
+    expect(screen.getByText("把 COS 照片放在这里")).toBeVisible();
+    expect(screen.getByRole("button", { name: "开始看看哪里可以更好" })).toBeDisabled();
+  });
+
   it("resets the old task before reusing a same-name same-size replaced file", async () => {
     const user = userEvent.setup();
     const createdTask = task("task-old", "uploading");
@@ -58,13 +82,13 @@ describe("UploadPanel file identity", () => {
     const replaced = new File(["bb"], "same.jpg", { type: "image/jpeg", lastModified: 2 });
 
     await user.upload(input, first);
-    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
     await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1));
 
     fireEvent.change(input, { target: { files: [replaced] } });
 
     expect(onTaskReset).toHaveBeenCalledTimes(1);
-    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
     await waitFor(() => expect(createTask).toHaveBeenCalledTimes(2));
     expect(uploadOriginal).toHaveBeenLastCalledWith(
       "https://storage.example/task-new/upload",
@@ -106,7 +130,7 @@ describe("UploadPanel file identity", () => {
     });
 
     await user.upload(input, original);
-    await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
+    await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
     await waitFor(() => expect(uploadOriginal).toHaveBeenCalledTimes(1));
 
     expect(input).toBeDisabled();
