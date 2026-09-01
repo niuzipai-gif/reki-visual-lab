@@ -105,16 +105,22 @@ h3 { margin: 4px 0 0; font-size: 1rem; letter-spacing: -.025em; }
 .goal-picker input, .intensity-picker input, .toggle-control input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
 .intensity-picker { min-width: 0; border: 0; margin: 0; padding-bottom: 5px; }
 .intensity-picker legend { padding: 0; }
+.intensity-control { display: grid; grid-template-columns: auto minmax(120px, 1fr) auto auto; align-items: center; gap: 10px; min-width: min(100%, 480px); color: var(--muted); font-size: .76rem; }
+.intensity-control output { min-width: 2ch; color: var(--ink); font-size: .82rem; font-weight: 800; text-align: right; }
 .preserve-checklist { display: grid; grid-template-columns: 105px 1fr; gap: 12px; padding: 14px 0 17px; border-bottom: 1px solid var(--line); }
 .preserve-checklist ul { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 0; margin: 0; list-style: none; }
 .preserve-checklist li { color: var(--muted); font-size: .76rem; }
 .preserve-checklist li span { color: var(--success); }
-.analysis-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; margin-top: 23px; }
+.analysis-groups { display: grid; gap: 16px; margin-top: 23px; }
+.analysis-group { padding: 16px; border: 1px solid var(--line); border-radius: 20px; background: rgba(255, 253, 250, .45); }
+.analysis-group-title { margin: 0 0 12px; color: var(--ink); font-size: 1.05rem; }
+.analysis-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
 .analysis-card, .candidate-card { border: 1px solid var(--line); border-radius: 18px; background: rgba(255, 253, 250, .72); transition: border-color .2s ease, background .2s ease, box-shadow .2s ease; }
 .analysis-card { padding: 17px; }
 .analysis-card:hover { border-color: rgba(181, 107, 142, .42); background: rgba(181, 107, 142, .08); box-shadow: inset 0 1px rgba(255, 255, 255, .78); }
 .analysis-card-heading, .candidate-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .category-label { color: var(--accent); font-size: .65rem; font-weight: 700; letter-spacing: .1em; }
+.analysis-card h4 { margin: 4px 0 0; font-size: 1rem; letter-spacing: -.025em; }
 .analysis-card p { min-height: 42px; margin: 14px 0; color: var(--muted); font-size: .84rem; line-height: 1.6; }
 .card-meta { display: grid; gap: 5px; color: var(--success); font-size: .7rem; }
 .card-meta .risk { color: var(--warning); }

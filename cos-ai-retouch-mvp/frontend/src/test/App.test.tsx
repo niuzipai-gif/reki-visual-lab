@@ -169,6 +169,18 @@ describe("COS retouch app", () => {
     for (const label of ["面部", "头发", "服装", "身体 / 姿态", "背景", "光线"]) {
       expect(screen.getByText(label)).toBeVisible();
     }
+    for (const label of ["脸部状态", "头发与假发", "服装细节", "背景与光线"]) {
+      expect(screen.getByRole("heading", { level: 3, name: label })).toBeVisible();
+    }
+    expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(4);
+    const intensitySlider = screen.getByRole("slider", { name: "修图力度" });
+    expect(intensitySlider).toBeVisible();
+    expect(intensitySlider).toHaveAttribute("min", "0");
+    expect(intensitySlider).toHaveAttribute("max", "100");
+    expect(intensitySlider).toHaveAttribute("step", "1");
+    expect(intensitySlider).toHaveValue("55");
+    expect(screen.getByText("自然", { exact: true })).toBeVisible();
+    expect(screen.getByText("明显", { exact: true })).toBeVisible();
     expect(screen.queryByText("姿态", { exact: true })).not.toBeInTheDocument();
     expect(screen.getByText("置信度 92%")).toBeVisible();
     expect(screen.getByTestId("region-highlight-face-1")).toHaveAttribute(
@@ -178,6 +190,32 @@ describe("COS retouch app", () => {
     expect(screen.getByLabelText("自然变好看")).toBeVisible();
     expect(screen.getByLabelText("修复小瑕疵")).toBeVisible();
     expect(screen.getByLabelText("整理细节")).toBeVisible();
+  });
+
+  it("saves a continuous intensity value without snapping to a preset", async () => {
+    const user = userEvent.setup();
+    const client = makeClient();
+    render(<App apiClient={client} />);
+
+    await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
+    await user.click(screen.getByRole("button", { name: "开始我的修图" }));
+    await user.upload(
+      screen.getByLabelText("选择 JPG 或 PNG 原图"),
+      new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
+    );
+    await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
+    const intensitySlider = await screen.findByRole("slider", { name: "修图力度" });
+
+    fireEvent.change(intensitySlider, { target: { value: "73" } });
+    expect(intensitySlider).toHaveValue("73");
+    await user.click(screen.getByRole("switch", { name: "脸部状态中的面部处理开关" }));
+    await user.click(screen.getByRole("button", { name: "保存这份选择" }));
+
+    await waitFor(() => expect(client.savePlan).toHaveBeenCalledTimes(1));
+    expect(client.savePlan.mock.calls[0][1]).toMatchObject({
+      intensity: 73,
+      operations: [expect.objectContaining({ intensity: 73 })],
+    });
   });
 
   it("keeps the preview Blob URL alive across the upload-to-analysis switch and releases it on app unmount", async () => {
@@ -271,7 +309,7 @@ describe("COS retouch app", () => {
     await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
     await screen.findByRole("heading", { name: "看看哪里可以更好" });
 
-    const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
+    const faceSwitch = screen.getByRole("switch", { name: "脸部状态中的面部处理开关" });
     if (!(faceSwitch as HTMLInputElement).checked) await user.click(faceSwitch);
     await user.click(screen.getByRole("button", { name: "生成我的预览" }));
 
@@ -302,7 +340,7 @@ describe("COS retouch app", () => {
     await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
     await screen.findByRole("heading", { name: "看看哪里可以更好" });
 
-    const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
+    const faceSwitch = screen.getByRole("switch", { name: "脸部状态中的面部处理开关" });
     if (!(faceSwitch as HTMLInputElement).checked) await user.click(faceSwitch);
     await user.click(screen.getByRole("button", { name: "生成我的预览" }));
     const retryButton = await screen.findByRole("button", { name: "重试生成" });
@@ -336,7 +374,7 @@ describe("COS retouch app", () => {
     await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
     await screen.findByRole("heading", { name: "看看哪里可以更好" });
 
-    const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
+    const faceSwitch = screen.getByRole("switch", { name: "脸部状态中的面部处理开关" });
     if (!(faceSwitch as HTMLInputElement).checked) await user.click(faceSwitch);
     await user.click(screen.getByRole("button", { name: "生成我的预览" }));
     const retryButton = await screen.findByRole("button", { name: "重试生成" });
@@ -376,7 +414,7 @@ describe("COS retouch app", () => {
     await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
     await screen.findByRole("heading", { name: "看看哪里可以更好" });
 
-    const faceSwitch = screen.getByRole("switch", { name: "面部处理开关" });
+    const faceSwitch = screen.getByRole("switch", { name: "脸部状态中的面部处理开关" });
     if (!(faceSwitch as HTMLInputElement).checked) await user.click(faceSwitch);
     await user.click(screen.getByRole("button", { name: "生成我的预览" }));
 

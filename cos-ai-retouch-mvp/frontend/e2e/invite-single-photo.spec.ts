@@ -128,8 +128,9 @@ test("completes the invite-only single-photo workflow with the mock provider", a
   await expect(page.getByText("姿态连接")).toBeVisible();
 
   await page.getByLabel("整理细节").check();
-  await page.getByRole("switch", { name: "面部处理开关" }).check();
-  await page.getByRole("switch", { name: "身体 / 姿态处理开关" }).check();
+  await page.getByRole("switch", { name: "脸部状态中的面部处理开关" }).check();
+  await page.getByRole("switch", { name: "服装细节中的身体 / 姿态处理开关" }).check();
+  await page.getByLabel("修图力度").fill("73");
 
   const canvas = page.getByLabel("局部蒙版画布");
   const box = await canvas.boundingBox();
@@ -144,6 +145,7 @@ test("completes the invite-only single-photo workflow with the mock provider", a
   await expect(page.getByRole("heading", { name: "选一张最像你的" })).toBeVisible();
   expect(uploadBody?.length).toBeGreaterThan(0);
   expect(planBody?.goals).toEqual(["natural_retouch", "structure_repair"]);
+  expect(planBody?.intensity).toBe(73);
   expect(planBody?.mask_strokes).toHaveLength(1);
   await expect(page.getByTestId("before-after-comparison")).toBeVisible();
   await page.getByLabel("对比位置").fill("72");

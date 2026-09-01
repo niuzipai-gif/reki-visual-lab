@@ -278,7 +278,7 @@ describe("structured edit plan", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("switch", { name: "面部处理开关" })).toBeChecked();
+      expect(screen.getByRole("switch", { name: "脸部状态中的面部处理开关" })).toBeChecked();
       expect(screen.getByLabelText("修复小瑕疵")).toBeChecked();
     });
   });
@@ -301,7 +301,7 @@ describe("structured edit plan", () => {
         apiClient={apiClient}
       />,
     );
-    fireEvent.click(screen.getByRole("switch", { name: "面部处理开关" }));
+    fireEvent.click(screen.getByRole("switch", { name: "脸部状态中的面部处理开关" }));
     fireEvent.click(screen.getByLabelText("修复小瑕疵"));
 
     const serverTask = makeTask();
@@ -325,7 +325,7 @@ describe("structured edit plan", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("switch", { name: "面部处理开关" })).toBeChecked();
+      expect(screen.getByRole("switch", { name: "脸部状态中的面部处理开关" })).toBeChecked();
       expect(screen.getByLabelText("修复小瑕疵")).toBeChecked();
     });
   });
@@ -370,7 +370,7 @@ describe("structured edit plan", () => {
       />,
     );
 
-    expect(screen.getByRole("switch", { name: "面部处理开关" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "脸部状态中的面部处理开关" })).toBeDisabled();
     expect(screen.getByLabelText("自然变好看")).toBeDisabled();
     expect(screen.getByRole("button", { name: "生成我的预览" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "生成我的预览" }));
@@ -416,16 +416,12 @@ describe("structured edit plan", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("switch", { name: "面部处理开关" })).not.toBeDisabled();
+      expect(screen.getByRole("switch", { name: "脸部状态中的面部处理开关" })).not.toBeDisabled();
       expect(screen.getByRole("button", { name: "生成我的预览" })).not.toBeDisabled();
     });
   });
 
-  it.each([
-    [25, "自然"],
-    [55, "标准"],
-    [80, "明显"],
-  ])("maps %s intensity exactly for the %s option", (value) => {
+  it.each([0, 25, 55, 73, 80, 100])("preserves continuous intensity value %s", (value) => {
     const plan = buildEditPlan(
       [makeCard()],
       new Set(["face-card"]),
@@ -435,6 +431,24 @@ describe("structured edit plan", () => {
 
     expect(plan.intensity).toBe(value);
     expect(plan.operations[0].intensity).toBe(value);
+  });
+
+  it.each([
+    [-10, 0],
+    [125, 100],
+    [Number.NaN, 55],
+    [Number.POSITIVE_INFINITY, 55],
+    [undefined, 55],
+  ])("normalizes intensity %s to %s", (value, expected) => {
+    const plan = buildEditPlan(
+      [makeCard()],
+      new Set(["face-card"]),
+      "natural_retouch",
+      value,
+    );
+
+    expect(plan.intensity).toBe(expected);
+    expect(plan.operations[0].intensity).toBe(expected);
   });
 
   it("maps selected cards, strokes, intensity and protection rules into a plan", () => {
@@ -512,7 +526,7 @@ describe("structured edit plan", () => {
     ]) {
       expect(screen.getByText(label, { exact: true })).toBeVisible();
     }
-    fireEvent.click(screen.getByRole("switch", { name: "面部处理开关" }));
+    fireEvent.click(screen.getByRole("switch", { name: "脸部状态中的面部处理开关" }));
     fireEvent.change(screen.getByLabelText("补充说明"), {
       target: { value: "x".repeat(501) },
     });
@@ -565,7 +579,7 @@ describe("structured edit plan", () => {
     );
 
     fireEvent.click(screen.getByLabelText("修复小瑕疵"));
-    fireEvent.click(screen.getByRole("switch", { name: "身体 / 姿态处理开关" }));
+    fireEvent.click(screen.getByRole("switch", { name: "服装细节中的身体 / 姿态处理开关" }));
     fireEvent.click(screen.getByRole("button", { name: "保存这份选择" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(

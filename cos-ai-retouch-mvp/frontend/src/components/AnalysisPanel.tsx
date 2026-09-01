@@ -51,6 +51,17 @@ const CATEGORY_META: Array<{ key: TaskCategory; label: string; fallback: string 
   { key: "lighting", label: "光线", fallback: "保持原始光向、层次和噪点一致。" },
 ];
 
+type AnalysisGroup = "face" | "hair" | "clothing" | "background";
+
+const CATEGORY_GROUPS: Record<AnalysisGroup, { label: string; categories: readonly TaskCategory[] }> = {
+  face: { label: "脸部状态", categories: ["face"] },
+  hair: { label: "头发与假发", categories: ["hair"] },
+  clothing: { label: "服装细节", categories: ["clothing", "body_pose"] },
+  background: { label: "背景与光线", categories: ["background", "lighting"] },
+};
+
+const CATEGORY_GROUP_ORDER: AnalysisGroup[] = ["face", "hair", "clothing", "background"];
+
 const OPERATION_KIND: Record<TaskCategory, string> = {
   face: "skin_retouch",
   hair: "hair_detail",
@@ -71,10 +82,9 @@ const PRESERVE_LABELS: Array<{ value: string; label: string }> = [
   { value: "noise consistency", label: "噪点一致性" },
 ];
 
-const INTENSITY_VALUES = [25, 55, 80] as const;
-
 function normalizeIntensity(value: number | undefined): number {
-  return INTENSITY_VALUES.includes(value as (typeof INTENSITY_VALUES)[number]) ? value as number : 55;
+  if (typeof value !== "number" || !Number.isFinite(value)) return 55;
+  return Math.round(Math.min(100, Math.max(0, value)));
 }
 
 function cardForCategory(cards: AnalysisCard[], key: TaskCategory): AnalysisCard {
@@ -259,7 +269,7 @@ export default function AnalysisPanel({
 
   function handleIntensityChange(nextIntensity: number) {
     planDirtyRef.current = true;
-    setIntensity(nextIntensity);
+    setIntensity(normalizeIntensity(nextIntensity));
   }
 
   function handleStrokesChange(nextStrokes: MaskStroke[]) {
@@ -442,23 +452,21 @@ export default function AnalysisPanel({
       </div>
       <fieldset className="intensity-picker" disabled={generationAlreadyStarted || busy}>
         <legend className="control-label">修图力度</legend>
-        {([
-          [25, "自然"],
-          [55, "标准"],
-          [80, "明显"],
-        ] as const).map(([value, label]) => (
-          <label key={value}>
-            <input
-              type="radio"
-              name="intensity"
-              value={value}
-              checked={intensity === value}
-              aria-label={label}
-              onChange={() => handleIntensityChange(value)}
-            />
-            {label} · {value}
-          </label>
-        ))}
+        <div className="intensity-control">
+          <span>自然</span>
+          <input
+            id="intensity-slider"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value={intensity}
+            aria-label="修图力度"
+            onChange={(event) => handleIntensityChange(Number(event.target.value))}
+          />
+          <output htmlFor="intensity-slider" aria-live="polite">{intensity}</output>
+          <span>明显</span>
+        </div>
       </fieldset>
       <div className="preserve-checklist" aria-label="始终保护清单">
         <div className="control-label">这些请一定保留</div>
@@ -470,41 +478,52 @@ export default function AnalysisPanel({
           ))}
         </ul>
       </div>
-      <div className="analysis-grid">
-        {cards.map((card) => {
-          const categoryLabel = CATEGORY_META.find((item) => item.key === card.category)?.label || card.category;
+      <div className="analysis-groups">
+        {CATEGORY_GROUP_ORDER.map((groupKey) => {
+          const group = CATEGORY_GROUPS[groupKey];
+          const groupId = `analysis-group-${groupKey}`;
           return (
-            <article className="analysis-card" key={card.id}>
-              <div className="analysis-card-heading">
-                <div>
-                  <span className="category-label">{categoryLabel}</span>
-                  <h3>{card.title}</h3>
-                </div>
-                <label className="toggle-control">
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    aria-label={`${categoryLabel}处理开关`}
-                    checked={enabledIds.has(card.id)}
-                    disabled={generationAlreadyStarted || busy}
-                    onChange={() => toggleCard(card.id)}
-                  />
-                  <span>启用</span>
-                </label>
+            <section className="analysis-group" aria-labelledby={groupId} key={groupKey}>
+              <h3 className="analysis-group-title" id={groupId}>{group.label}</h3>
+              <div className="analysis-grid">
+                {cards.filter((card) => group.categories.includes(card.category as TaskCategory)).map((card) => {
+                  const categoryLabel = CATEGORY_META.find((item) => item.key === card.category)?.label || card.category;
+                  return (
+                    <article className="analysis-card" key={card.id}>
+                      <div className="analysis-card-heading">
+                        <div>
+                          <span className="category-label">{categoryLabel}</span>
+                          <h4>{card.title}</h4>
+                        </div>
+                        <label className="toggle-control">
+                          <input
+                            type="checkbox"
+                            role="switch"
+                            aria-label={`${group.label}中的${categoryLabel}处理开关`}
+                            checked={enabledIds.has(card.id)}
+                            disabled={generationAlreadyStarted || busy}
+                            onChange={() => toggleCard(card.id)}
+                          />
+                          <span>启用</span>
+                        </label>
+                      </div>
+                      <p>{card.summary}</p>
+                      <div className="card-meta">
+                        <span>{formatConfidence(card.confidence)}</span>
+                        <span className="risk">风险：{card.risk || "请保持原始结构。"}</span>
+                      </div>
+                      {card.regions.length > 0 ? (
+                        <div className="region-list">
+                          {card.regions.map((region) => <span key={region.id}>已标注 · {region.label}</span>)}
+                        </div>
+                      ) : (
+                        <div className="region-list muted">未标出局部区域</div>
+                      )}
+                    </article>
+                  );
+                })}
               </div>
-              <p>{card.summary}</p>
-              <div className="card-meta">
-                <span>{formatConfidence(card.confidence)}</span>
-                <span className="risk">风险：{card.risk || "请保持原始结构。"}</span>
-              </div>
-              {card.regions.length > 0 ? (
-                <div className="region-list">
-                  {card.regions.map((region) => <span key={region.id}>已标注 · {region.label}</span>)}
-                </div>
-              ) : (
-                <div className="region-list muted">未标出局部区域</div>
-              )}
-            </article>
+            </section>
           );
         })}
       </div>
