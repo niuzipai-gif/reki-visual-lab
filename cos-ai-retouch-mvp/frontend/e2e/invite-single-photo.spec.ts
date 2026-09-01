@@ -114,15 +114,15 @@ test("completes the invite-only single-photo workflow with the mock provider", a
   });
 
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "进入修图工作台" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "进入我的写真工作室" })).toBeVisible();
   await page.getByLabel("邀请 token").fill("invite-demo");
-  await page.getByRole("button", { name: "进入工作台" }).click();
-  await expect(page.getByRole("heading", { name: "上传原图" })).toBeVisible();
+  await page.getByRole("button", { name: "开始我的修图" }).click();
+  await expect(page.getByRole("heading", { name: "先放一张你喜欢的照片" })).toBeVisible();
 
   const fixture = path.join(__dirname, "fixtures", "cos-smoke.jpg");
   await page.getByLabel("选择 JPG 或 PNG 原图").setInputFiles(fixture);
   await expect(page.getByAltText("待处理原图预览")).toBeVisible();
-  await page.getByRole("button", { name: "上传并开始分析" }).click();
+  await page.getByRole("button", { name: "开始看看哪里可以更好" }).click();
   await expect(page.getByRole("heading", { name: "AI 分析" })).toBeVisible();
   await expect(page.getByText("面部细节")).toBeVisible();
   await expect(page.getByText("姿态连接")).toBeVisible();
