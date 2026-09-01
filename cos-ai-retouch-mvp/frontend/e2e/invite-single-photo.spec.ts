@@ -123,11 +123,11 @@ test("completes the invite-only single-photo workflow with the mock provider", a
   await page.getByLabel("选择 JPG 或 PNG 原图").setInputFiles(fixture);
   await expect(page.getByAltText("待处理原图预览")).toBeVisible();
   await page.getByRole("button", { name: "开始看看哪里可以更好" }).click();
-  await expect(page.getByRole("heading", { name: "AI 分析" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "看看哪里可以更好" })).toBeVisible();
   await expect(page.getByText("面部细节")).toBeVisible();
   await expect(page.getByText("姿态连接")).toBeVisible();
 
-  await page.getByLabel("自然 + 结构").check();
+  await page.getByLabel("整理细节").check();
   await page.getByRole("switch", { name: "面部处理开关" }).check();
   await page.getByRole("switch", { name: "身体 / 姿态处理开关" }).check();
 
@@ -140,7 +140,7 @@ test("completes the invite-only single-photo workflow with the mock provider", a
   await page.mouse.move(box.x + box.width * 0.65, box.y + box.height * 0.55);
   await page.mouse.up();
 
-  await page.getByRole("button", { name: "确认并生成候选图" }).click();
+  await page.getByRole("button", { name: "生成我的预览" }).click();
   await expect(page.getByRole("heading", { name: "生成结果" })).toBeVisible();
   expect(uploadBody?.length).toBeGreaterThan(0);
   expect(planBody?.goals).toEqual(["natural_retouch", "structure_repair"]);
