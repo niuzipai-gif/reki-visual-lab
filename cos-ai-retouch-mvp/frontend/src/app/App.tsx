@@ -134,10 +134,10 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
     <main className="app-shell">
       <header className="app-header">
         <div>
-          <p className="eyebrow">COS AI RETOUCH</p>
-          <h1>角色原图修复工作台</h1>
+          <p className="eyebrow">COS AI 角色写真</p>
+          <h1>把喜欢的角色，好好留在照片里</h1>
         </div>
-        <span className="privacy-note">原图不覆盖 · 局部可控</span>
+        <span className="privacy-note">你的照片只用于本次修图</span>
       </header>
       <div className="workflow-layout">
         <div className="workflow-main">
@@ -190,13 +190,13 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
         </div>
         <aside className="workflow-aside">
           <div className="aside-card">
-            <p className="eyebrow">WORKFLOW</p>
+            <p className="eyebrow">修图小助手</p>
             <ol className="step-list">
-              <li className={!task ? "active" : "complete"}><span>01</span>上传原图</li>
-              <li className={showAnalysis ? "active" : "pending"}><span>02</span>确认分析</li>
-              <li className={task?.status === "succeeded" ? "complete" : "pending"}><span>03</span>生成候选</li>
+              <li className={!task ? "active" : "complete"}><span>01</span>上传照片</li>
+              <li className={showAnalysis ? "active" : "pending"}><span>02</span>选择想变好的地方</li>
+              <li className={task?.status === "succeeded" ? "complete" : "pending"}><span>03</span>生成预览</li>
             </ol>
-            <p className="aside-copy">每个建议都需要明确确认，生成只使用结构化修图计划。</p>
+            <p className="aside-copy">每一步都由你确认，原图和角色感都会好好保留。</p>
           </div>
           {task?.status === "failed" && task.taskId !== "local-upload" && (
             <TaskProgress status={task.status} error={task.error} onRecover={handleRecovery} />

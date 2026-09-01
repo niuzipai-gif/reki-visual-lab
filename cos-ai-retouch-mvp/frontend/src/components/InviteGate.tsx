@@ -22,9 +22,9 @@ export default function InviteGate({ onSubmit, error }: InviteGateProps) {
 
   return (
     <section className="gate-card" aria-labelledby="invite-title">
-      <p className="eyebrow">COS AI RETOUCH MVP</p>
-      <h1 id="invite-title">进入修图工作台</h1>
-      <p className="muted">这是一个邀请制的单张原图处理流程。请使用有效邀请 token 开始。</p>
+      <p className="eyebrow">COS AI 角色写真</p>
+      <h1 id="invite-title">进入我的写真工作室</h1>
+      <p className="muted">输入邀请 token，开启一张照片的温柔修图。</p>
       <form className="invite-form" onSubmit={handleSubmit}>
         <label htmlFor="invite-token">邀请 token</label>
         <input
@@ -36,7 +36,7 @@ export default function InviteGate({ onSubmit, error }: InviteGateProps) {
           onChange={(event) => setValue(event.target.value)}
           placeholder="输入邀请 token"
         />
-        <button type="submit">进入工作台</button>
+        <button type="submit">开始我的修图</button>
       </form>
       {(validationError || error) && (
         <p className="error-text" role="alert">

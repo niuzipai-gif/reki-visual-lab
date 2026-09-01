@@ -95,10 +95,22 @@ describe("COS retouch app", () => {
     const setItemSpy = vi.spyOn(Storage.prototype, "setItem");
     render(<App />);
 
+    expect(screen.getByText("COS AI 角色写真")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "进入我的写真工作室" })).toBeVisible();
+    expect(screen.getByText("输入邀请 token，开启一张照片的温柔修图。")).toBeVisible();
+    expect(screen.getByRole("button", { name: "开始我的修图" })).toBeVisible();
     await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
-    await user.click(screen.getByRole("button", { name: "进入工作台" }));
+    await user.click(screen.getByRole("button", { name: "开始我的修图" }));
 
     expect(await screen.findByRole("heading", { name: "上传原图" })).toBeVisible();
+    expect(screen.getByText("COS AI 角色写真")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "把喜欢的角色，好好留在照片里" })).toBeVisible();
+    expect(screen.getByText("你的照片只用于本次修图")).toBeVisible();
+    expect(screen.getByText("修图小助手")).toBeVisible();
+    expect(screen.getByText("上传照片")).toBeVisible();
+    expect(screen.getByText("选择想变好的地方")).toBeVisible();
+    expect(screen.getByText("生成预览")).toBeVisible();
+    expect(screen.getByText("每一步都由你确认，原图和角色感都会好好保留。")).toBeVisible();
     expect(setItemSpy).not.toHaveBeenCalled();
     expect(window.location.search).toBe("");
   });
@@ -109,7 +121,7 @@ describe("COS retouch app", () => {
     render(<App apiClient={client} />);
 
     await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
-    await user.click(screen.getByRole("button", { name: "进入工作台" }));
+    await user.click(screen.getByRole("button", { name: "开始我的修图" }));
     const input = screen.getByLabelText("选择 JPG 或 PNG 原图");
 
     const tooLarge = new File([new Uint8Array(20 * 1024 * 1024 + 1)], "large.png", {
@@ -134,7 +146,7 @@ describe("COS retouch app", () => {
     render(<App apiClient={client} />);
 
     await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
-    await user.click(screen.getByRole("button", { name: "进入工作台" }));
+    await user.click(screen.getByRole("button", { name: "开始我的修图" }));
 
     const file = new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" });
     await user.upload(screen.getByLabelText("选择 JPG 或 PNG 原图"), file);
@@ -187,7 +199,7 @@ describe("COS retouch app", () => {
     try {
       const { unmount } = render(<App apiClient={client} />);
       await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
-      await user.click(screen.getByRole("button", { name: "进入工作台" }));
+      await user.click(screen.getByRole("button", { name: "开始我的修图" }));
       await user.upload(
         screen.getByLabelText("选择 JPG 或 PNG 原图"),
         new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
@@ -229,7 +241,7 @@ describe("COS retouch app", () => {
     render(<App apiClient={client} />);
 
     await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
-    await user.click(screen.getByRole("button", { name: "进入工作台" }));
+    await user.click(screen.getByRole("button", { name: "开始我的修图" }));
     await user.upload(
       screen.getByLabelText("选择 JPG 或 PNG 原图"),
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
@@ -251,7 +263,7 @@ describe("COS retouch app", () => {
     render(<App apiClient={client} />);
 
     await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
-    await user.click(screen.getByRole("button", { name: "进入工作台" }));
+    await user.click(screen.getByRole("button", { name: "开始我的修图" }));
     await user.upload(
       screen.getByLabelText("选择 JPG 或 PNG 原图"),
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
@@ -282,7 +294,7 @@ describe("COS retouch app", () => {
     render(<App apiClient={client} />);
 
     await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
-    await user.click(screen.getByRole("button", { name: "进入工作台" }));
+    await user.click(screen.getByRole("button", { name: "开始我的修图" }));
     await user.upload(
       screen.getByLabelText("选择 JPG 或 PNG 原图"),
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
@@ -316,7 +328,7 @@ describe("COS retouch app", () => {
     render(<App apiClient={client} />);
 
     await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
-    await user.click(screen.getByRole("button", { name: "进入工作台" }));
+    await user.click(screen.getByRole("button", { name: "开始我的修图" }));
     await user.upload(
       screen.getByLabelText("选择 JPG 或 PNG 原图"),
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
@@ -356,7 +368,7 @@ describe("COS retouch app", () => {
     render(<App apiClient={client} />);
 
     await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
-    await user.click(screen.getByRole("button", { name: "进入工作台" }));
+    await user.click(screen.getByRole("button", { name: "开始我的修图" }));
     await user.upload(
       screen.getByLabelText("选择 JPG 或 PNG 原图"),
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
@@ -385,7 +397,7 @@ describe("COS retouch app", () => {
     render(<App apiClient={client} />);
 
     await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
-    await user.click(screen.getByRole("button", { name: "进入工作台" }));
+    await user.click(screen.getByRole("button", { name: "开始我的修图" }));
     await user.upload(
       screen.getByLabelText("选择 JPG 或 PNG 原图"),
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
@@ -411,14 +423,14 @@ describe("COS retouch app", () => {
     render(<App apiClient={client} />);
 
     await user.type(screen.getByLabelText("邀请 token"), "invalid-invite");
-    await user.click(screen.getByRole("button", { name: "进入工作台" }));
+    await user.click(screen.getByRole("button", { name: "开始我的修图" }));
     await user.upload(
       screen.getByLabelText("选择 JPG 或 PNG 原图"),
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
     );
     await user.click(screen.getByRole("button", { name: "上传并开始分析" }));
 
-    expect(await screen.findByRole("heading", { name: "进入修图工作台" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "进入我的写真工作室" })).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent("邀请 token 无效，请重新输入。");
     expect(screen.getByRole("alert")).not.toHaveTextContent("Traceback");
     expect(screen.getByLabelText("邀请 token")).toBeVisible();
@@ -451,7 +463,7 @@ describe("COS retouch app", () => {
     render(<App apiClient={client} />);
 
     await user.type(screen.getByLabelText("邀请 token"), "invite-in-memory");
-    await user.click(screen.getByRole("button", { name: "进入工作台" }));
+    await user.click(screen.getByRole("button", { name: "开始我的修图" }));
     await user.upload(
       screen.getByLabelText("选择 JPG 或 PNG 原图"),
       new File(["jpeg-data"], "cos-photo.jpg", { type: "image/jpeg" }),
