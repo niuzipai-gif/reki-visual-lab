@@ -3,6 +3,17 @@ name: Deploy static backup to GitHub Pages
 on:
   push:
     branches: [main]
+    paths:
+      - "src/**"
+      - "public/**"
+      - "worker/**"
+      - "scripts/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.mjs"
+      - "vitest.config.js"
+      - ".npmrc"
   workflow_dispatch:
 
 permissions:
