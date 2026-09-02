@@ -13,6 +13,7 @@ import {
 } from "../app/config";
 import type { TaskError, TaskOperation, TaskView } from "../domain/task";
 import TaskProgress from "./TaskProgress";
+import RetouchFeatureGrid from "./RetouchFeatureGrid";
 
 export type PreviewChangeHandler = (previewUrl: string | null, release?: () => void) => void;
 
@@ -220,6 +221,7 @@ export default function UploadPanel({
         <span className="badge">JPG / PNG · ≤ 20MB</span>
       </div>
       <p className="muted">我们会保留你的脸、姿势和服装设计，只帮你把细节变得更好。</p>
+      <RetouchFeatureGrid />
       <label className="file-drop" htmlFor="source-image">
         <span className="file-drop-icon" aria-hidden="true">＋</span>
         <strong>把 COS 照片放在这里</strong>

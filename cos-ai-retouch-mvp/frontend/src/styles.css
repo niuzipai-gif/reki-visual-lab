@@ -228,6 +228,35 @@ body::before { position: fixed; z-index: -1; top: 14vh; right: -8vw; width: 28vw
 .studio-control-card strong { color: var(--ink); font: 700 1.2rem/1.2 "Times New Roman", Georgia, serif; }
 .studio-control-card > span { color: var(--muted); font-size: .7rem; }
 .studio-rail-note { margin: 0; padding: 6px 4px 0; color: var(--muted); font-size: .73rem; line-height: 1.75; }
+.studio-hero-copy { max-width: 700px; margin: 10px 0 0; color: var(--muted); font-size: .92rem; line-height: 1.75; }
+.studio-control-list { display: grid; gap: 9px; padding: 12px 0 1px; margin: 2px 0 0; border-top: 1px solid rgba(128, 91, 113, .12); list-style: none; }
+.studio-control-list li { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .72rem; }
+.studio-control-list li span { display: grid; width: 22px; height: 22px; place-items: center; border: 1px solid rgba(166, 84, 120, .2); border-radius: 50%; color: var(--accent); background: rgba(181, 107, 142, .08); font: 700 .58rem/1 "DM Mono", ui-monospace, monospace; }
+.retouch-explainer { padding: 21px 0 5px; }
+.retouch-explainer-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 15px; }
+.retouch-explainer-heading .eyebrow { margin-bottom: 7px; color: #a06c4d; font-size: .58rem; letter-spacing: .12em; }
+.retouch-explainer-heading h3 { margin: 0; color: var(--ink); font: 700 clamp(1.28rem, 2vw, 1.7rem)/1.1 "Times New Roman", Georgia, serif; letter-spacing: -.04em; }
+.retouch-explainer-heading p:not(.eyebrow) { max-width: 530px; margin: 7px 0 0; color: var(--muted); font-size: .78rem; line-height: 1.6; }
+.retouch-feature-count { flex: none; padding: 7px 10px; border: 1px solid rgba(216, 170, 121, .25); border-radius: 999px; color: #9b6a4a; background: rgba(216, 170, 121, .08); font-size: .66rem; white-space: nowrap; }
+.retouch-feature-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.retouch-feature-card { position: relative; display: grid; min-height: 145px; grid-template-rows: auto auto 1fr; gap: 7px; padding: 13px 14px 14px; overflow: hidden; border: 1px solid rgba(113, 79, 101, .13); border-radius: 16px; background: rgba(255, 253, 250, .58); transition: border-color .2s ease, background .2s ease, transform .2s ease, box-shadow .2s ease; }
+.retouch-feature-card::after { position: absolute; right: -18px; bottom: -24px; width: 70px; height: 70px; border: 1px solid rgba(216, 170, 121, .15); border-radius: 50%; content: ""; }
+.retouch-feature-card:hover { border-color: rgba(166, 84, 120, .32); background: rgba(250, 233, 239, .55); box-shadow: 0 10px 24px rgba(112, 70, 96, .07); transform: translateY(-2px); }
+.retouch-feature-topline { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.retouch-feature-number { color: var(--accent); font: 700 .63rem/1 "DM Mono", ui-monospace, monospace; letter-spacing: .08em; }
+.retouch-feature-tag { padding: 4px 7px; border-radius: 999px; color: #9b6a4a; background: rgba(216, 170, 121, .1); font-size: .59rem; white-space: nowrap; }
+.retouch-feature-card h4 { z-index: 1; margin: 0; color: var(--ink); font-size: .91rem; letter-spacing: -.025em; }
+.retouch-feature-card p { z-index: 1; align-self: start; margin: 0; color: var(--muted); font-size: .7rem; line-height: 1.6; }
+.retouch-feature-face { background: linear-gradient(145deg, rgba(255, 252, 249, .75), rgba(250, 232, 239, .5)); }
+.retouch-feature-hair { background: linear-gradient(145deg, rgba(255, 252, 249, .75), rgba(244, 237, 246, .46)); }
+.retouch-feature-clothing { background: linear-gradient(145deg, rgba(255, 252, 249, .75), rgba(252, 240, 222, .46)); }
+.retouch-feature-body { background: linear-gradient(145deg, rgba(255, 252, 249, .75), rgba(239, 245, 239, .48)); }
+.retouch-feature-background { background: linear-gradient(145deg, rgba(255, 252, 249, .75), rgba(235, 243, 243, .5)); }
+.retouch-feature-lighting { background: linear-gradient(145deg, rgba(255, 252, 249, .75), rgba(252, 240, 219, .5)); }
+.retouch-boundary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; padding: 13px 14px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: .72rem; }
+.retouch-boundary-mark { display: grid; width: 22px; height: 22px; place-items: center; border-radius: 50%; color: #a06c4d; background: rgba(216, 170, 121, .13); }
+.retouch-boundary strong { color: var(--ink); font-size: .76rem; }
+.retouch-boundary > span:last-child { color: var(--faint); }
 .panel { border-color: var(--line); border-radius: 26px; background: linear-gradient(145deg, rgba(255, 253, 250, .93), rgba(255, 249, 245, .78)); box-shadow: var(--shadow), inset 0 1px rgba(255, 255, 255, .9); }
 .panel::before { left: 42px; width: 120px; height: 2px; background: linear-gradient(90deg, var(--accent), var(--champagne), transparent); }
 .panel-heading { align-items: end; }
@@ -276,6 +305,7 @@ body::before { position: fixed; z-index: -1; top: 14vh; right: -8vw; width: 28vw
 @media (max-width: 780px) {
   .studio-shell { width: min(100% - 24px, 680px); padding-top: 24px; }
   .studio-header { display: block; padding-bottom: 19px; }
+  .studio-hero-copy { max-width: 580px; font-size: .82rem; }
   .studio-header-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 17px; }
   .studio-layout { display: flex; flex-direction: column; gap: 16px; }
   .workflow-rail { position: static; width: 100%; padding: 15px 17px 13px; order: 0; }
@@ -293,4 +323,19 @@ body::before { position: fixed; z-index: -1; top: 14vh; right: -8vw; width: 28vw
 @media (prefers-reduced-motion: reduce) {
   .studio-header, .workflow-rail, .photo-stage, .control-rail, .studio-panel-enter, .upload-panel-ready .preview-wrap, .studio-current-step { animation: none !important; }
   .photo-stage .analysis-preview::before { display: none; }
+}
+
+@media (max-width: 980px) {
+  .retouch-feature-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 520px) {
+  .studio-hero-copy { font-size: .78rem; }
+  .retouch-explainer { padding-top: 16px; }
+  .retouch-explainer-heading { display: block; }
+  .retouch-feature-count { display: inline-flex; margin-top: 10px; }
+  .retouch-feature-grid { grid-template-columns: 1fr; gap: 8px; }
+  .retouch-feature-card { min-height: 0; }
+  .retouch-boundary { align-items: flex-start; }
+  .retouch-boundary > span:last-child { flex-basis: calc(100% - 32px); margin-left: 32px; }
 }

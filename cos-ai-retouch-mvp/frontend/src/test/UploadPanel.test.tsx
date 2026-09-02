@@ -27,6 +27,31 @@ afterEach(() => {
 });
 
 describe("UploadPanel file identity", () => {
+  it("explains the COS retouch menu before a photo is uploaded", () => {
+    render(
+      <UploadPanel
+        inviteToken="invite-in-memory"
+        apiClient={{
+          createTask: vi.fn(),
+          uploadOriginal: vi.fn(),
+          startAnalysis: vi.fn(),
+          getTask: vi.fn(),
+          savePlan: vi.fn(),
+          startGeneration: vi.fn(),
+          getDownloadUrl: vi.fn(),
+        }}
+        onTaskUpdate={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "AI 会帮你检查什么？" })).toBeVisible();
+    for (const label of ["脸部与妆容", "假发与发丝", "服装与配件", "身形与姿态", "背景与杂物", "光影与质感"]) {
+      expect(screen.getByRole("heading", { name: label })).toBeVisible();
+    }
+    expect(screen.getByText("不是换脸，也不是整张图重画。")).toBeVisible();
+    expect(screen.getByText("先给方案，再由你决定要不要生成。")) .toBeVisible();
+  });
+
   it("uses the welcoming upload flow copy", () => {
     render(
       <UploadPanel
