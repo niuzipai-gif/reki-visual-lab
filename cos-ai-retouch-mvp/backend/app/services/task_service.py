@@ -835,6 +835,8 @@ class TaskService:
         )
 
     def _authorize(self, invite_token: Any) -> None:
+        if not self.settings.require_invite_tokens:
+            return
         if not isinstance(invite_token, str) or not invite_token:
             raise TaskServiceError("UNAUTHORIZED", "邀请码无效。", status_code=401)
         if not any(

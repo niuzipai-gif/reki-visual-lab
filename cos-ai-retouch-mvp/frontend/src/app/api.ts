@@ -405,11 +405,12 @@ async function readPayload(response: Response): Promise<unknown> {
 async function request<T>(
   path: string,
   options: RequestInit,
-  inviteToken?: string,
+  inviteToken?: string | null,
   mapper?: (payload: unknown) => T,
 ): Promise<T> {
   const headers = new Headers(options.headers);
-  if (inviteToken) headers.set("X-Invite-Token", inviteToken);
+  const normalizedInviteToken = inviteToken?.trim();
+  if (normalizedInviteToken) headers.set("X-Invite-Token", normalizedInviteToken);
   const response = await fetch(apiUrl(path), { ...options, headers });
   const payload = await readPayload(response);
   if (!response.ok) {
@@ -486,12 +487,13 @@ function toWirePlan(plan: EditPlanInput): Record<string, unknown> {
 
 export async function createTask(
   input: CreateTaskInput,
-  inviteToken: string,
+  inviteToken?: string | null,
 ): Promise<TaskView> {
+  const normalizedInviteToken = inviteToken?.trim();
   return request(
     "/api/v1/tasks",
     jsonBody({
-      invite_token: inviteToken,
+      ...(normalizedInviteToken ? { invite_token: normalizedInviteToken } : {}),
       filename: input.filename,
       content_type: input.contentType,
       byte_size: input.byteSize,
@@ -514,7 +516,7 @@ export async function uploadOriginal(uploadUrl: string, file: File): Promise<voi
 
 export async function startAnalysis(
   taskId: string,
-  inviteToken: string,
+  inviteToken?: string | null,
   idempotencyKey?: string,
 ): Promise<void> {
   await request(
@@ -528,7 +530,7 @@ export async function startAnalysis(
   );
 }
 
-export async function getTask(taskId: string, inviteToken: string): Promise<TaskView> {
+export async function getTask(taskId: string, inviteToken?: string | null): Promise<TaskView> {
   return request(
     `/api/v1/tasks/${encodeURIComponent(taskId)}`,
     { method: "GET" },
@@ -540,7 +542,7 @@ export async function getTask(taskId: string, inviteToken: string): Promise<Task
 export async function savePlan(
   taskId: string,
   plan: EditPlanInput,
-  inviteToken: string,
+  inviteToken?: string | null,
 ): Promise<void> {
   await request(
     `/api/v1/tasks/${encodeURIComponent(taskId)}/plan`,
@@ -551,7 +553,7 @@ export async function savePlan(
 
 export async function startGeneration(
   taskId: string,
-  inviteToken: string,
+  inviteToken?: string | null,
   idempotencyKey?: string,
 ): Promise<void> {
   await request(
@@ -567,7 +569,7 @@ export async function startGeneration(
 
 export async function getDownloadUrl(
   taskId: string,
-  inviteToken: string,
+  inviteToken?: string | null,
 ): Promise<string> {
   return request(
     `/api/v1/tasks/${encodeURIComponent(taskId)}/download`,

@@ -94,6 +94,37 @@ describe("typed task API client", () => {
     );
   });
 
+  it("omits the invite token from an open-mode create request when no token is available", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        task_id: "task-open",
+        upload_url: "https://storage.example/upload",
+        expires_at: "2026-08-31T01:00:00Z",
+        status: "uploading",
+      }),
+    );
+
+    const { createTask } = await import("../app/api");
+    await createTask(
+      {
+        filename: "cos-photo.png",
+        contentType: "image/png",
+        byteSize: 1200,
+      },
+      "",
+    );
+
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(requestBody).toEqual({
+      filename: "cos-photo.png",
+      content_type: "image/png",
+      byte_size: 1200,
+    });
+    expect(fetchMock.mock.calls[0][1].headers).not.toHaveProperty(
+      "X-Invite-Token",
+    );
+  });
+
   it("sends the invite header on every subsequent task request", async () => {
     const downloadExpiry = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     fetchMock

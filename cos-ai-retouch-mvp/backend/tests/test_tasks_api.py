@@ -239,6 +239,7 @@ def api_context(repository):
 
     settings = Settings(
         invite_tokens=["invite-demo"],
+        require_invite_tokens=True,
         max_upload_bytes=1024 * 1024,
         asset_ttl_hours=1,
     )
@@ -260,6 +261,7 @@ def scripted_context(repository):
 
     settings = Settings(
         invite_tokens=["invite-demo"],
+        require_invite_tokens=True,
         max_upload_bytes=1024 * 1024,
         asset_ttl_hours=1,
     )
@@ -1217,6 +1219,69 @@ def test_follow_up_task_endpoints_require_header_without_leaking_existence(
             assert response.json()["error"]["code"] == "UNAUTHORIZED"
             assert task_id not in response.text
             assert "original_asset_url" not in response.text
+
+
+def test_open_mode_allows_task_creation_without_an_invite_token(repository):
+    from app.main import create_app
+
+    settings = Settings(
+        invite_tokens=["invite-demo"],
+        require_invite_tokens=False,
+        max_upload_bytes=1024 * 1024,
+        asset_ttl_hours=1,
+    )
+    app = create_app(
+        settings=settings,
+        repository=repository,
+        storage=InMemoryStorageAdapter(settings),
+        provider=MockImageModelProvider(settings),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/tasks",
+            json={
+                "filename": "cos-photo.jpg",
+                "content_type": "image/jpeg",
+                "byte_size": 1200,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "uploading"
+
+
+def test_strict_mode_still_rejects_missing_and_invalid_invite_tokens(repository):
+    from app.main import create_app
+
+    settings = Settings(
+        invite_tokens=["invite-demo"],
+        require_invite_tokens=True,
+        max_upload_bytes=1024 * 1024,
+        asset_ttl_hours=1,
+    )
+    app = create_app(
+        settings=settings,
+        repository=repository,
+        storage=InMemoryStorageAdapter(settings),
+        provider=MockImageModelProvider(settings),
+    )
+
+    with TestClient(app) as client:
+        base_payload = {
+            "filename": "cos-photo.jpg",
+            "content_type": "image/jpeg",
+            "byte_size": 1200,
+        }
+        missing = client.post("/api/v1/tasks", json=base_payload)
+        invalid = client.post(
+            "/api/v1/tasks",
+            json={**base_payload, "invite_token": "wrong-token"},
+        )
+
+    for response in (missing, invalid):
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "UNAUTHORIZED"
 
 
 def test_default_app_scopes_sessions_per_request_and_closes_adapters(tmp_path):

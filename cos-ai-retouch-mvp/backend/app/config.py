@@ -27,6 +27,7 @@ class Settings(BaseSettings):
         default_factory=lambda: ["http://localhost:5173"]
     )
     invite_tokens: list[SecretStr] = Field(default_factory=list)
+    require_invite_tokens: bool = False
     asset_ttl_hours: int = 24
     max_upload_bytes: int = 20 * 1024 * 1024
     runtime_environment: Literal["development", "production", "test"] = "development"

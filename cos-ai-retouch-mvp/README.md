@@ -1,6 +1,6 @@
 # COS AI Retouch MVP
 
-This repository contains an invite-only, single-photo COS retouch MVP. The guided workflow analyzes one JPG or PNG, lets the user confirm natural-retouch and structure-repair regions, and sends a structured edit plan to a server-side image-provider adapter. The original image remains untouched so results can be compared and rolled back.
+This repository contains an open-by-default, single-photo COS retouch MVP. The guided workflow analyzes one JPG or PNG, lets the user confirm natural-retouch and structure-repair regions, and sends a structured edit plan to a server-side image-provider adapter. The original image remains untouched so results can be compared and rolled back. To restore strict invite validation, set `REQUIRE_INVITE_TOKENS=true` and configure `INVITE_TOKENS`.
 
 The application is intentionally split into a React/Vite frontend, a FastAPI backend, S3-compatible object storage, and an image-provider boundary. The frontend must never call an image model directly.
 
@@ -44,9 +44,10 @@ npx playwright install chromium
 npx playwright test e2e/invite-single-photo.spec.ts
 ```
 
-The flow covers invite entry, fixture selection, analysis cards, both bounded
-retouch goals, one normalized mask stroke, plan submission, result comparison,
-and requesting an expiring download URL. For a visible CLI-first run, add
+The flow covers fixture selection, analysis cards, both bounded retouch goals,
+one normalized mask stroke, plan submission, result comparison, and requesting
+an expiring download URL. When strict invite validation is enabled, it can also
+cover invite entry. For a visible CLI-first run, add
 `--headed`; the local Vite server is started automatically by
 `playwright.config.ts`.
 
@@ -67,7 +68,7 @@ Uploaded originals, masks, and generated versions are intended for S3-compatible
 
 ## Small-scale deployment
 
-GitHub Pages is reserved for invite-only internal validation of this MVP. It
+GitHub Pages is reserved for internal validation of this MVP. It
 is not a commercial public deployment. The Pages workflow builds from
 `cos-ai-retouch-mvp/frontend` and reads the repository Actions variable
 `VITE_API_BASE_URL` from `${{ vars.VITE_API_BASE_URL }}`; add that value under
@@ -93,8 +94,10 @@ Dashboard. In the service's **Environment** settings, add
 `IMAGE_PROVIDER_API_KEY` with the exact key supplied by the provider, then
 save and redeploy the service. Keep this value in Render's secret environment
 settings only; never put it in this README, the repository, Pages variables,
-or browser code. Fill `DATABASE_URL`, `ALLOWED_ORIGINS`, `INVITE_TOKENS`, and
-the storage credentials there as well. For the mock provider smoke flow,
+or browser code. Fill `DATABASE_URL`, `ALLOWED_ORIGINS`, and the storage
+credentials there as well. Invite validation is open by default; set
+`REQUIRE_INVITE_TOKENS=true` and configure `INVITE_TOKENS` to restore strict
+validation. For the mock provider smoke flow,
 keep `IMAGE_PROVIDER_MODE=mock`; switch to `external` only after the provider
 endpoint, model, and API key have been configured server-side.
 
@@ -113,7 +116,7 @@ Run these checks only after an authorized deployment and set
 - [ ] The Pages URL loads over HTTPS and serves the built frontend under its
       repository base path.
 - [ ] An `OPTIONS` task request returns the expected configured CORS origin.
-- [ ] An invalid invite token returns HTTP 401.
+- [ ] With `REQUIRE_INVITE_TOKENS=true` and `INVITE_TOKENS` configured, an invalid invite token returns HTTP 401.
 - [ ] Mock analysis can create and advance a task without exposing provider or
       storage secrets to the browser.
 
@@ -147,7 +150,7 @@ have already been run.
 
 ### Acceptance boundary
 
-- **Workflow acceptance:** the invite-only, single-photo flow can be checked
+- **Workflow acceptance:** the open-by-default, single-photo flow can be checked
   locally with the deterministic mock provider, including bounded plan
   submission, result comparison, original-image recovery, and visible
   validation status.

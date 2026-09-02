@@ -31,7 +31,7 @@ interface RegionEditorProps {
 
 interface AnalysisPanelProps {
   task: TaskView;
-  inviteToken: string;
+  inviteToken: string | null;
   onTaskUpdate: (task: TaskView) => void;
   apiClient?: ApiClient;
   previewUrl?: string | null;

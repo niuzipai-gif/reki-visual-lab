@@ -418,6 +418,7 @@ def test_settings_have_task2_defaults_and_secret_values_are_accessible(monkeypat
     )
     assert settings.allowed_origins == ["http://localhost:5173"]
     assert settings.invite_tokens == []
+    assert settings.require_invite_tokens is False
     assert settings.asset_ttl_hours == 24
     assert settings.max_upload_bytes == 20 * 1024 * 1024
     assert settings.image_provider_mode == "mock"

@@ -22,7 +22,7 @@ import TaskProgress from "./TaskProgress";
 interface ResultPanelProps {
   task: TaskView;
   originalUrl: string;
-  inviteToken: string;
+  inviteToken: string | null;
   onTaskUpdate: (task: TaskView) => void;
   onRestoreOriginal?: () => void;
   onResetWorkflow?: () => void;

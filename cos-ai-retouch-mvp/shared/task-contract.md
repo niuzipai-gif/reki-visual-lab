@@ -2,10 +2,11 @@
 
 ## Product and goals
 
-The MVP is an invite-only, single-photo COS retouch workflow. A user uploads one
-JPG or PNG, reviews AI analysis cards, confirms bounded regions and goals, then
-receives one or two generated candidates. The original is immutable and remains
-recoverable. The supported goals are:
+The MVP is an open-by-default, single-photo COS retouch workflow. A user uploads
+one JPG or PNG, reviews AI analysis cards, confirms bounded regions and goals,
+then receives one or two generated candidates. Set `REQUIRE_INVITE_TOKENS=true`
+and configure `INVITE_TOKENS` to restore strict invite validation. The original
+is immutable and remains recoverable. The supported goals are:
 
 - `natural_retouch`: bounded face, skin, hair, clothing-detail, body-detail, or
   light cleanup that keeps the person and scene recognizable.
@@ -287,8 +288,10 @@ version.
 
 ## API paths
 
-Later tasks implement these paths. Authentication is invite-token based and the
-invite token is sent to the API, never to an image provider:
+Later tasks implement these paths. Invite-token enforcement is disabled by
+default. Set `REQUIRE_INVITE_TOKENS=true` and configure `INVITE_TOKENS` to enable
+strict validation. When used, the invite token is sent to the API, never to an
+image provider:
 
 ```text
 GET  /healthz
@@ -301,20 +304,23 @@ GET  /api/v1/tasks/{task_id}/download
 POST /api/v1/maintenance/cleanup
 ```
 
-`POST /api/v1/tasks` validates the invite and file metadata, creates a
-`created` task, and returns an upload URL with status `uploading` after the
-upload reservation transition. Analyze, plan, and generate endpoints return
-the task shape or a stable error shape.
+`POST /api/v1/tasks` validates the invite when strict mode is enabled, validates
+file metadata, creates a `created` task, and returns an upload URL with status
+`uploading` after the upload reservation transition. Analyze, plan, and
+generate endpoints return the task shape or a stable error shape.
 
-The create request carries `invite_token` in its JSON body. Every subsequent
-task endpoint (`analyze`, task GET, `plan`, `generate`, and `download`) requires
-the server-validated invite in the `X-Invite-Token` header. Missing or invalid
-headers return `401 UNAUTHORIZED` before task lookup, so task existence and
-signed URLs are not disclosed. `GET /healthz` is public.
+The create request may carry `invite_token` in its JSON body; it is required only
+in strict mode. In strict mode, every subsequent task endpoint (`analyze`, task
+GET, `plan`, `generate`, and `download`) requires the server-validated invite in
+the `X-Invite-Token` header. Missing or invalid headers return `401
+UNAUTHORIZED` before task lookup, so task existence and signed URLs are not
+disclosed. In open mode, clients omit the invite field and header. `GET
+/healthz` is public.
 
 ### Implemented API contract
 
-The task creation request is:
+The task creation request below shows an invite token; the field is optional in
+open mode and required in strict mode:
 
 ```json
 {

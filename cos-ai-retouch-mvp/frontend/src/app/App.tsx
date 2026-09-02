@@ -23,6 +23,8 @@ export interface OperationKeyStore {
   clearTask: (taskId: string) => void;
 }
 
+type InviteToken = string | null;
+
 export function createOperationKeyStore(
   generateKey: () => string = createIdempotencyKey,
 ): OperationKeyStore {
@@ -44,7 +46,8 @@ export function createOperationKeyStore(
 }
 
 export default function App({ apiClient = defaultApiClient }: AppProps) {
-  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [inviteToken, setInviteToken] = useState<InviteToken>(null);
+  const [showInviteGate, setShowInviteGate] = useState(false);
   const [gateError, setGateError] = useState<string | null>(null);
   const [task, setTask] = useState<TaskView | null>(null);
   const [reviewRequested, setReviewRequested] = useState(false);
@@ -67,7 +70,8 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
 
   function handleInviteSubmit(token: string) {
     setGateError(null);
-    setInviteToken(token);
+    setInviteToken(token.trim() || null);
+    setShowInviteGate(false);
   }
 
   function handleTaskUpdate(nextTask: TaskView) {
@@ -77,6 +81,7 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
         setGateError(safeState.message);
         setInviteToken(null);
         setTask(null);
+        setShowInviteGate(true);
         return;
       }
     }
@@ -98,6 +103,7 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
       setGateError(task?.error?.message || "邀请 token 无效，请重新输入。");
       setInviteToken(null);
       setTask(null);
+      setShowInviteGate(true);
       return;
     }
     if (action === "review") {
@@ -107,7 +113,7 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
     if (action === "back" || action === "reupload") resetWorkflow();
   }
 
-  if (!inviteToken) {
+  if (showInviteGate) {
     return (
       <main className="app-shell gate-shell">
         <InviteGate onSubmit={handleInviteSubmit} error={gateError} />

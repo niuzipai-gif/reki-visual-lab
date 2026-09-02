@@ -17,7 +17,7 @@ import TaskProgress from "./TaskProgress";
 export type PreviewChangeHandler = (previewUrl: string | null, release?: () => void) => void;
 
 interface UploadPanelProps {
-  inviteToken: string;
+  inviteToken: string | null;
   onTaskUpdate: (task: TaskView) => void;
   onPreviewChange?: PreviewChangeHandler;
   onTaskReset?: () => void;
