@@ -395,6 +395,25 @@ def test_small_deployment_can_upload_original_through_the_signed_backend_bridge(
             headers={"Content-Type": "image/jpeg"},
         )
         downloaded = client.get(upload_url)
+        task_id = created.json()["task_id"]
+        analyzed = client.post(
+            f"/api/v1/tasks/{task_id}/analyze",
+            headers=_authenticated_headers(**{"Idempotency-Key": "bridge-analyze"}),
+        )
+        saved = client.post(
+            f"/api/v1/tasks/{task_id}/plan",
+            headers=_authenticated_headers(),
+            json=_plan_payload(),
+        )
+        generated = client.post(
+            f"/api/v1/tasks/{task_id}/generate",
+            headers=_authenticated_headers(**{"Idempotency-Key": "bridge-generate"}),
+        )
+        download_info = client.get(
+            f"/api/v1/tasks/{task_id}/download",
+            headers=_authenticated_headers(),
+        )
+        downloaded_version = client.get(download_info.json()["url"])
 
     assert created.status_code == 200
     assert upload_url.startswith("http://testserver/api/v1/storage/")
@@ -402,6 +421,13 @@ def test_small_deployment_can_upload_original_through_the_signed_backend_bridge(
     assert downloaded.status_code == 200
     assert downloaded.content == b"jpeg-bytes"
     assert downloaded.headers["content-type"].startswith("image/jpeg")
+    assert analyzed.status_code == 200
+    assert saved.status_code == 200
+    assert generated.status_code == 200
+    assert generated.json()["status"] == "succeeded"
+    assert download_info.status_code == 200
+    assert downloaded_version.status_code == 200
+    assert downloaded_version.headers["content-type"].startswith("image/png")
 
 
 @pytest.mark.parametrize(

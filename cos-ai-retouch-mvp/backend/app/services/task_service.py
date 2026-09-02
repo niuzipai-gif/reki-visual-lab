@@ -1214,6 +1214,8 @@ class TaskService:
             parts = urlsplit(url).path.lstrip("/").split("/")
         except ValueError:
             return None
+        if parts[:3] == ["api", "v1", "storage"]:
+            parts = parts[3:]
         if (
             len(parts) == 4
             and parts[0] == "tasks"
