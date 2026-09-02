@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     image_provider_model: str = "cos-retouch-default"
     planner_provider_mode: Literal["rules", "minimax"] = "rules"
     planner_provider_base_url: str = "https://api.minimaxi.com/v1"
-    planner_provider_model: str = "MiniMax-Text-01"
+    planner_provider_model: str = "MiniMax-M2.7"
 
     storage_endpoint: str | None = Field(default=None, repr=False)
     storage_bucket: str | None = None

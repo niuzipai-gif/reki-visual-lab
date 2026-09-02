@@ -50,4 +50,4 @@ services:
       - key: PLANNER_PROVIDER_BASE_URL
         value: https://api.minimaxi.com/v1
       - key: PLANNER_PROVIDER_MODEL
-        value: MiniMax-Text-01
+        value: MiniMax-M2.7

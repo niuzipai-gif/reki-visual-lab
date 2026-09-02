@@ -83,6 +83,7 @@ def test_minimax_text_planner_is_normalized_and_never_requests_image_generation(
         Settings(
             planner_provider_mode="minimax",
             image_provider_api_key="server-only-secret",
+            planner_provider_model="MiniMax-M2.7",
         )
     ).plan(WorkflowPlanRequest(filename="miku.jpg", intent="保留妆面质感"))
 

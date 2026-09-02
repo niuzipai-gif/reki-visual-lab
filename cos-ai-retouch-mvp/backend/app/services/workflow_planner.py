@@ -222,11 +222,11 @@ class WorkflowPlanner:
             ],
             "temperature": 0.15,
             "max_tokens": 900,
-            "response_format": {"type": "json_object"},
+            "stream": False,
         }
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         http_request = Request(
-            f"{base_url}/text/chatcompletion_v2",
+            f"{base_url}/chat/completions",
             data=body,
             headers={
                 "Accept": "application/json",
