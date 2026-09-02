@@ -171,8 +171,10 @@ def test_minimax_provider_submits_reference_image_and_keeps_generated_bytes_serv
     assert requests[0].url == "https://api.minimaxi.com/v1/image_generation"
     assert requests[0].headers["authorization"] == f"Bearer {secret}"
     assert payload["model"] == "image-01"
-    assert payload["response_format"] == "base64"
     assert payload["n"] == 1
+    assert "response_format" not in payload
+    assert "prompt_optimizer" not in payload
+    assert "aigc_watermark" not in payload
     assert payload["subject_reference"] == [
         {"type": "character", "image_file": source_url}
     ]

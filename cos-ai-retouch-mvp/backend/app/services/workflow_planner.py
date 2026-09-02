@@ -2,8 +2,8 @@
 
 The planner owns orchestration decisions only. It never submits an image
 generation job, so a small deployment can use it without spending a limited
-image quota. A future MiniMax text planner can implement the same response
-contract behind this boundary.
+image quota. A MiniMax text planner may provide the same response contract
+behind this boundary, with deterministic rules as the fallback.
 """
 
 from __future__ import annotations

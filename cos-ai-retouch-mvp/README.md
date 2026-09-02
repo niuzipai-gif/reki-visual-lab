@@ -2,7 +2,7 @@
 
 This repository contains an open-by-default, single-photo COS retouch MVP. The guided workflow analyzes one JPG or PNG, while the browser workstation provides non-destructive layers, masks, local adjustments, editable presets, JPG export, layered PSD export, and an AURA project JSON sidecar. The original image remains untouched so results can be compared and rolled back. To restore strict invite validation for the guided cloud workflow, set `REQUIRE_INVITE_TOKENS=true` and configure `INVITE_TOKENS`.
 
-The application is intentionally split into a React/Vite frontend, a FastAPI backend, S3-compatible object storage, a planner-only workflow boundary, and an optional image-provider boundary. The frontend must never call an image model directly. MiniMax is reserved for future text/task orchestration; the current planner uses a deterministic quota-safe fallback and never spends image-generation quota.
+The application is intentionally split into a React/Vite frontend, a FastAPI backend, an S3-compatible storage boundary, a quota-safe workflow planner, and a server-only image-provider boundary. The frontend never calls an image model directly. MiniMax text planning is enabled on the small Render deployment, while image generation is spent only after the user confirms an AI layer and clicks the cloud execution button.
 
 ## Full-MVP local commands
 
@@ -69,18 +69,29 @@ for layered PSD writing. The planner endpoint is `POST /api/v1/workflows/plan`;
 it returns bounded operations and explicitly reports zero image-generation
 calls. Local filters cover exposure, contrast, saturation, temperature,
 sharpness, grain, vignette, blend modes, and rasterized brush masks. AI-only
-modules are represented as visible, editable task layers and are marked as
-pending until a remote inpaint/segmentation provider is configured.
+modules are represented as visible, editable task layers. The editor can
+submit selected AI layers through the task workflow, show returned versions
+under the canvas, import an AURA project JSON sidecar, and export the current
+layered document as PSD. Local adjustments and masks remain usable without
+spending an image-generation call.
 
 ## Provider and secret boundary
 
-`IMAGE_PROVIDER_MODE=mock` is the safe default for local development and browser tests. It provides deterministic workflow behavior without requiring an external image service. Set `IMAGE_PROVIDER_MODE=minimax`, `IMAGE_PROVIDER_BASE_URL=https://api.minimaxi.com/v1`, `IMAGE_PROVIDER_MODEL=image-01`, and `IMAGE_PROVIDER_API_KEY` in the backend environment to enable the MiniMax reference-image generation path. External-provider credentials belong only in backend/server environment variables. No image-model API key belongs in frontend environment variables, source code, or browser requests.
+`IMAGE_PROVIDER_MODE=mock` is the safe default for local development and
+browser tests. Render uses `IMAGE_PROVIDER_MODE=minimax` with the `image-01`
+reference-image generation endpoint. The editor submits one server-generated,
+bounded prompt with one `subject_reference` image; Render downloads the
+returned image URL and stores it behind the task's signed asset bridge. The
+provider path is whole-image reference generation, not pixel-perfect masked
+inpainting, so the browser mask is a localized editing instruction and preview
+boundary rather than a guarantee that the upstream model will edit only those
+pixels. The text planner uses MiniMax's OpenAI-compatible chat endpoint with
+`MiniMax-M2.7`; it never invokes image generation and falls back to
+deterministic rules if unavailable.
 
-The existing MiniMax adapter remains an optional legacy path for the guided
-cloud workflow. It uses the documented `image_generation` image-to-image API
-with one `subject_reference` image and a server-generated prompt. It is a
-whole-image reference generation path, not a pixel-perfect masked inpaint;
-the browser editor and planner do not call it.
+External-provider credentials belong only in backend/server environment
+variables. No image-model API key belongs in frontend environment variables,
+source code, repository history, Pages variables, or browser requests.
 
 Uploaded originals, masks, and generated versions are intended for S3-compatible object storage rather than the backend's local filesystem. The initial asset-retention target is 24 hours.
 
@@ -131,23 +142,21 @@ production infrastructure.
 Run these checks only after an authorized deployment and set
 `RENDER_API_URL` to the actual Render service URL:
 
-- [ ] `GET $RENDER_API_URL/healthz` returns HTTP 200.
-- [ ] The Pages URL loads over HTTPS and serves the built frontend under its
+- [x] `GET $RENDER_API_URL/healthz` returns HTTP 200.
+- [x] The Pages URL loads over HTTPS and serves the built frontend under its
       repository base path.
-- [ ] An `OPTIONS` task request returns the expected configured CORS origin.
-- [ ] With `REQUIRE_INVITE_TOKENS=true` and `INVITE_TOKENS` configured, an invalid invite token returns HTTP 401.
-- [ ] Mock analysis can create and advance a task without exposing provider or
-      storage secrets to the browser.
-
-This Task 10 configuration has not executed a real GitHub Pages or Render
-deployment; the checklist above remains pending live-environment verification.
+- [x] An `OPTIONS` task request returns the expected configured CORS origin.
+- [ ] With `REQUIRE_INVITE_TOKENS=true` and `INVITE_TOKENS` configured, an invalid invite token returns HTTP 401. This is an opt-in hardening check; the current small deployment is open by design.
+- [x] The live planner returns a bounded plan with `image_generation_calls=0`.
+- [x] A live MiniMax image task completes through upload, reference-image
+      generation, server-side result transfer, and version storage.
 
 ## Final known limitations and acceptance boundary
 
-This section defines the final MVP handoff boundary. It records what can be
-accepted from the current workflow and what still requires an authorized,
-real-environment or model-backed check; it does not claim that those checks
-have already been run.
+This section defines the current MVP handoff boundary. The automated and live
+checks above establish that the workflow is deployed and usable; they do not
+turn a small Render service into production-grade media infrastructure or
+guarantee identical visual quality for every cosplay photograph.
 
 - `IMAGE_PROVIDER_MODE=mock` verifies the workflow, API state transitions,
   masking, and result-handling path only. A mock result is not evidence of
@@ -163,10 +172,10 @@ have already been run.
   this MVP and are not acceptance requirements for this release. Layered PSD
   export is included in the browser editor and should be verified by opening a
   generated file in a PSD-capable editor.
-- Real GitHub Pages and Render smoke verification is still pending authorized
-  deployment. Local tests, configuration, or a successful build must not be
-  reported as proof that the live Pages/Render path has been deployed or
-  verified.
+- The live deployment uses an in-memory asset bridge for this small validation
+  environment. It is suitable for low-volume testing only; persistent S3
+  storage, managed database sizing, background workers, accounts, billing,
+  batch processing, and local GPU inference remain outside this MVP.
 
 ### Acceptance boundary
 
@@ -179,14 +188,16 @@ have already been run.
   face identity, pose/composition, hands/costume, background geometry, and
   lighting/noise are all recorded as `pass`; any unresolved `review` blocks
   handoff.
-- **Deployment acceptance:** only an authorized live run of the Pages URL,
-  Render health/CORS/auth checks, and a mock task smoke can establish the
-  deployment boundary. Until then, the live-environment result remains
-  pending.
+- **Deployment acceptance:** the current boundary is established by the live
+  Pages load, Render health/CORS checks, MiniMax planner smoke, and one real
+  end-to-end MiniMax image task. Repeat visual QA with representative cosplay
+  images before treating the output as production quality.
 
 ## Scope
 
 This MVP still does not include accounts, payments, public sharing, batch
-processing, or local GPU inference. PSD export, browser masks, local adjustment
-filters, editable presets, and the planner-only workflow endpoint are included.
+processing, persistent production storage, pixel-perfect provider-side masked
+inpainting, or local GPU inference. PSD export, browser masks, local adjustment
+filters, editable presets, MiniMax text planning, and the explicit cloud image
+execution path are included.
 The shared workflow contract is documented in [`shared/task-contract.md`](shared/task-contract.md).

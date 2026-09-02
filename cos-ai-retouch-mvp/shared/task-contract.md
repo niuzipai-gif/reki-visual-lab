@@ -313,7 +313,7 @@ generation job:
 ```pseudo-json
 {
   "filename": "cos-photo.jpg",
-  "provider": "rules",
+  "provider": "minimax-planner",
   "image_generation_calls": 0,
   "operations": [
     {
@@ -329,16 +329,17 @@ generation job:
   ],
   "preserve": ["face identity", "main pose", "costume design", "composition"],
   "validation": ["face identity", "hands and costume", "lighting and noise"],
-  "notes": ["当前规划器只负责拆解后期任务，不调用生图模型。"]
+  "notes": ["MiniMax 文本智能体只负责拆解后期任务，本次规划未调用生图模型。"]
 }
 ```
 
 The planner has an allow-list for modules (`light`, `skin`, `hair`, `costume`,
 `body`, `background`, `style`), deduplicates repeated modules, and silently
-ignores unknown module names. `provider: "rules"` is the quota-safe default;
-an optional MiniMax text-planner can be added behind the same server boundary
-without changing the browser contract. `image_generation_calls` must remain
-zero for planner-only requests.
+ignores unknown module names. `provider: "rules"` remains the deterministic
+fallback, while `provider: "minimax-planner"` is enabled on the small Render
+deployment through the same server boundary. The browser contract does not
+change, and `image_generation_calls` must remain zero for planner-only
+requests.
 
 `POST /api/v1/tasks` validates the invite when strict mode is enabled, validates
 file metadata, creates a `created` task, and returns an upload URL with status

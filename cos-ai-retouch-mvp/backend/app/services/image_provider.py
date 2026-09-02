@@ -790,16 +790,17 @@ class MiniMaxImageModelProvider(ExternalImageModelProvider):
             if existing_job_id is not None:
                 return self._jobs[existing_job_id]
 
+            # Keep the request to the documented, broadly compatible core
+            # fields.  Optional switches differ between MiniMax image model
+            # revisions; the API defaults to URL output, which we download
+            # server-side below and then store in the task asset bridge.
             payload: dict[str, Any] = {
                 "model": self.settings.image_provider_model,
                 "prompt": _minimax_prompt(plan),
                 "subject_reference": [
                     {"type": "character", "image_file": source_url}
                 ],
-                "response_format": "base64",
                 "n": 1,
-                "prompt_optimizer": False,
-                "aigc_watermark": False,
             }
             aspect_ratio = getattr(self.settings, "image_provider_aspect_ratio", None)
             if aspect_ratio:
