@@ -1,0 +1,36 @@
+{
+  "name": "reki-build",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && npm run test:worker-build && node scripts/prepare-sites-build.mjs",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:sites": "node --test tests/sites-worker.test.mjs",
+    "test:worker-build": "node --test tests/worker-build-output.test-node.mjs"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "0.10.22-rc.20250304",
+    "@vitejs/plugin-react": "5.0.4",
+    "fflate": "^0.8.3",
+    "gifenc": "^1.0.3",
+    "idb-keyval": "^6.3.0",
+    "konva": "^10.3.0",
+    "lucide-react": "^1.21.0",
+    "mp4-muxer": "^5.2.2",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-konva": "^19.2.5",
+    "vite": "6.4.3"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "fake-indexeddb": "^6.2.5",
+    "jsdom": "^29.1.1",
+    "vitest": "^4.1.9"
+  }
+}

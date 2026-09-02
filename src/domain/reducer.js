@@ -1,0 +1,756 @@
+import { createProject, normalizeProject, sanitizeMotion } from "./project.js";
+import {
+  sanitizeEditorPatch,
+  styleToEditorPatch,
+} from "../features/ai/styleAdvisor.js";
+import {
+  createEffect,
+  effectStackToLegacyFilters,
+  legacyFilterPatchToEffects,
+  legacyFiltersToEffectStack,
+  normalizeEffectStack,
+} from "../features/filters/effectStack.js";
+import { sanitizeAnimation } from "../features/motion/animationRuntime.js";
+import {
+  createExtractedFragment,
+  isSourceFill,
+  isSpatialMarker,
+  markerSourceRect,
+  normalizeSourceRect,
+} from "../features/fragments/fragmentDomain.js";
+
+export const MAX_HISTORY_ENTRIES = 100;
+
+export function createEditorState(project = createProject()) {
+  return {
+    past: [],
+    present: normalizeProject(project),
+    future: [],
+    selectedLayerId: null,
+  };
+}
+
+function addEffects(stack, effects) {
+  const ids = new Set(stack.map(({ id }) => id));
+  const additions = [];
+  for (const source of effects ?? []) {
+    const effect = createEffect(source?.type, source);
+    if (!effect || ids.has(effect.id)) continue;
+    ids.add(effect.id);
+    additions.push(effect);
+  }
+  return additions;
+}
+
+const LEGACY_EFFECT_TYPE_BY_FILTER_KEY = Object.freeze({
+  brightness: "brightness",
+  contrast: "contrast",
+  saturation: "saturation",
+  sharpness: "sharpness",
+  threshold: "threshold",
+  halftone: "halftone",
+  grain: "grain",
+  grainSeed: "grain",
+  rgbOffset: "rgbOffset",
+  chromaShift: "rgbOffset",
+  scanline: "scanline",
+  duotone: "duotone",
+});
+const LEGACY_EFFECT_TYPES = new Set(
+  Object.values(LEGACY_EFFECT_TYPE_BY_FILTER_KEY),
+);
+
+function isLegacyEffect(effect) {
+  return effect?.id === `legacy-${effect.type}`;
+}
+
+/**
+ * Compatibility actions from the retired flat-filter panel may only touch the
+ * cards they own. Custom/duplicate cards keep their identity, order, opacity,
+ * and visibility until the new effect panel edits them explicitly.
+ */
+function patchLegacyEffects(effectStack, patch, { reset = false } = {}) {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+    return effectStack;
+  }
+  const affectedTypes = reset
+    ? new Set(LEGACY_EFFECT_TYPES)
+    : new Set(
+    Object.keys(patch)
+      .map((key) => LEGACY_EFFECT_TYPE_BY_FILTER_KEY[key])
+      .filter(Boolean),
+    );
+  if (!affectedTypes.size) return effectStack;
+
+  const compatibilityEffects = effectStack.filter(isLegacyEffect);
+  const legacyFilters = reset
+    ? {}
+    : effectStackToLegacyFilters(compatibilityEffects);
+  const replacements = legacyFiltersToEffectStack({ ...legacyFilters, ...patch });
+  const byType = new Map(replacements.map((effect) => [effect.type, effect]));
+  const presentTypes = new Set();
+  const output = [];
+
+  for (const effect of effectStack) {
+    if (!isLegacyEffect(effect) || !affectedTypes.has(effect.type)) {
+      output.push(effect);
+      continue;
+    }
+    presentTypes.add(effect.type);
+    const replacement = byType.get(effect.type);
+    if (!replacement) continue;
+    output.push({ ...effect, settings: replacement.settings });
+  }
+  for (const effect of replacements) {
+    if (affectedTypes.has(effect.type) && !presentTypes.has(effect.type)) {
+      output.push(effect);
+    }
+  }
+  return output;
+}
+
+function hasLayer(project, id) {
+  return project.layers.some((layer) => layer.id === id);
+}
+
+function plainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function syncLinkedFragments(project, markerId) {
+  const marker = project.layers.find((layer) => layer.id === markerId);
+  if (!isSpatialMarker(marker)) return project;
+  const sourceRect = markerSourceRect(marker, project.canvas);
+  if (!sourceRect) return project;
+
+  let changed = false;
+  const layers = project.layers.map((layer) => {
+    if (
+      layer.type !== "extractedFragment" ||
+      layer.sourceMarkerId !== markerId ||
+      layer.linkedToMarker === false
+    ) {
+      return layer;
+    }
+    if (
+      valuesEqual(layer.sourceRect, sourceRect) &&
+      valuesEqual(layer.transform, sourceRect)
+    ) {
+      return layer;
+    }
+    changed = true;
+    return {
+      ...layer,
+      sourceRect: { ...sourceRect },
+      transform: { ...sourceRect },
+      linkedToMarker: true,
+    };
+  });
+  return changed ? { ...project, layers } : project;
+}
+
+function fragmentPatch(layer, candidate) {
+  if (!plainObject(candidate)) return null;
+  const patch = {};
+  if (Object.hasOwn(candidate, "transform")) {
+    const transform = normalizeSourceRect(candidate.transform);
+    if (!transform) return null;
+    patch.transform = transform;
+    patch.linkedToMarker = false;
+  }
+  if (Object.hasOwn(candidate, "sourceRect")) {
+    const sourceRect = normalizeSourceRect(candidate.sourceRect);
+    if (!sourceRect) return null;
+    patch.sourceRect = sourceRect;
+  }
+  if (Object.hasOwn(candidate, "sourceFill")) {
+    if (!isSourceFill(candidate.sourceFill)) return null;
+    patch.sourceFill = candidate.sourceFill;
+  }
+  if (Object.hasOwn(candidate, "effects")) {
+    if (!Array.isArray(candidate.effects)) return null;
+    patch.effects = normalizeEffectStack(candidate.effects);
+  }
+  if (Object.hasOwn(candidate, "animation")) {
+    patch.animation = sanitizeAnimation(candidate.animation);
+  }
+  if (Object.hasOwn(candidate, "opacity")) {
+    const opacity = Number(candidate.opacity);
+    if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) return null;
+    patch.opacity = opacity;
+  }
+  if (Object.hasOwn(candidate, "name")) {
+    if (typeof candidate.name !== "string") return null;
+    patch.name = candidate.name.slice(0, 160);
+  }
+  if (Object.hasOwn(candidate, "visible")) {
+    if (typeof candidate.visible !== "boolean") return null;
+    patch.visible = candidate.visible;
+  }
+  if (Object.hasOwn(candidate, "locked")) {
+    if (typeof candidate.locked !== "boolean") return null;
+    patch.locked = candidate.locked;
+  }
+  if (Object.hasOwn(candidate, "linkedToMarker")) {
+    if (typeof candidate.linkedToMarker !== "boolean") return null;
+    patch.linkedToMarker = candidate.linkedToMarker;
+  }
+  return patch;
+}
+
+function updateFragment(project, id, candidate) {
+  const source = project.layers.find((layer) => layer.id === id);
+  if (source?.type !== "extractedFragment") return project;
+  const patch = fragmentPatch(source, candidate);
+  if (!patch || !hasEffectivePatch(source, patch)) return project;
+
+  let next = {
+    ...project,
+    layers: project.layers.map((layer) =>
+      layer.id === id ? { ...layer, ...patch } : layer,
+    ),
+  };
+  if (patch.linkedToMarker === true) {
+    next = syncLinkedFragments(next, source.sourceMarkerId);
+  }
+  return next;
+}
+
+function updateFragmentEffects(project, id, operation, effect, patch, toIndex) {
+  const fragment = project.layers.find((layer) => layer.id === id);
+  if (fragment?.type !== "extractedFragment") return project;
+  const current = normalizeEffectStack(fragment.effects ?? []);
+  let effects = current;
+  if (operation === "add") {
+    const additions = addEffects(current, [effect]);
+    if (!additions.length) return project;
+    effects = [...current, ...additions];
+  }
+  if (operation === "update") {
+    const selected = current.find((item) => item.id === effect);
+    if (!selected) return project;
+    const { id: _ignoredId, type: _ignoredType, ...safePatch } = patch ?? {};
+    const next = createEffect(selected.type, {
+      ...selected,
+      ...safePatch,
+      id: selected.id,
+    });
+    if (!next) return project;
+    effects = current.map((item) => item.id === selected.id ? next : item);
+  }
+  if (operation === "remove") {
+    effects = current.filter((item) => item.id !== effect);
+    if (effects.length === current.length) return project;
+  }
+  if (operation === "move") {
+    const from = current.findIndex((item) => item.id === effect);
+    if (from < 0) return project;
+    effects = [...current];
+    const [moved] = effects.splice(from, 1);
+    const to = Math.max(0, Math.min(Number(toIndex) || 0, effects.length));
+    effects.splice(to, 0, moved);
+  }
+  if (operation === "reset") effects = [];
+  if (valuesEqual(current, effects)) return project;
+  return updateFragment(project, id, { effects });
+}
+
+function valuesEqual(first, second) {
+  if (Object.is(first, second)) return true;
+  if (
+    first === null ||
+    second === null ||
+    typeof first !== "object" ||
+    typeof second !== "object"
+  ) {
+    return false;
+  }
+  if (Array.isArray(first) !== Array.isArray(second)) return false;
+
+  const firstKeys = Object.keys(first);
+  const secondKeys = Object.keys(second);
+  return (
+    firstKeys.length === secondKeys.length &&
+    firstKeys.every(
+      (key) =>
+        Object.hasOwn(second, key) &&
+        valuesEqual(first[key], second[key]),
+    )
+  );
+}
+
+function hasEffectivePatch(target, patch) {
+  return Object.entries(patch).some(
+    ([key, value]) => !valuesEqual(target[key], value),
+  );
+}
+
+function reconcileSelection(selectedLayerId, project) {
+  return selectedLayerId !== null && hasLayer(project, selectedLayerId)
+    ? selectedLayerId
+    : null;
+}
+
+function commit(
+  state,
+  nextPresent,
+  selectedLayerId = state.selectedLayerId,
+) {
+  return {
+    ...state,
+    past: [...state.past, state.present].slice(-MAX_HISTORY_ENTRIES),
+    present: nextPresent,
+    future: [],
+    selectedLayerId: reconcileSelection(selectedLayerId, nextPresent),
+  };
+}
+
+export function editorReducer(state, action) {
+  if (action.type === "history/undo" && state.past.length) {
+    return {
+      ...state,
+      past: state.past.slice(0, -1),
+      present: state.past.at(-1),
+      future: [state.present, ...state.future],
+      selectedLayerId: reconcileSelection(
+        state.selectedLayerId,
+        state.past.at(-1),
+      ),
+    };
+  }
+
+  if (action.type === "history/redo" && state.future.length) {
+    return {
+      ...state,
+      past: [...state.past, state.present].slice(-MAX_HISTORY_ENTRIES),
+      present: state.future[0],
+      future: state.future.slice(1),
+      selectedLayerId: reconcileSelection(
+        state.selectedLayerId,
+        state.future[0],
+      ),
+    };
+  }
+
+  if (action.type === "layers/addMany") {
+    const ids = new Set(state.present.layers.map(({ id }) => id));
+    const layers = [];
+    for (const layer of action.layers ?? []) {
+      if (!layer?.id || ids.has(layer.id)) continue;
+      ids.add(layer.id);
+      layers.push(layer);
+    }
+    if (!layers.length) return state;
+
+    return commit(
+      state,
+      {
+        ...state.present,
+        layers: [...state.present.layers, ...layers],
+      },
+      action.selectedLayerId ?? layers[0].id,
+    );
+  }
+
+  if (action.type === "layers/removeBySource") {
+    const layers = state.present.layers.filter(
+      (layer) => layer.source !== action.source,
+    );
+    if (layers.length === state.present.layers.length) return state;
+    return commit(state, { ...state.present, layers });
+  }
+
+  if (action.type === "layers/clear") {
+    if (!state.present.layers.length) return state;
+    return commit(
+      state,
+      { ...state.present, layers: [] },
+      null,
+    );
+  }
+
+  if (action.type === "fragment/create") {
+    const marker = state.present.layers.find(
+      (layer) => layer.id === action.markerId,
+    );
+    const fragment = createExtractedFragment({
+      marker,
+      canvas: state.present.canvas,
+      sourceFill: action.sourceFill ?? "preserve",
+    });
+    if (!fragment || hasLayer(state.present, fragment.id)) return state;
+    return commit(
+      state,
+      {
+        ...state.present,
+        layers: [...state.present.layers, fragment],
+      },
+      fragment.id,
+    );
+  }
+
+  if (action.type === "fragment/update") {
+    const nextPresent = updateFragment(state.present, action.id, action.patch);
+    if (nextPresent === state.present) return state;
+    return commit(state, nextPresent);
+  }
+
+  if (action.type === "fragment/effects") {
+    const nextPresent = updateFragmentEffects(
+      state.present,
+      action.id,
+      action.operation,
+      action.effect,
+      action.patch,
+      action.toIndex,
+    );
+    if (nextPresent === state.present) return state;
+    return commit(state, nextPresent);
+  }
+
+  if (action.type === "fragment/sourceFill") {
+    if (!isSourceFill(action.sourceFill)) return state;
+    const nextPresent = updateFragment(state.present, action.id, {
+      sourceFill: action.sourceFill,
+    });
+    if (nextPresent === state.present) return state;
+    return commit(state, nextPresent);
+  }
+
+  if (action.type === "marker/boundsChanged") {
+    const nextPresent = syncLinkedFragments(state.present, action.markerId);
+    if (nextPresent === state.present) return state;
+    return commit(state, nextPresent);
+  }
+
+  if (action.type === "layer/add") {
+    if (hasLayer(state.present, action.layer.id)) {
+      return state;
+    }
+
+    return commit(state, {
+      ...state.present,
+      layers: [...state.present.layers, action.layer],
+    });
+  }
+
+  if (action.type === "layer/update") {
+    const source = state.present.layers.find((layer) => layer.id === action.id);
+    if (!source) {
+      return state;
+    }
+
+    if (source.type === "extractedFragment") {
+      const nextPresent = updateFragment(state.present, action.id, action.patch);
+      if (nextPresent === state.present) return state;
+      return commit(state, nextPresent);
+    }
+
+    const { id: _ignoredId, ...patch } = action.patch ?? {};
+    if (!hasEffectivePatch(source, patch)) {
+      return state;
+    }
+
+    let nextPresent = {
+      ...state.present,
+      layers: state.present.layers.map((layer) =>
+        layer.id === action.id ? { ...layer, ...patch } : layer,
+      ),
+    };
+    if (isSpatialMarker(source)) {
+      nextPresent = syncLinkedFragments(nextPresent, action.id);
+    }
+    return commit(state, nextPresent);
+  }
+
+  if (action.type === "layer/animation") {
+    const source = state.present.layers.find((layer) => layer.id === action.id);
+    if (!source) return state;
+    const animation = sanitizeAnimation(action.animation);
+    if (valuesEqual(source.animation, animation)) return state;
+
+    return commit(state, {
+      ...state.present,
+      layers: state.present.layers.map((layer) =>
+        layer.id === action.id ? { ...layer, animation } : layer,
+      ),
+    });
+  }
+
+  if (action.type === "layers/updateMany") {
+    const updates = new Map();
+    for (const update of action.updates ?? []) {
+      const source = state.present.layers.find((layer) => layer.id === update.id);
+      if (!source) continue;
+      if (source.type === "extractedFragment") {
+        const patch = fragmentPatch(source, update.patch);
+        if (!patch || !hasEffectivePatch(source, patch)) continue;
+        updates.set(update.id, { ...(updates.get(update.id) ?? {}), ...patch });
+        continue;
+      }
+      const { id: _ignoredId, ...patch } = update.patch ?? {};
+      updates.set(update.id, { ...(updates.get(update.id) ?? {}), ...patch });
+    }
+
+    let changed = false;
+    const layers = state.present.layers.map((layer) => {
+      const patch = updates.get(layer.id);
+      if (!patch || !hasEffectivePatch(layer, patch)) return layer;
+      changed = true;
+      return { ...layer, ...patch };
+    });
+    if (!changed) return state;
+
+    let nextPresent = { ...state.present, layers };
+    for (const [id, patch] of updates) {
+      const source = state.present.layers.find((layer) => layer.id === id);
+      if (isSpatialMarker(source)) {
+        nextPresent = syncLinkedFragments(nextPresent, id);
+      }
+      if (source?.type === "extractedFragment" && patch.linkedToMarker === true) {
+        nextPresent = syncLinkedFragments(nextPresent, source.sourceMarkerId);
+      }
+    }
+    return commit(state, nextPresent);
+  }
+
+  if (action.type === "preset/apply") {
+    const existingIds = new Set(state.present.layers.map(({ id }) => id));
+    const layersToAdd = (action.layers ?? []).filter(
+      ({ id }) => !existingIds.has(id),
+    );
+    const effectsToAdd = addEffects(
+      state.present.effectStack ?? [],
+      legacyFilterPatchToEffects(action.filters),
+    );
+    if (
+      !layersToAdd.length &&
+      !effectsToAdd.length
+    ) {
+      return state;
+    }
+
+    const nextPresent = {
+      ...state.present,
+      layers: [...state.present.layers, ...layersToAdd],
+      effectStack: [...(state.present.effectStack ?? []), ...effectsToAdd],
+    };
+    return commit(state, nextPresent, action.selectedLayerId ?? null);
+  }
+
+  if (action.type === "style/apply") {
+    const recommendation = action.recommendation ?? action.patch ?? {};
+    const generatedPatch = Array.isArray(recommendation.layers)
+      ? sanitizeEditorPatch({
+          layers: recommendation.layers,
+        })
+      : sanitizeEditorPatch(
+          styleToEditorPatch(recommendation, {
+            features: action.features,
+            seed: action.seed,
+          }),
+    );
+    if (!generatedPatch) return state;
+    const generatedLayers = (generatedPatch.layers ?? []).map((layer) => ({
+      ...structuredClone(layer),
+      source: "ai-style",
+    }));
+    const existingIds = new Set(state.present.layers.map(({ id }) => id));
+    const layersToAdd = generatedLayers.filter(({ id }) => {
+      if (!id || existingIds.has(id)) return false;
+      existingIds.add(id);
+      return true;
+    });
+    if (!layersToAdd.length) {
+      return state;
+    }
+    const nextPresent = {
+      ...state.present,
+      layers: [...state.present.layers, ...layersToAdd],
+    };
+    return commit(
+      state,
+      nextPresent,
+      action.selectedLayerId ?? layersToAdd[0]?.id ?? null,
+    );
+  }
+
+  if (action.type === "layer/remove") {
+    if (!state.present.layers.some((layer) => layer.id === action.id)) {
+      return state;
+    }
+
+    return commit(state, {
+      ...state.present,
+      layers: state.present.layers.filter((layer) => layer.id !== action.id),
+    });
+  }
+
+  if (action.type === "layer/move") {
+    const layers = [...state.present.layers];
+    const from = layers.findIndex((layer) => layer.id === action.id);
+    if (from < 0) return state;
+
+    const [layer] = layers.splice(from, 1);
+    const to = Math.max(0, Math.min(action.toIndex, layers.length));
+    layers.splice(to, 0, layer);
+
+    if (layers.every((item, index) => item === state.present.layers[index])) {
+      return state;
+    }
+
+    return commit(state, { ...state.present, layers });
+  }
+
+  if (action.type === "layer/duplicate") {
+    const source = state.present.layers.find((layer) => layer.id === action.id);
+    if (!source) return state;
+
+    const copy = {
+      ...structuredClone(source),
+      id: crypto.randomUUID(),
+      name: `${source.name}_copy`,
+    };
+
+    return commit(state, {
+      ...state.present,
+      layers: [...state.present.layers, copy],
+    });
+  }
+
+  if (action.type === "layer/toggle" || action.type === "layer/lock") {
+    if (!state.present.layers.some((layer) => layer.id === action.id)) {
+      return state;
+    }
+
+    const key = action.type === "layer/toggle" ? "visible" : "locked";
+
+    return commit(state, {
+      ...state.present,
+      layers: state.present.layers.map((layer) =>
+        layer.id === action.id ? { ...layer, [key]: !layer[key] } : layer,
+      ),
+    });
+  }
+
+  if (action.type === "canvas/update") {
+    const patch = action.patch ?? {};
+    if (!hasEffectivePatch(state.present.canvas, patch)) {
+      return state;
+    }
+
+    return commit(state, {
+      ...state.present,
+      canvas: { ...state.present.canvas, ...patch },
+    });
+  }
+
+  if (action.type === "motion/update") {
+    const motion = sanitizeMotion({
+      ...state.present.motion,
+      ...(action.patch && typeof action.patch === "object" ? action.patch : {}),
+    });
+    if (valuesEqual(state.present.motion, motion)) return state;
+    return commit(state, { ...state.present, motion });
+  }
+
+  if (action.type === "effects/add") {
+    const effectsToAdd = addEffects(state.present.effectStack ?? [], [action.effect]);
+    if (!effectsToAdd.length) return state;
+    return commit(state, {
+      ...state.present,
+      effectStack: [...(state.present.effectStack ?? []), ...effectsToAdd],
+    });
+  }
+
+  if (action.type === "effects/update") {
+    const current = (state.present.effectStack ?? []).find(
+      (effect) => effect.id === action.id,
+    );
+    if (!current) return state;
+    const { id: _ignoredId, type: _ignoredType, ...patch } = action.patch ?? {};
+    const next = createEffect(current.type, { ...current, ...patch, id: current.id });
+    if (!next || valuesEqual(next, current)) return state;
+    return commit(state, {
+      ...state.present,
+      effectStack: state.present.effectStack.map((effect) =>
+        effect.id === action.id ? next : effect,
+      ),
+    });
+  }
+
+  if (action.type === "effects/remove") {
+    const effectStack = (state.present.effectStack ?? []).filter(
+      (effect) => effect.id !== action.id,
+    );
+    if (effectStack.length === (state.present.effectStack ?? []).length) return state;
+    return commit(state, { ...state.present, effectStack });
+  }
+
+  if (action.type === "effects/move") {
+    const effectStack = [...(state.present.effectStack ?? [])];
+    const from = effectStack.findIndex((effect) => effect.id === action.id);
+    if (from < 0) return state;
+    const [effect] = effectStack.splice(from, 1);
+    const to = Math.max(0, Math.min(Number(action.toIndex) || 0, effectStack.length));
+    effectStack.splice(to, 0, effect);
+    if (effectStack.every((item, index) => item === state.present.effectStack[index])) {
+      return state;
+    }
+    return commit(state, { ...state.present, effectStack });
+  }
+
+  if (action.type === "effects/reset") {
+    const effectStack = normalizeEffectStack(action.effects ?? []);
+    if (valuesEqual(effectStack, state.present.effectStack ?? [])) return state;
+    return commit(state, { ...state.present, effectStack });
+  }
+
+  if (action.type === "filters/update") {
+    const patch = action.patch ?? {};
+    const effectStack = patchLegacyEffects(state.present.effectStack ?? [], patch);
+    if (valuesEqual(effectStack, state.present.effectStack ?? [])) {
+      return state;
+    }
+
+    return commit(state, {
+      ...state.present,
+      filters: {},
+      effectStack,
+    });
+  }
+
+  if (action.type === "filters/reset") {
+    const effectStack = patchLegacyEffects(
+      state.present.effectStack ?? [],
+      action.filters ?? {},
+      { reset: true },
+    );
+    if (valuesEqual(effectStack, state.present.effectStack ?? [])) {
+      return state;
+    }
+
+    return commit(state, {
+      ...state.present,
+      filters: {},
+      effectStack,
+    });
+  }
+
+  if (action.type === "project/load") {
+    return createEditorState(normalizeProject(action.project));
+  }
+
+  if (action.type === "selection/set") {
+    if (
+      action.id === state.selectedLayerId ||
+      (action.id !== null && !hasLayer(state.present, action.id))
+    ) {
+      return state;
+    }
+
+    return { ...state, selectedLayerId: action.id };
+  }
+
+  return state;
+}
