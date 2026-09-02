@@ -229,7 +229,7 @@ export default function ResultPanel({
   }
 
   return (
-    <section className="panel result-panel" aria-labelledby="result-title">
+    <section className="panel result-panel studio-panel-enter" aria-labelledby="result-title">
       <div className="panel-heading">
         <div>
           <p className="eyebrow">第三步 · 挑选预览</p>

@@ -208,7 +208,10 @@ export default function UploadPanel({
   }
 
   return (
-    <section className="panel upload-panel" aria-labelledby="upload-title">
+    <section
+      className={`panel upload-panel studio-panel-enter ${previewUrl ? "upload-panel-ready" : ""}`}
+      aria-labelledby="upload-title"
+    >
       <div className="panel-heading">
         <div>
           <p className="eyebrow">第一步 · 上传照片</p>

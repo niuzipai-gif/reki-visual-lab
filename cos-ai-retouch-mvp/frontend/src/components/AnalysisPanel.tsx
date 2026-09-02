@@ -394,7 +394,7 @@ export default function AnalysisPanel({
   }
 
   return (
-    <section className="panel analysis-panel" aria-labelledby="analysis-title">
+    <section className="panel analysis-panel studio-panel-enter" aria-labelledby="analysis-title">
       <div className="panel-heading">
         <div>
           <p className="eyebrow">第二步 · 选择细节</p>

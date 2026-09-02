@@ -82,6 +82,8 @@ describe("UploadPanel file identity", () => {
     const replaced = new File(["bb"], "same.jpg", { type: "image/jpeg", lastModified: 2 });
 
     await user.upload(input, first);
+    await screen.findByAltText("待处理原图预览");
+    expect(screen.getByRole("region", { name: "先放一张你喜欢的照片" })).toHaveClass("upload-panel-ready");
     await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
     await waitFor(() => expect(createTask).toHaveBeenCalledTimes(1));
 

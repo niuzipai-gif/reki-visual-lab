@@ -173,6 +173,7 @@ describe("COS retouch app", () => {
     await user.upload(screen.getByLabelText("选择 JPG 或 PNG 原图"), file);
 
     expect(await screen.findByAltText("待处理原图预览")).toBeVisible();
+    expect(screen.getByRole("region", { name: "先放一张你喜欢的照片" })).toHaveClass("upload-panel-ready");
     await user.click(screen.getByRole("button", { name: "开始看看哪里可以更好" }));
     await waitFor(() => expect(client.createTask).toHaveBeenCalledTimes(1));
     expect(client.uploadOriginal).toHaveBeenCalledWith(
