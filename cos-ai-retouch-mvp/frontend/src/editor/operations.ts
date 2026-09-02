@@ -59,6 +59,11 @@ function applySaturation(red: number, green: number, blue: number, saturation: n
   ];
 }
 
+function deterministicNoise(index: number): number {
+  const value = Math.sin((index + 1) * 12.9898) * 43758.5453;
+  return (value - Math.floor(value)) * 2 - 1;
+}
+
 /** Apply deterministic pixel adjustments without touching the source ImageData. */
 export function applyAdjustments(source: ImageData, rawValues: Partial<AdjustmentValues>): ImageData {
   const values = clampAdjustments(rawValues);
@@ -80,6 +85,44 @@ export function applyAdjustments(source: ImageData, rawValues: Partial<Adjustmen
     result.data[index] = clampByte(red);
     result.data[index + 1] = clampByte(green);
     result.data[index + 2] = clampByte(blue);
+  }
+
+  if (values.sharpness > 0 && source.width > 1 && source.height > 1) {
+    const sharpenSource = new Uint8ClampedArray(result.data);
+    const amount = values.sharpness / 100 * 0.7;
+    const sample = (x: number, y: number, channel: number) => {
+      const safeX = Math.min(source.width - 1, Math.max(0, x));
+      const safeY = Math.min(source.height - 1, Math.max(0, y));
+      return sharpenSource[(safeY * source.width + safeX) * 4 + channel];
+    };
+    for (let y = 0; y < source.height; y += 1) {
+      for (let x = 0; x < source.width; x += 1) {
+        const offset = (y * source.width + x) * 4;
+        for (let channel = 0; channel < 3; channel += 1) {
+          const blur = (
+            sample(x - 1, y, channel) + sample(x + 1, y, channel) +
+            sample(x, y - 1, channel) + sample(x, y + 1, channel)
+          ) / 4;
+          result.data[offset + channel] = clampByte(sharpenSource[offset + channel] + (sharpenSource[offset + channel] - blur) * amount);
+        }
+      }
+    }
+  }
+
+  if (values.grain > 0 || values.vignette > 0) {
+    for (let y = 0; y < source.height; y += 1) {
+      for (let x = 0; x < source.width; x += 1) {
+        const offset = (y * source.width + x) * 4;
+        const noise = deterministicNoise(offset) * values.grain * 0.28;
+        const normalizedX = (x / Math.max(1, source.width - 1)) * 2 - 1;
+        const normalizedY = (y / Math.max(1, source.height - 1)) * 2 - 1;
+        const distance = Math.min(1, Math.hypot(normalizedX, normalizedY) / Math.SQRT2);
+        const vignette = 1 - distance * distance * values.vignette * 0.65 / 100;
+        result.data[offset] = clampByte(result.data[offset] * vignette + noise);
+        result.data[offset + 1] = clampByte(result.data[offset + 1] * vignette + noise);
+        result.data[offset + 2] = clampByte(result.data[offset + 2] * vignette + noise);
+      }
+    }
   }
 
   return result;

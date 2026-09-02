@@ -40,6 +40,23 @@ describe("editor operations", () => {
     expect(Array.from(brighter.data)).toEqual([121, 152, 182, 255]);
   });
 
+  it("applies texture controls instead of silently ignoring them", () => {
+    const source = {
+      data: new Uint8ClampedArray([
+        80, 100, 120, 255, 90, 110, 130, 255, 100, 120, 140, 255,
+        110, 130, 150, 255, 120, 140, 160, 255, 130, 150, 170, 255,
+        140, 160, 180, 255, 150, 170, 190, 255, 160, 180, 200, 255,
+      ]),
+      width: 3,
+      height: 3,
+    } as ImageData;
+    const textured = applyAdjustments(source, { sharpness: 80, grain: 60, vignette: 70 });
+
+    expect(Array.from(textured.data)).not.toEqual(Array.from(source.data));
+    expect(textured.data[3]).toBe(255);
+    expect(textured.data[4 * 4 + 3]).toBe(255);
+  });
+
   it("clamps adjustment values to the editor contract", () => {
     const values: AdjustmentValues = {
       exposure: 180,
