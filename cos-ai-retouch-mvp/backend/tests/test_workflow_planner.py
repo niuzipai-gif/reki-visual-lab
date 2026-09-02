@@ -58,3 +58,35 @@ def test_workflow_endpoint_returns_planner_graph_without_invite_gate(repository)
         "skin",
         "hair",
     ]
+
+
+def test_minimax_text_planner_is_normalized_and_never_requests_image_generation(monkeypatch):
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return (
+                '{"choices":[{"message":{"content":"{\\"operations\\":['
+                '{\\"module\\":\\"skin\\",\\"label\\":\\"保留纹理的面部整理\\",'
+                '\\"intensity\\":58},{\\"module\\":\\"unknown\\"}],'
+                '\\"notes\\":[\\"先处理面部\\"]}"}}]}'
+            ).encode("utf-8")
+
+    monkeypatch.setattr("app.services.workflow_planner.urlopen", lambda *args, **kwargs: FakeResponse())
+    result = WorkflowPlanner(
+        Settings(
+            planner_provider_mode="minimax",
+            image_provider_api_key="server-only-secret",
+        )
+    ).plan(WorkflowPlanRequest(filename="miku.jpg", intent="保留妆面质感"))
+
+    assert result.provider == "minimax-planner"
+    assert result.image_generation_calls == 0
+    assert [operation.module for operation in result.operations] == ["skin"]
+    assert result.operations[0].requires_remote_ai is True

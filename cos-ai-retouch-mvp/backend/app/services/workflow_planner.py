@@ -8,9 +8,13 @@ contract behind this boundary.
 
 from __future__ import annotations
 
-from typing import Literal
+import json
+from typing import Any, Literal
+from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.config import Settings, get_settings
 
 
 WorkflowPreset = Literal[
@@ -118,9 +122,31 @@ class WorkflowPlan(BaseModel):
 
 
 class WorkflowPlanner:
-    """Deterministic planner used as the quota-safe default."""
+    """Plan COS work locally, optionally using MiniMax text orchestration.
+
+    The image-generation endpoint is deliberately not called here. When the
+    text planner is unavailable or returns an unsafe shape, the deterministic
+    plan remains usable and no provider response is exposed to the browser.
+    """
+
+    def __init__(self, settings: Settings | None = None):
+        self.settings = settings or get_settings()
 
     def plan(self, request: WorkflowPlanRequest) -> WorkflowPlan:
+        rules_plan = self._rules_plan(request)
+        if self.settings.planner_provider_mode != "minimax":
+            return rules_plan
+        api_key = self.settings.get_planner_api_key()
+        if not api_key:
+            return rules_plan
+        try:
+            return self._minimax_plan(request, api_key)
+        except Exception:
+            # A provider outage must not make the editor unusable. Do not
+            # preserve upstream error text because it may contain secrets.
+            return rules_plan
+
+    def _rules_plan(self, request: WorkflowPlanRequest) -> WorkflowPlan:
         candidates: list[tuple[str, str, str, str, int]] = []
         if request.preset:
             candidates.extend(PRESET_STEPS[request.preset])
@@ -168,6 +194,134 @@ class WorkflowPlanner:
             filename=request.filename,
             operations=tuple(operations),
             notes=tuple(notes),
+        )
+
+    def _minimax_plan(
+        self, request: WorkflowPlanRequest, api_key: str
+    ) -> WorkflowPlan:
+        base_url = self.settings.planner_provider_base_url.strip().rstrip("/")
+        if not base_url:
+            raise ValueError("planner base URL is empty")
+        system_prompt = (
+            "你是 COS 人像后期编排助手。只输出 JSON，不输出 markdown。"
+            "把用户的照片后期需求拆成最多 7 个步骤。只允许 module 为 "
+            "light, skin, hair, costume, body, background, style。"
+            "light/style 必须是 adjustment/global；其他模块必须是 ai/local。"
+            "不要生成图片，不要改变人物身份、姿势、服装设计、构图或原始光线。"
+            'JSON 格式：{"operations":[{"module":"skin","label":"面部精修",'
+            '"intensity":45}],"notes":["..."]}'
+        )
+        user_prompt = json.dumps(
+            request.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
+        )
+        payload = {
+            "model": self.settings.planner_provider_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.15,
+            "max_tokens": 900,
+            "response_format": {"type": "json_object"},
+        }
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        http_request = Request(
+            f"{base_url}/text/chatcompletion_v2",
+            data=body,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        with urlopen(http_request, timeout=20) as response:  # noqa: S310 - configured URL
+            if not 200 <= response.status < 300:
+                raise ValueError("planner request failed")
+            response_payload = json.loads(response.read().decode("utf-8"))
+        generated = self._extract_json(response_payload)
+        return self._normalize_minimax_plan(request, generated)
+
+    @staticmethod
+    def _extract_json(payload: Any) -> dict[str, Any]:
+        content: Any = None
+        if isinstance(payload, dict):
+            choices = payload.get("choices")
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                message = choices[0].get("message")
+                if isinstance(message, dict):
+                    content = message.get("content")
+            if content is None:
+                content = payload.get("reply")
+        if isinstance(content, list):
+            content = "".join(
+                str(item.get("text", "")) for item in content if isinstance(item, dict)
+            )
+        if not isinstance(content, str):
+            raise ValueError("planner content is missing")
+        cleaned = content.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        decoded = json.loads(cleaned)
+        if not isinstance(decoded, dict):
+            raise ValueError("planner JSON is not an object")
+        return decoded
+
+    def _normalize_minimax_plan(
+        self, request: WorkflowPlanRequest, payload: dict[str, Any]
+    ) -> WorkflowPlan:
+        raw_operations = payload.get("operations")
+        if not isinstance(raw_operations, list):
+            raise ValueError("planner operations are missing")
+        operations: list[WorkflowOperation] = []
+        seen: set[str] = set()
+        for raw in raw_operations[:7]:
+            if not isinstance(raw, dict):
+                continue
+            module = str(raw.get("module", "")).strip().lower()
+            if module not in MODULE_LABELS or module in seen:
+                continue
+            seen.add(module)
+            is_adjustment = module in {"light", "style"}
+            raw_label = raw.get("label")
+            label = (
+                str(raw_label).strip()[:80]
+                if isinstance(raw_label, str) and raw_label.strip()
+                else MODULE_LABELS[module]
+            )
+            raw_intensity = raw.get("intensity", 45)
+            intensity = (
+                int(raw_intensity)
+                if isinstance(raw_intensity, (int, float)) and not isinstance(raw_intensity, bool)
+                else 45
+            )
+            operations.append(
+                WorkflowOperation(
+                    id=f"workflow-{module}-{len(operations) + 1}",
+                    module=module,  # type: ignore[arg-type]
+                    label=label,
+                    kind="adjustment" if is_adjustment else "ai",
+                    scope="global" if is_adjustment else "local",
+                    intensity=max(0, min(100, intensity)),
+                    requires_remote_ai=not is_adjustment,
+                )
+            )
+        if not operations:
+            raise ValueError("planner returned no safe operations")
+        raw_notes = payload.get("notes")
+        notes = [
+            "MiniMax 文本智能体已完成后期任务拆解；本次未调用生图。"
+        ]
+        if isinstance(raw_notes, list):
+            notes.extend(str(note).strip()[:160] for note in raw_notes if str(note).strip())
+        if any(operation.scope == "local" for operation in operations) and not request.has_mask:
+            notes.append("检测到局部任务但尚未提供蒙版，建议先在画布上圈选处理区域。")
+        return WorkflowPlan(
+            filename=request.filename,
+            provider="minimax-planner",
+            image_generation_calls=0,
+            operations=tuple(operations),
+            notes=tuple(notes[:6]),
         )
 
 

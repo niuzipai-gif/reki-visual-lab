@@ -152,6 +152,14 @@ export default function EditorCanvas({ sourceUrl, document, selectedLayerId, too
     onMaskStroke(stroke);
   }
 
+  function cancelStroke(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (activePointerRef.current !== event.pointerId) return;
+    activeStrokeRef.current = null;
+    activePointerRef.current = null;
+    setDraftStroke(null);
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  }
+
   return (
     <section className="editor-canvas-panel" aria-labelledby="editor-canvas-title">
       <div className="editor-canvas-heading">
@@ -168,7 +176,7 @@ export default function EditorCanvas({ sourceUrl, document, selectedLayerId, too
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={finishStroke}
-          onPointerCancel={finishStroke}
+          onPointerCancel={cancelStroke}
           style={{ display: "block", width: "100%", height: "auto", touchAction: tool === "select" ? "none" : "none", cursor: tool === "select" ? "grab" : "crosshair" }}
         />
         {!imageRef.current && <div className="editor-canvas-empty">正在准备照片画布…</div>}

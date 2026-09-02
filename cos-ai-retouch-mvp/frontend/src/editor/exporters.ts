@@ -1,7 +1,16 @@
 import { writePsdUint8Array, type Layer as PsdLayer, type PixelData, type Psd } from "ag-psd";
 
-import type { AdjustmentValues, EditorDocument, EditorLayer } from "../domain/editor";
-import { applyAdjustments, rasterizeMask } from "./operations";
+import {
+  DEFAULT_ADJUSTMENTS,
+  type AdjustmentValues,
+  type EditorBlendMode,
+  type EditorDocument,
+  type EditorLayer,
+  type EditorLayerKind,
+  type EditorOperationStep,
+  type EditorScope,
+} from "../domain/editor";
+import { applyAdjustments, createInitialEditorDocument, normalizeMaskStrokes, rasterizeMask } from "./operations";
 
 export interface AuraProjectExport {
   exportVersion: 1;
@@ -168,6 +177,131 @@ export function createAuraProjectJson(document: EditorDocument): AuraProjectExpo
       ...(layer.operation ? { operation: { ...layer.operation, preserve: [...layer.operation.preserve], adjustments: { ...layer.operation.adjustments } } } : {}),
     })),
     history: [...document.history],
+  };
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
+}
+
+function finiteNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function editorLayerKind(value: unknown): EditorLayerKind {
+  return value === "adjustment" || value === "ai" || value === "group" || value === "image" ? value : "adjustment";
+}
+
+function editorScope(value: unknown): EditorScope {
+  return value === "local" ? "local" : "global";
+}
+
+function editorBlendMode(value: unknown): EditorBlendMode {
+  return value === "multiply" || value === "screen" || value === "overlay" || value === "soft-light" ? value : "normal";
+}
+
+function editorModule(value: unknown): EditorLayer["module"] {
+  return value === "light" || value === "skin" || value === "hair" || value === "costume" || value === "body" || value === "background" || value === "style" || value === "original" ? value : "light";
+}
+
+function importAdjustments(value: unknown): AdjustmentValues {
+  const source = recordValue(value);
+  return {
+    exposure: finiteNumber(source?.exposure, DEFAULT_ADJUSTMENTS.exposure),
+    contrast: finiteNumber(source?.contrast, DEFAULT_ADJUSTMENTS.contrast),
+    saturation: finiteNumber(source?.saturation, DEFAULT_ADJUSTMENTS.saturation),
+    temperature: finiteNumber(source?.temperature, DEFAULT_ADJUSTMENTS.temperature),
+    sharpness: finiteNumber(source?.sharpness, DEFAULT_ADJUSTMENTS.sharpness),
+    grain: finiteNumber(source?.grain, DEFAULT_ADJUSTMENTS.grain),
+    vignette: finiteNumber(source?.vignette, DEFAULT_ADJUSTMENTS.vignette),
+  };
+}
+
+function importMaskStrokes(value: unknown): EditorLayer["maskStrokes"] {
+  if (!Array.isArray(value)) return [];
+  return normalizeMaskStrokes(value.flatMap((rawStroke) => {
+    const stroke = recordValue(rawStroke);
+    const points = Array.isArray(stroke?.points)
+      ? stroke.points.flatMap((rawPoint) => {
+          const point = recordValue(rawPoint);
+          const x = finiteNumber(point?.x, -1);
+          const y = finiteNumber(point?.y, -1);
+          return x >= 0 && x <= 1 && y >= 0 && y <= 1 ? [{ x, y }] : [];
+        })
+      : [];
+    if (!points.length) return [];
+    return [{
+      mode: stroke?.mode === "erase" ? "erase" as const : "add" as const,
+      width: Math.min(120, Math.max(4, finiteNumber(stroke?.width, 28))),
+      points,
+    }];
+  }));
+}
+
+function importOperation(value: unknown): EditorOperationStep | undefined {
+  const source = recordValue(value);
+  if (!source || typeof source.id !== "string" || typeof source.label !== "string") return undefined;
+  const module = editorModule(source.module);
+  if (module === "original") return undefined;
+  const kind = source.kind === "ai" ? "ai" as const : "adjustment" as const;
+  return {
+    id: source.id,
+    label: source.label,
+    module,
+    kind,
+    scope: editorScope(source.scope),
+    adjustments: importAdjustments(source.adjustments),
+    preserve: Array.isArray(source.preserve) ? source.preserve.filter((item): item is string => typeof item === "string").slice(0, 20) : [],
+    requiresRemoteAi: source.requiresRemoteAi === true,
+  };
+}
+
+/** Restore editable AURA state while deliberately reusing the currently selected photo. */
+export function readAuraProjectJson(value: string, sourceDataUrl: string | null): EditorDocument {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    throw new Error("项目 JSON 无法读取，请选择 AURA 导出的项目文件");
+  }
+  const project = recordValue(parsed);
+  if (project?.exportVersion !== 1 || !Array.isArray(project.layers)) {
+    throw new Error("项目版本不受支持，请重新导出项目 JSON");
+  }
+  const filename = typeof project.filename === "string" && project.filename.trim() ? project.filename : "cos-photo.jpg";
+  const initial = createInitialEditorDocument(
+    filename,
+    Math.max(1, Math.round(finiteNumber(project.width, 1200))),
+    Math.max(1, Math.round(finiteNumber(project.height, 800))),
+  );
+  const layers = project.layers.flatMap((rawLayer) => {
+    const source = recordValue(rawLayer);
+    if (!source || typeof source.id !== "string" || typeof source.name !== "string") return [];
+    const kind = editorLayerKind(source.kind);
+    const module = editorModule(source.module);
+    const operation = importOperation(source.operation);
+    return [{
+      id: source.id,
+      name: source.name,
+      kind,
+      module,
+      visible: source.visible !== false,
+      locked: source.locked === true || kind === "image",
+      opacity: Math.min(1, Math.max(0, finiteNumber(source.opacity, 1))),
+      blendMode: editorBlendMode(source.blendMode),
+      scope: editorScope(source.scope),
+      adjustments: importAdjustments(source.adjustments),
+      maskStrokes: importMaskStrokes(source.maskStrokes),
+      ...(operation ? { operation } : {}),
+    } satisfies EditorLayer];
+  });
+  const hasImageLayer = layers.some((layer) => layer.kind === "image");
+  return {
+    ...initial,
+    id: typeof project.id === "string" && project.id ? project.id : initial.id,
+    sourceDataUrl,
+    layers: hasImageLayer ? layers : initial.layers,
+    history: Array.isArray(project.history) ? project.history.filter((item): item is string => typeof item === "string").slice(-100) : [],
   };
 }
 

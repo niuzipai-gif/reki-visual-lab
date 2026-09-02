@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     image_provider_api_key: SecretStr | None = Field(default=None, repr=False)
     image_provider_base_url: str | None = None
     image_provider_model: str = "cos-retouch-default"
+    planner_provider_mode: Literal["rules", "minimax"] = "rules"
+    planner_provider_base_url: str = "https://api.minimaxi.com/v1"
+    planner_provider_model: str = "MiniMax-Text-01"
 
     storage_endpoint: str | None = Field(default=None, repr=False)
     storage_bucket: str | None = None
@@ -62,6 +65,11 @@ class Settings(BaseSettings):
 
     def get_image_provider_api_key(self) -> str | None:
         return self._get_secret(self.image_provider_api_key)
+
+    def get_planner_api_key(self) -> str | None:
+        """Reuse the server-only provider credential for text orchestration."""
+
+        return self.get_image_provider_api_key()
 
     def get_storage_access_key(self) -> str | None:
         return self._get_secret(self.storage_access_key)

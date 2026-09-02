@@ -21,6 +21,10 @@ interface EditorControlsProps {
   onExportPsd: () => void;
   onExportJpg: () => void;
   onSaveProject: () => void;
+  onImportProject: () => void;
+  onRunRemoteAi: () => void;
+  remoteAiAvailable?: boolean;
+  remoteAiBusy?: boolean;
 }
 
 const MODULES: Array<{ id: EditorModule; label: string; icon: string; kind: EditorLayerKind }> = [
@@ -67,6 +71,10 @@ export default function EditorControls({
   onExportPsd,
   onExportJpg,
   onSaveProject,
+  onImportProject,
+  onRunRemoteAi,
+  remoteAiAvailable = false,
+  remoteAiBusy = false,
 }: EditorControlsProps) {
   const values = selectedLayer?.adjustments;
   const isAdjustmentLayer = selectedLayer?.kind === "adjustment" || selectedLayer?.kind === "ai";
@@ -111,7 +119,7 @@ export default function EditorControls({
             </button>
           ))}
         </div>
-        <p className="editor-control-note">局部 AI 模块只加入任务队列，真正执行时再选择云端模型；不会消耗 MiniMax 生图额度。</p>
+        <p className="editor-control-note">光影和风格可在浏览器即时预览；面部、发丝、服装等局部任务会等你点击执行后才提交云端。</p>
       </section>
 
       <section className="editor-control-section editor-preset-section" aria-labelledby="editor-preset-title">
@@ -134,7 +142,7 @@ export default function EditorControls({
             </button>
           ))}
         </div>
-        <p className="editor-control-note">方案只创建可编辑图层；局部 AI 层先进入任务队列，不会消耗 MiniMax 生图额度。</p>
+        <p className="editor-control-note">自动方案先拆成可编辑图层，局部 AI 不会在套用方案时偷偷消耗额度。</p>
       </section>
 
       <section className="editor-control-section" aria-labelledby="editor-adjust-title">
@@ -165,10 +173,17 @@ export default function EditorControls({
       <section className="editor-action-section" aria-label="编辑操作">
         <button type="button" className="secondary-button" disabled={lastChange === null} onClick={onUndo}>撤回上一笔</button>
         <button type="button" className="secondary-button" onClick={onRestore}>恢复原图</button>
+        <div className="editor-cloud-action">
+          <button type="button" className="primary-button editor-cloud-button" disabled={!remoteAiAvailable || remoteAiBusy} onClick={onRunRemoteAi}>
+            {remoteAiBusy ? "正在执行云端 AI…" : "执行云端 AI 修图"}
+          </button>
+          <small>{remoteAiAvailable ? "只提交当前显示的局部 AI 图层" : "先加入面部、发丝或服装等 AI 图层"}</small>
+        </div>
         <div className="editor-export-actions">
           <button type="button" className="primary-button" onClick={onExportPsd}>导出 PSD</button>
           <button type="button" className="secondary-button" onClick={onExportJpg}>导出 JPG</button>
           <button type="button" className="secondary-button" onClick={onSaveProject}>保存项目 JSON</button>
+          <button type="button" className="secondary-button" onClick={onImportProject}>导入项目 JSON</button>
         </div>
       </section>
     </aside>

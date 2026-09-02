@@ -5,7 +5,7 @@ import { initializeCanvas, readPsd } from "ag-psd";
 import { describe, expect, it } from "vitest";
 
 import { createInitialEditorDocument } from "../editor/operations";
-import { buildPsdBytes, createAuraProjectJson } from "../editor/exporters";
+import { buildPsdBytes, createAuraProjectJson, readAuraProjectJson } from "../editor/exporters";
 
 function sourceImage(): ImageData {
   return {
@@ -46,5 +46,17 @@ describe("editor exporters", () => {
     expect(project.layers).toHaveLength(2);
     expect(JSON.stringify(project)).not.toMatch(/sk-[A-Za-z0-9_-]{20,}/);
     expect(JSON.stringify(project)).not.toContain("https://");
+  });
+
+  it("restores editable layers while binding the project to the currently selected photo", () => {
+    const original = createInitialEditorDocument("miku.jpg", 2, 1);
+    original.layers[1].adjustments.exposure = 42;
+    original.layers[1].maskStrokes = [{ mode: "add", width: 30, points: [{ x: 0.2, y: 0.4 }] }];
+    const restored = readAuraProjectJson(JSON.stringify(createAuraProjectJson(original)), "blob:current-photo");
+
+    expect(restored.filename).toBe("miku.jpg");
+    expect(restored.sourceDataUrl).toBe("blob:current-photo");
+    expect(restored.layers[1].adjustments.exposure).toBe(42);
+    expect(restored.layers[1].maskStrokes[0]?.points[0]).toEqual({ x: 0.2, y: 0.4 });
   });
 });

@@ -135,7 +135,7 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
     return (
       <main className="app-shell studio-shell editor-shell" data-stage="editor">
         <StudioHeader currentStep="upload" />
-        <PhotoEditorPanel filename={editorSource.file.name} sourceUrl={editorSource.url} planWorkflow={apiClient.planWorkflow} onBack={() => setEditorSource(null)} />
+        <PhotoEditorPanel filename={editorSource.file.name} sourceUrl={editorSource.url} sourceFile={editorSource.file} apiClient={apiClient} planWorkflow={apiClient.planWorkflow} onBack={() => setEditorSource(null)} />
       </main>
     );
   }

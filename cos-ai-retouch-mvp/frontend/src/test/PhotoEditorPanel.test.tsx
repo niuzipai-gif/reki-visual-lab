@@ -118,4 +118,53 @@ describe("PhotoEditorPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "返回照片选择" }));
     expect(onBack).toHaveBeenCalledTimes(1);
   });
+
+  it("submits visible AI layers through the existing task workflow and renders the result", async () => {
+    const generated = {
+      ...{
+        taskId: "editor-task",
+        status: "succeeded" as const,
+        analysis: [],
+        originalAssetUrl: null,
+        maskAssetUrl: null,
+        plan: null,
+        error: null,
+      },
+      versions: [{
+        id: "version-1",
+        assetUrl: { kind: "version" as const, url: "https://storage.example/result.png", expiresAt: "2099-01-01T00:00:00Z" },
+        createdAt: "2026-09-02T00:00:00Z",
+        validation: { face_identity: "pass" as const },
+        selected: true,
+      }],
+    };
+    const apiClient = {
+      createTask: vi.fn().mockResolvedValue({ taskId: "editor-task", status: "uploading" as const, uploadUrl: "https://storage.example/upload" }),
+      uploadOriginal: vi.fn().mockResolvedValue(undefined),
+      startAnalysis: vi.fn().mockResolvedValue(undefined),
+      getTask: vi.fn().mockResolvedValueOnce({ taskId: "editor-task", status: "awaiting_confirmation" as const, analysis: [], versions: [], plan: null, error: null })
+        .mockResolvedValueOnce({ taskId: "editor-task", status: "awaiting_confirmation" as const, analysis: [], versions: [], plan: null, error: null })
+        .mockResolvedValueOnce(generated),
+      savePlan: vi.fn().mockResolvedValue(undefined),
+      startGeneration: vi.fn().mockResolvedValue(undefined),
+      getDownloadUrl: vi.fn(),
+    };
+    render(
+      <PhotoEditorPanel
+        filename="miku-cos.jpg"
+        sourceUrl={sourceUrl}
+        sourceFile={new File(["photo"], "miku-cos.jpg", { type: "image/jpeg" })}
+        apiClient={apiClient}
+        onBack={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "面部精修" }));
+    fireEvent.click(screen.getByRole("button", { name: "执行云端 AI 修图" }));
+
+    await waitFor(() => expect(apiClient.startGeneration).toHaveBeenCalledTimes(1));
+    expect(apiClient.savePlan).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("云端 AI 已完成，结果已回到工作台下方，可与原图对照。")).toBeVisible();
+    expect(screen.getByAltText("云端 AI 修图结果")).toHaveAttribute("src", "https://storage.example/result.png");
+  });
 });
