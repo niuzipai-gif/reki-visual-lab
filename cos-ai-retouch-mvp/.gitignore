@@ -31,3 +31,4 @@ htmlcov/
 *.sqlite3
 playwright-report/
 test-results/
+.superpowers/
