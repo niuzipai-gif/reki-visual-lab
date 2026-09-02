@@ -11,8 +11,10 @@ import type { TaskOperation, TaskView } from "../domain/task";
 import AnalysisPanel from "../components/AnalysisPanel";
 import InviteGate from "../components/InviteGate";
 import ResultPanel from "../components/ResultPanel";
+import StudioHeader from "../components/StudioHeader";
 import TaskProgress from "../components/TaskProgress";
 import UploadPanel, { type PreviewChangeHandler } from "../components/UploadPanel";
+import WorkflowRail, { type WorkflowStep } from "../components/WorkflowRail";
 
 interface AppProps {
   apiClient?: ApiClient;
@@ -135,18 +137,13 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
         task.status === "validating" ||
         (task.status === "failed" && Boolean(task.plan))),
   );
+  const currentStep: WorkflowStep = showResult ? "result" : showAnalysis ? "analysis" : "upload";
 
   return (
-    <main className="app-shell">
-      <header className="app-header">
-        <div>
-          <p className="eyebrow">COS AI 角色写真</p>
-          <h1>把喜欢的角色，好好留在照片里</h1>
-        </div>
-        <span className="privacy-note">你的照片只用于本次修图</span>
-      </header>
-      <div className="workflow-layout">
-        <div className="workflow-main">
+    <main className="app-shell studio-shell" data-stage={currentStep}>
+      <StudioHeader currentStep={currentStep} />
+      <div className="workflow-layout studio-layout">
+        <div className="workflow-main photo-stage" data-testid="workflow-main">
           {!showAnalysis && !showResult && (
             <UploadPanel
               inviteToken={inviteToken}
@@ -194,16 +191,9 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
             />
           )}
         </div>
-        <aside className="workflow-aside">
-          <div className="aside-card">
-            <p className="eyebrow">修图小助手</p>
-            <ol className="step-list">
-              <li className={!task ? "active" : "complete"}><span>01</span>上传照片</li>
-              <li className={showAnalysis ? "active" : "pending"}><span>02</span>选择想变好的地方</li>
-              <li className={task?.status === "succeeded" ? "complete" : "pending"}><span>03</span>生成预览</li>
-            </ol>
-            <p className="aside-copy">每一步都由你确认，原图和角色感都会好好保留。</p>
-          </div>
+        <aside className="workflow-aside control-rail" data-testid="workflow-aside">
+          <WorkflowRail currentStep={currentStep} />
+          <p className="studio-rail-note">每一步都由你确认，原图和角色感都会好好保留。</p>
           {task?.status === "failed" && task.taskId !== "local-upload" && (
             <TaskProgress status={task.status} error={task.error} onRecover={handleRecovery} />
           )}

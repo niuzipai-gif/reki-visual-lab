@@ -109,12 +109,29 @@ describe("COS retouch app", () => {
     expect(screen.getByRole("heading", { name: "先放一张你喜欢的照片" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "进入我的写真工作室" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("邀请 token")).not.toBeInTheDocument();
+    expect(screen.getByText("AURA STUDIO")).toBeVisible();
+    expect(screen.getByText("角色写真后期工作室")).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "修图步骤" })).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "修图步骤" })).toHaveAttribute("data-current-step", "upload");
+    expect(screen.getByText("照片会是主角，工具只在需要时出现。")).toBeVisible();
+    expect(screen.getByRole("main")).toHaveAttribute("data-stage", "upload");
+    expect(screen.getByRole("main")).toHaveClass("studio-shell");
+    expect(screen.getByTestId("workflow-main")).toHaveClass("photo-stage");
+    expect(screen.getByTestId("workflow-aside")).toHaveClass("control-rail");
     expect(screen.getByText("COS AI 角色写真")).toBeVisible();
     expect(screen.getByRole("heading", { name: "把喜欢的角色，好好留在照片里" })).toBeVisible();
     expect(screen.getByText("你的照片只用于本次修图")).toBeVisible();
-    expect(screen.getByText("修图小助手")).toBeVisible();
+    expect(screen.getByText("AURA STUDIO")).toBeVisible();
+    expect(screen.getByText("角色写真后期工作室")).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "修图步骤" })).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "修图步骤" })).toHaveAttribute(
+      "data-current-step",
+      "upload",
+    );
+    expect(screen.getByText("照片会是主角，工具只在需要时出现。")).toBeVisible();
+    expect(screen.getByText("STUDIO FLOW")).toBeVisible();
     expect(screen.getByText("上传照片")).toBeVisible();
-    expect(screen.getByText("选择想变好的地方")).toBeVisible();
+    expect(screen.getByText("选择修图")).toBeVisible();
     expect(screen.getByText("生成预览")).toBeVisible();
     expect(screen.getByText("每一步都由你确认，原图和角色感都会好好保留。")).toBeVisible();
     expect(setItemSpy).not.toHaveBeenCalled();
