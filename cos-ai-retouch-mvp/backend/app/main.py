@@ -20,6 +20,7 @@ from app.api.routes_tasks import (
     router as tasks_router,
     storage_router,
 )
+from app.api.routes_workflows import router as workflows_router
 from app.config import Settings, get_settings
 from app.db import create_db_engine
 from app.repositories.tasks import TaskRepository
@@ -192,6 +193,7 @@ def create_app(
     app.include_router(tasks_router)
     app.include_router(maintenance_router)
     app.include_router(storage_router)
+    app.include_router(workflows_router)
     return app
 
 

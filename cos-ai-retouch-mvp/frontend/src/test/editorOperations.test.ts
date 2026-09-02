@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyAdjustments,
+  applyPreset,
   clampAdjustments,
   createInitialEditorDocument,
   expandPreset,
@@ -85,5 +86,22 @@ describe("editor operations", () => {
   it("maps editor blend modes to canvas composite modes", () => {
     expect(toCanvasBlendMode("normal")).toBe("source-over");
     expect(toCanvasBlendMode("soft-light")).toBe("soft-light");
+  });
+
+  it("expands a preset into replaceable non-destructive layers", () => {
+    const document = createInitialEditorDocument("miku.jpg", 1200, 800);
+    const first = applyPreset(document, "natural-studio");
+    const second = applyPreset(first, "retro-film");
+
+    expect(first.layers.map((layer) => layer.id)).toEqual([
+      "original",
+      "light-base",
+      "preset-natural-studio-natural-studio-light",
+      "preset-natural-studio-natural-studio-skin",
+      "preset-natural-studio-natural-studio-finish",
+    ]);
+    expect(second.layers.filter((layer) => layer.id.startsWith("preset-natural-studio"))).toHaveLength(0);
+    expect(second.layers.filter((layer) => layer.id.startsWith("preset-retro-film"))).toHaveLength(3);
+    expect(second.layers.find((layer) => layer.id.includes("retro-film-light"))?.adjustments.exposure).toBe(-4);
   });
 });

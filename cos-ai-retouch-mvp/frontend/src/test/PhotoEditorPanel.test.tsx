@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "./setup";
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import PhotoEditorPanel from "../components/PhotoEditorPanel";
@@ -54,6 +54,48 @@ describe("PhotoEditorPanel", () => {
     fireEvent.click(visibility);
     expect(visibility).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: "显示图层: 原图（锁定）" })).toBeChecked();
+  });
+
+  it("applies an editable preset and keeps its layers separate from the locked original", () => {
+    renderEditor();
+
+    fireEvent.click(screen.getByRole("button", { name: /复古胶片/ }));
+
+    expect(screen.getByRole("heading", { name: "一键后期方案" })).toBeVisible();
+    expect(screen.getAllByText("复古柔光").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("胶片褪色").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("细腻颗粒").length).toBeGreaterThan(0);
+    expect(screen.getByRole("checkbox", { name: "显示图层: 原图（锁定）" })).toBeChecked();
+  });
+
+  it("lets the planner orchestrate an automatic chain without generating an image", async () => {
+    const planWorkflow = vi.fn().mockResolvedValue({
+      filename: "miku-cos.jpg",
+      provider: "rules",
+      imageGenerationCalls: 0,
+      operations: [{
+        id: "workflow-light-1",
+        module: "light",
+        label: "智能提亮",
+        kind: "adjustment",
+        scope: "global",
+        intensity: 55,
+        requiresRemoteAi: false,
+        preserve: ["face identity"],
+      }],
+      preserve: ["face identity"],
+      validation: ["face identity"],
+      notes: [],
+    });
+
+    render(
+      <PhotoEditorPanel filename="miku-cos.jpg" sourceUrl={sourceUrl} onBack={vi.fn()} planWorkflow={planWorkflow} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /自动执行/ }));
+
+    await waitFor(() => expect(screen.getAllByText("智能提亮").length).toBeGreaterThan(0));
+    expect(planWorkflow).toHaveBeenCalledWith({ filename: "miku-cos.jpg", preset: "natural-studio", modules: [], hasMask: false });
+    expect(screen.getByText(/智能体已完成后期拆解/)).toBeVisible();
   });
 
   it("switches to mask mode and exposes brush controls", () => {

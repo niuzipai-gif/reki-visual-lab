@@ -71,3 +71,33 @@ export interface EditorDocument {
 
 export type EditorPresetId = "natural-studio" | "clear-japanese" | "retro-film" | "dark-cinema";
 
+export interface WorkflowPlanInput {
+  filename: string;
+  preset?: EditorPresetId;
+  modules?: string[];
+  intent?: string;
+  hasMask?: boolean;
+  imageWidth?: number;
+  imageHeight?: number;
+}
+
+export interface WorkflowOperationView {
+  id: string;
+  module: EditorOperationStep["module"];
+  label: string;
+  kind: "adjustment" | "ai";
+  scope: EditorScope;
+  intensity: number;
+  requiresRemoteAi: boolean;
+  preserve: string[];
+}
+
+export interface WorkflowPlanView {
+  filename: string;
+  provider: "rules" | "minimax-planner";
+  imageGenerationCalls: number;
+  operations: WorkflowOperationView[];
+  preserve: string[];
+  validation: string[];
+  notes: string[];
+}

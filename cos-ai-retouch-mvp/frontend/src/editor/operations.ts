@@ -152,6 +152,32 @@ export function expandPreset(preset: EditorPresetId): EditorOperationStep[] {
   }
 }
 
+/** Apply a preset as replaceable layers without changing or baking the original pixels. */
+export function applyPreset(document: EditorDocument, preset: EditorPresetId): EditorDocument {
+  const presetPrefix = `preset-${preset}-`;
+  const retainedLayers = document.layers.filter((layer) => !layer.id.startsWith("preset-"));
+  const presetLayers: EditorLayer[] = expandPreset(preset).map((operation) => ({
+    id: `${presetPrefix}${operation.id}`,
+    name: operation.requiresRemoteAi ? `${operation.label} · 待云端 AI` : operation.label,
+    kind: operation.kind,
+    module: operation.module,
+    visible: true,
+    locked: false,
+    opacity: 1,
+    blendMode: "normal",
+    scope: operation.scope,
+    adjustments: clampAdjustments(operation.adjustments),
+    maskStrokes: [],
+    operation,
+  }));
+
+  return {
+    ...document,
+    layers: [...retainedLayers, ...presetLayers],
+    history: [...document.history],
+  };
+}
+
 export function normalizeMaskStrokes(strokes: EditorMaskStroke[]): EditorMaskStroke[] {
   return strokes
     .filter((stroke) => Array.isArray(stroke.points) && stroke.points.length > 0)

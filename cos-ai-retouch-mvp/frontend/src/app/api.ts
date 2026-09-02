@@ -14,6 +14,7 @@ import {
   type TaskView,
   type VersionView,
 } from "../domain/task";
+import type { WorkflowPlanInput, WorkflowPlanView } from "../domain/editor";
 
 export type ErrorRecoveryAction = "invite" | "reupload" | "retry" | "back" | "review";
 
@@ -388,6 +389,44 @@ export function normalizeTask(value: unknown): TaskView {
   };
 }
 
+function mapWorkflowPlan(value: unknown): WorkflowPlanView {
+  const payload = isRecord(value) ? value : {};
+  const allowedModules = new Set(["light", "skin", "hair", "costume", "body", "background", "style"]);
+  const operations = Array.isArray(payload.operations)
+    ? payload.operations.flatMap((rawOperation) => {
+        const item = isRecord(rawOperation) ? rawOperation : {};
+        const rawModule = stringValue(item.module, "light");
+        const module = allowedModules.has(rawModule) ? rawModule : "light";
+        const rawKind = item.kind === "ai" ? "ai" as const : "adjustment" as const;
+        const rawScope = item.scope === "local" ? "local" as const : "global" as const;
+        return [{
+          id: stringValue(item.id, `workflow-${module}`),
+          module: module as WorkflowPlanView["operations"][number]["module"],
+          label: stringValue(item.label, "COS 后期处理"),
+          kind: rawKind,
+          scope: rawScope,
+          intensity: Math.min(100, Math.max(0, numberValue(item.intensity) ?? 45)),
+          requiresRemoteAi: item.requires_remote_ai === true || item.requiresRemoteAi === true,
+          preserve: Array.isArray(item.preserve)
+            ? item.preserve.filter((entry): entry is string => typeof entry === "string")
+            : [],
+        }];
+      })
+    : [];
+  const stringArray = (entry: unknown, fallback: string[]) => Array.isArray(entry)
+    ? entry.filter((value): value is string => typeof value === "string")
+    : fallback;
+  return {
+    filename: stringValue(payload.filename, "cos-photo"),
+    provider: payload.provider === "minimax-planner" ? "minimax-planner" : "rules",
+    imageGenerationCalls: numberValue(payload.image_generation_calls ?? payload.imageGenerationCalls) ?? 0,
+    operations,
+    preserve: stringArray(payload.preserve, [...DEFAULT_PRESERVE]),
+    validation: stringArray(payload.validation, [...DEFAULT_VALIDATION]),
+    notes: stringArray(payload.notes, []),
+  };
+}
+
 function apiUrl(path: string): string {
   return `${API_BASE_URL}${path}`;
 }
@@ -579,6 +618,23 @@ export async function getDownloadUrl(
   );
 }
 
+export async function planWorkflow(input: WorkflowPlanInput): Promise<WorkflowPlanView> {
+  return request(
+    "/api/v1/workflows/plan",
+    jsonBody({
+      filename: input.filename,
+      ...(input.preset ? { preset: input.preset } : {}),
+      modules: input.modules ?? [],
+      intent: input.intent ?? "",
+      has_mask: input.hasMask === true,
+      ...(input.imageWidth ? { image_width: input.imageWidth } : {}),
+      ...(input.imageHeight ? { image_height: input.imageHeight } : {}),
+    }),
+    undefined,
+    mapWorkflowPlan,
+  );
+}
+
 export interface ApiClient {
   createTask: typeof createTask;
   uploadOriginal: typeof uploadOriginal;
@@ -587,6 +643,7 @@ export interface ApiClient {
   savePlan: typeof savePlan;
   startGeneration: typeof startGeneration;
   getDownloadUrl: typeof getDownloadUrl;
+  planWorkflow?: typeof planWorkflow;
 }
 
 export const apiClient: ApiClient = {
@@ -597,6 +654,7 @@ export const apiClient: ApiClient = {
   savePlan,
   startGeneration,
   getDownloadUrl,
+  planWorkflow,
 };
 
 export const api = apiClient;

@@ -1,4 +1,4 @@
-import type { AdjustmentValues, EditorLayer, EditorLayerKind, EditorOperationStep } from "../domain/editor";
+import type { AdjustmentValues, EditorLayer, EditorLayerKind, EditorOperationStep, EditorPresetId } from "../domain/editor";
 
 export type EditorTool = "select" | "mask-add" | "mask-erase";
 export type EditorAdjustmentKey = keyof AdjustmentValues;
@@ -13,6 +13,9 @@ interface EditorControlsProps {
   onBrushWidthChange: (width: number) => void;
   onAdjustmentChange: (key: EditorAdjustmentKey, value: number) => void;
   onAddModule: (module: EditorModule) => void;
+  onApplyPreset: (preset: EditorPresetId) => void;
+  onApplyAutoPreset: () => void;
+  plannerBusy?: boolean;
   onRestore: () => void;
   onUndo: () => void;
   onExportPsd: () => void;
@@ -28,6 +31,13 @@ const MODULES: Array<{ id: EditorModule; label: string; icon: string; kind: Edit
   { id: "background", label: "背景清理", icon: "□", kind: "ai" },
   { id: "light", label: "光影重塑", icon: "☼", kind: "adjustment" },
   { id: "style", label: "风格质感", icon: "◌", kind: "adjustment" },
+];
+
+const PRESETS: Array<{ id: EditorPresetId; label: string; note: string }> = [
+  { id: "natural-studio", label: "自然棚拍", note: "提亮 · 肤色 · 柔光" },
+  { id: "clear-japanese", label: "清透日系", note: "亮肤 · 空气感 · 发丝" },
+  { id: "retro-film", label: "复古胶片", note: "褪色 · 暖调 · 颗粒" },
+  { id: "dark-cinema", label: "暗调电影", note: "对比 · 冷暖 · 清场" },
 ];
 
 const ADJUSTMENTS: Array<{ key: EditorAdjustmentKey; label: string; min: number; max: number }> = [
@@ -49,6 +59,9 @@ export default function EditorControls({
   onBrushWidthChange,
   onAdjustmentChange,
   onAddModule,
+  onApplyPreset,
+  onApplyAutoPreset,
+  plannerBusy = false,
   onRestore,
   onUndo,
   onExportPsd,
@@ -99,6 +112,29 @@ export default function EditorControls({
           ))}
         </div>
         <p className="editor-control-note">局部 AI 模块只加入任务队列，真正执行时再选择云端模型；不会消耗 MiniMax 生图额度。</p>
+      </section>
+
+      <section className="editor-control-section editor-preset-section" aria-labelledby="editor-preset-title">
+        <div className="editor-section-heading">
+          <div>
+            <p className="eyebrow">ONE-CLICK LOOK</p>
+            <h2 id="editor-preset-title">一键后期方案</h2>
+          </div>
+          <span className="editor-tip">可撤回</span>
+        </div>
+        <button type="button" className="editor-auto-preset" onClick={onApplyAutoPreset} disabled={plannerBusy}>
+          <span aria-hidden="true">✦</span>
+          <span><strong>{plannerBusy ? "智能体正在拆解后期任务…" : "自动执行 · COS 人像基础链路"}</strong><small>保留身份、姿势、服装与原始光向</small></span>
+          <span aria-hidden="true">›</span>
+        </button>
+        <div className="editor-preset-grid">
+          {PRESETS.map((preset) => (
+            <button type="button" className="editor-preset-button" key={preset.id} onClick={() => onApplyPreset(preset.id)}>
+              <strong>{preset.label}</strong><small>{preset.note}</small>
+            </button>
+          ))}
+        </div>
+        <p className="editor-control-note">方案只创建可编辑图层；局部 AI 层先进入任务队列，不会消耗 MiniMax 生图额度。</p>
       </section>
 
       <section className="editor-control-section" aria-labelledby="editor-adjust-title">

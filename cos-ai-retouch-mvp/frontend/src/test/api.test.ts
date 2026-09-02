@@ -47,6 +47,44 @@ describe("typed task API client", () => {
     vi.stubGlobal("fetch", fetchMock);
   });
 
+  it("plans a browser retouch workflow without sending an image-generation request", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        filename: "miku.jpg",
+        provider: "rules",
+        image_generation_calls: 0,
+        operations: [
+          {
+            id: "workflow-skin-1",
+            module: "skin",
+            label: "面部精修",
+            kind: "ai",
+            scope: "local",
+            intensity: 45,
+            requires_remote_ai: true,
+            preserve: ["face identity"],
+          },
+        ],
+        preserve: ["face identity"],
+        validation: ["face identity"],
+        notes: ["planner only"],
+      }),
+    );
+
+    const { planWorkflow } = await import("../app/api");
+    const plan = await planWorkflow({ filename: "miku.jpg", modules: ["skin"], hasMask: true });
+
+    expect(plan.operations[0]).toMatchObject({ module: "skin", requiresRemoteAi: true });
+    expect(plan.imageGenerationCalls).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://render.example/api/v1/workflows/plan",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ filename: "miku.jpg", modules: ["skin"], intent: "", has_mask: true }),
+      }),
+    );
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();

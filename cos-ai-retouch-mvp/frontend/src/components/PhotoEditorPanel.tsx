@@ -6,9 +6,12 @@ import {
   type EditorDocument,
   type EditorLayer,
   type EditorMaskStroke,
+  type EditorPresetId,
 } from "../domain/editor";
-import { clampAdjustments, createInitialEditorDocument, normalizeMaskStrokes } from "../editor/operations";
+import { applyPreset, clampAdjustments, createInitialEditorDocument, normalizeMaskStrokes } from "../editor/operations";
 import { buildPsdBytes, createAuraProjectJson, createJpgBlob, downloadBlob, downloadJson, loadImageData } from "../editor/exporters";
+import type { WorkflowPlanView } from "../domain/editor";
+import type { ApiClient } from "../app/api";
 import EditorCanvas from "./EditorCanvas";
 import EditorControls, { type EditorAdjustmentKey, type EditorModule, type EditorTool } from "./EditorControls";
 import EditorLayers from "./EditorLayers";
@@ -17,6 +20,7 @@ interface PhotoEditorPanelProps {
   filename: string;
   sourceUrl: string;
   onBack: () => void;
+  planWorkflow?: ApiClient["planWorkflow"];
 }
 
 const MODULE_LABELS: Record<EditorModule, string> = {
@@ -34,7 +38,45 @@ function makeEditorDocument(filename: string, sourceUrl: string): EditorDocument
   return { ...document, sourceDataUrl: sourceUrl };
 }
 
-export default function PhotoEditorPanel({ filename, sourceUrl, onBack }: PhotoEditorPanelProps) {
+function workflowAdjustments(operation: WorkflowPlanView["operations"][number]): AdjustmentValues {
+  const intensity = operation.intensity - 50;
+  switch (operation.module) {
+    case "light": return { ...DEFAULT_ADJUSTMENTS, exposure: Math.round(intensity * 0.8), contrast: Math.round(intensity * 0.45) };
+    case "style": return { ...DEFAULT_ADJUSTMENTS, saturation: Math.round(-Math.max(0, operation.intensity - 35) * 0.35), temperature: Math.round(intensity * 0.2), vignette: Math.max(0, operation.intensity - 30) };
+    case "skin": return { ...DEFAULT_ADJUSTMENTS, saturation: -4, sharpness: Math.round(operation.intensity * 0.18) };
+    default: return { ...DEFAULT_ADJUSTMENTS };
+  }
+}
+
+function applyWorkflowPlan(document: EditorDocument, plan: WorkflowPlanView): EditorDocument {
+  const retainedLayers = document.layers.filter((layer) => !layer.id.startsWith("workflow-"));
+  const workflowLayers: EditorLayer[] = plan.operations.map((operation) => ({
+    id: `workflow-${operation.id}`,
+    name: operation.requiresRemoteAi ? `${operation.label} · 待云端 AI` : operation.label,
+    kind: operation.kind,
+    module: operation.module,
+    visible: true,
+    locked: false,
+    opacity: 1,
+    blendMode: "normal",
+    scope: operation.scope,
+    adjustments: workflowAdjustments(operation),
+    maskStrokes: [],
+    operation: {
+      id: operation.id,
+      label: operation.label,
+      module: operation.module,
+      kind: operation.kind,
+      scope: operation.scope,
+      adjustments: workflowAdjustments(operation),
+      preserve: operation.preserve,
+      requiresRemoteAi: operation.requiresRemoteAi,
+    },
+  }));
+  return { ...document, layers: [...retainedLayers, ...workflowLayers] };
+}
+
+export default function PhotoEditorPanel({ filename, sourceUrl, onBack, planWorkflow }: PhotoEditorPanelProps) {
   const initialDocument = useMemo(() => makeEditorDocument(filename, sourceUrl), [filename, sourceUrl]);
   const [editorDocument, setEditorDocument] = useState<EditorDocument>(initialDocument);
   const [selectedLayerId, setSelectedLayerId] = useState("light-base");
@@ -43,6 +85,7 @@ export default function PhotoEditorPanel({ filename, sourceUrl, onBack }: PhotoE
   const [lastChange, setLastChange] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [exportBusy, setExportBusy] = useState(false);
+  const [plannerBusy, setPlannerBusy] = useState(false);
   const historyRef = useRef<EditorDocument[]>([]);
 
   const selectedLayer = editorDocument.layers.find((layer) => layer.id === selectedLayerId);
@@ -83,20 +126,21 @@ export default function PhotoEditorPanel({ filename, sourceUrl, onBack }: PhotoE
       return;
     }
     const label = MODULE_LABELS[module];
+    const isAdjustmentModule = module === "style";
     const operation = {
       id: layerId,
       label,
       module,
-      kind: "ai" as const,
-      scope: "local" as const,
+      kind: isAdjustmentModule ? "adjustment" as const : "ai" as const,
+      scope: isAdjustmentModule ? "global" as const : "local" as const,
       adjustments: {},
       preserve: ["face identity", "main pose", "costume design", "composition"],
-      requiresRemoteAi: true,
+      ...(isAdjustmentModule ? {} : { requiresRemoteAi: true }),
     };
     const layer: EditorLayer = {
       id: layerId,
-      name: `${label} · 待云端 AI`,
-      kind: "ai",
+      name: isAdjustmentModule ? label : `${label} · 待云端 AI`,
+      kind: isAdjustmentModule ? "adjustment" : "ai",
       module,
       visible: true,
       locked: false,
@@ -109,7 +153,35 @@ export default function PhotoEditorPanel({ filename, sourceUrl, onBack }: PhotoE
     };
     commit({ ...editorDocument, layers: [...editorDocument.layers, layer] }, `已加入「${label}」任务层`);
     setSelectedLayerId(layerId);
-    setTool("mask-add");
+    setTool(isAdjustmentModule ? "select" : "mask-add");
+  }
+
+  function handleApplyPreset(preset: EditorPresetId, message = "已套用后期方案") {
+    const next = applyPreset(editorDocument, preset);
+    commit(next, `${message}：${preset}`);
+    const firstPresetLayer = next.layers.find((layer) => layer.id.startsWith(`preset-${preset}-`));
+    setSelectedLayerId(firstPresetLayer?.id || "light-base");
+    setTool(firstPresetLayer?.scope === "local" ? "mask-add" : "select");
+  }
+
+  async function handleApplyAutoPreset() {
+    if (!planWorkflow) {
+      handleApplyPreset("natural-studio", "已完成自动 COS 人像基础链路");
+      return;
+    }
+    setPlannerBusy(true);
+    try {
+      const plan = await planWorkflow({ filename, preset: "natural-studio", modules: [], hasMask: false });
+      const next = applyWorkflowPlan(editorDocument, plan);
+      commit(next, `智能体已完成后期拆解：${plan.operations.length} 个步骤`);
+      const first = next.layers.find((layer) => layer.id.startsWith("workflow-"));
+      setSelectedLayerId(first?.id || "light-base");
+      setTool(first?.scope === "local" ? "mask-add" : "select");
+    } catch {
+      handleApplyPreset("natural-studio", "云端规划暂不可用，已切换本地自动方案");
+    } finally {
+      setPlannerBusy(false);
+    }
   }
 
   function handleMaskStroke(stroke: EditorMaskStroke) {
@@ -213,7 +285,7 @@ export default function PhotoEditorPanel({ filename, sourceUrl, onBack }: PhotoE
         <div className="photo-editor-middle">
           <EditorLayers layers={editorDocument.layers} selectedLayerId={selectedLayerId} onSelect={setSelectedLayerId} onToggle={handleToggleLayer} onMove={handleMoveLayer} />
         </div>
-        <EditorControls selectedLayer={selectedLayer} tool={tool} brushWidth={brushWidth} lastChange={lastChange} onToolChange={setTool} onBrushWidthChange={setBrushWidth} onAdjustmentChange={handleAdjustmentChange} onAddModule={handleAddModule} onRestore={handleRestore} onUndo={handleUndo} onExportPsd={handleExportPsd} onExportJpg={handleExportJpg} onSaveProject={handleSaveProject} />
+        <EditorControls selectedLayer={selectedLayer} tool={tool} brushWidth={brushWidth} lastChange={lastChange} onToolChange={setTool} onBrushWidthChange={setBrushWidth} onAdjustmentChange={handleAdjustmentChange} onAddModule={handleAddModule} onApplyPreset={handleApplyPreset} onApplyAutoPreset={() => void handleApplyAutoPreset()} plannerBusy={plannerBusy} onRestore={handleRestore} onUndo={handleUndo} onExportPsd={handleExportPsd} onExportJpg={handleExportJpg} onSaveProject={handleSaveProject} />
       </div>
       {exportMessage && <p className="editor-export-message" role="status">{exportMessage}</p>}
     </section>
