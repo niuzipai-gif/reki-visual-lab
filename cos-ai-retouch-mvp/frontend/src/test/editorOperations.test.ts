@@ -6,6 +6,7 @@ import {
   createInitialEditorDocument,
   expandPreset,
   normalizeMaskStrokes,
+  toCanvasBlendMode,
 } from "../editor/operations";
 import { DEFAULT_ADJUSTMENTS, type AdjustmentValues } from "../domain/editor";
 
@@ -79,5 +80,10 @@ describe("editor operations", () => {
     ])).toEqual([
       { mode: "add", width: 30, points: [{ x: 0, y: 0.4 }, { x: 1, y: 1 }] },
     ]);
+  });
+
+  it("maps editor blend modes to canvas composite modes", () => {
+    expect(toCanvasBlendMode("normal")).toBe("source-over");
+    expect(toCanvasBlendMode("soft-light")).toBe("soft-light");
   });
 });

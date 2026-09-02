@@ -17,6 +17,7 @@ interface EditorControlsProps {
   onUndo: () => void;
   onExportPsd: () => void;
   onExportJpg: () => void;
+  onSaveProject: () => void;
 }
 
 const MODULES: Array<{ id: EditorModule; label: string; icon: string; kind: EditorLayerKind }> = [
@@ -52,6 +53,7 @@ export default function EditorControls({
   onUndo,
   onExportPsd,
   onExportJpg,
+  onSaveProject,
 }: EditorControlsProps) {
   const values = selectedLayer?.adjustments;
   const isAdjustmentLayer = selectedLayer?.kind === "adjustment" || selectedLayer?.kind === "ai";
@@ -130,6 +132,7 @@ export default function EditorControls({
         <div className="editor-export-actions">
           <button type="button" className="primary-button" onClick={onExportPsd}>导出 PSD</button>
           <button type="button" className="secondary-button" onClick={onExportJpg}>导出 JPG</button>
+          <button type="button" className="secondary-button" onClick={onSaveProject}>保存项目 JSON</button>
         </div>
       </section>
     </aside>

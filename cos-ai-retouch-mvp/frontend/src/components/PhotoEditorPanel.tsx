@@ -8,6 +8,7 @@ import {
   type EditorMaskStroke,
 } from "../domain/editor";
 import { clampAdjustments, createInitialEditorDocument, normalizeMaskStrokes } from "../editor/operations";
+import { buildPsdBytes, createAuraProjectJson, createJpgBlob, downloadBlob, downloadJson, loadImageData } from "../editor/exporters";
 import EditorCanvas from "./EditorCanvas";
 import EditorControls, { type EditorAdjustmentKey, type EditorModule, type EditorTool } from "./EditorControls";
 import EditorLayers from "./EditorLayers";
@@ -41,6 +42,7 @@ export default function PhotoEditorPanel({ filename, sourceUrl, onBack }: PhotoE
   const [brushWidth, setBrushWidth] = useState(28);
   const [lastChange, setLastChange] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
   const historyRef = useRef<EditorDocument[]>([]);
 
   const selectedLayer = editorDocument.layers.find((layer) => layer.id === selectedLayerId);
@@ -147,12 +149,42 @@ export default function PhotoEditorPanel({ filename, sourceUrl, onBack }: PhotoE
     setTool("select");
   }
 
+  async function withSourceImage(action: (source: ImageData) => void | Promise<void>, successMessage: string) {
+    if (exportBusy) return;
+    setExportBusy(true);
+    setExportMessage("正在读取原图并生成文件…");
+    try {
+      const source = await loadImageData(sourceUrl);
+      await action(source);
+      setExportMessage(successMessage);
+    } catch (error) {
+      setExportMessage(error instanceof Error ? error.message : "导出失败，请重试");
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
   function handleExportPsd() {
-    setExportMessage("PSD 导出器准备中…");
+    void withSourceImage((source) => {
+      const bytes = buildPsdBytes(editorDocument, source);
+      const stem = editorDocument.filename.replace(/\.[^.]+$/, "") || "aura-cos";
+      downloadBlob(new Blob([bytes], { type: "image/vnd.adobe.photoshop" }), `${stem}-aura.psd`);
+    }, "PSD 已导出：图层与蒙版均已保留");
   }
 
   function handleExportJpg() {
-    setExportMessage("JPG 导出器准备中…");
+    void withSourceImage(async (source) => {
+      const blob = await createJpgBlob(editorDocument, source);
+      const stem = editorDocument.filename.replace(/\.[^.]+$/, "") || "aura-cos";
+      downloadBlob(blob, `${stem}-aura.jpg`);
+    }, "JPG 已导出：已按当前工作台效果合成");
+  }
+
+  function handleSaveProject() {
+    const project = createAuraProjectJson(editorDocument);
+    const stem = editorDocument.filename.replace(/\.[^.]+$/, "") || "aura-cos";
+    downloadJson(project, `${stem}-aura-project.json`);
+    setExportMessage("项目 JSON 已保存：下次可继续编辑");
   }
 
   return (
@@ -181,10 +213,9 @@ export default function PhotoEditorPanel({ filename, sourceUrl, onBack }: PhotoE
         <div className="photo-editor-middle">
           <EditorLayers layers={editorDocument.layers} selectedLayerId={selectedLayerId} onSelect={setSelectedLayerId} onToggle={handleToggleLayer} onMove={handleMoveLayer} />
         </div>
-        <EditorControls selectedLayer={selectedLayer} tool={tool} brushWidth={brushWidth} lastChange={lastChange} onToolChange={setTool} onBrushWidthChange={setBrushWidth} onAdjustmentChange={handleAdjustmentChange} onAddModule={handleAddModule} onRestore={handleRestore} onUndo={handleUndo} onExportPsd={handleExportPsd} onExportJpg={handleExportJpg} />
+        <EditorControls selectedLayer={selectedLayer} tool={tool} brushWidth={brushWidth} lastChange={lastChange} onToolChange={setTool} onBrushWidthChange={setBrushWidth} onAdjustmentChange={handleAdjustmentChange} onAddModule={handleAddModule} onRestore={handleRestore} onUndo={handleUndo} onExportPsd={handleExportPsd} onExportJpg={handleExportJpg} onSaveProject={handleSaveProject} />
       </div>
       {exportMessage && <p className="editor-export-message" role="status">{exportMessage}</p>}
     </section>
   );
 }
-
