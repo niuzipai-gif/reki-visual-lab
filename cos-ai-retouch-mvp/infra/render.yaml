@@ -35,11 +35,14 @@ services:
         sync: false
       - key: RUNTIME_ENVIRONMENT
         value: production
+      # The browser editor is usable without an image-generation provider.
+      # Keep the task workflow quota-safe until a dedicated remote inpaint
+      # provider is explicitly configured in the Render dashboard.
       - key: IMAGE_PROVIDER_MODE
-        value: minimax
+        value: mock
       - key: IMAGE_PROVIDER_BASE_URL
         sync: false
       - key: IMAGE_PROVIDER_MODEL
-        value: image-01
+        value: cos-retouch-default
       - key: IMAGE_PROVIDER_API_KEY
         sync: false

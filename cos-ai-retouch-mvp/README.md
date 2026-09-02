@@ -1,8 +1,8 @@
 # COS AI Retouch MVP
 
-This repository contains an open-by-default, single-photo COS retouch MVP. The guided workflow analyzes one JPG or PNG, lets the user confirm natural-retouch and structure-repair regions, and sends a structured edit plan to a server-side image-provider adapter. The original image remains untouched so results can be compared and rolled back. To restore strict invite validation, set `REQUIRE_INVITE_TOKENS=true` and configure `INVITE_TOKENS`.
+This repository contains an open-by-default, single-photo COS retouch MVP. The guided workflow analyzes one JPG or PNG, while the browser workstation provides non-destructive layers, masks, local adjustments, editable presets, JPG export, layered PSD export, and an AURA project JSON sidecar. The original image remains untouched so results can be compared and rolled back. To restore strict invite validation for the guided cloud workflow, set `REQUIRE_INVITE_TOKENS=true` and configure `INVITE_TOKENS`.
 
-The application is intentionally split into a React/Vite frontend, a FastAPI backend, S3-compatible object storage, and an image-provider boundary. The frontend must never call an image model directly.
+The application is intentionally split into a React/Vite frontend, a FastAPI backend, S3-compatible object storage, a planner-only workflow boundary, and an optional image-provider boundary. The frontend must never call an image model directly. MiniMax is reserved for future text/task orchestration; the current planner uses a deterministic quota-safe fallback and never spends image-generation quota.
 
 ## Full-MVP local commands
 
@@ -60,16 +60,27 @@ python -m ruff check app tests
 python -m compileall -q app tests
 ```
 
+## Browser editor and open-source boundaries
+
+The editor runs entirely in the browser. It stores normalized mask strokes and
+adjustment values as serializable state, renders a live Canvas 2D preview, and
+uses the MIT-licensed [`ag-psd`](https://github.com/Agamnentzar/ag-psd) library
+for layered PSD writing. The planner endpoint is `POST /api/v1/workflows/plan`;
+it returns bounded operations and explicitly reports zero image-generation
+calls. Local filters cover exposure, contrast, saturation, temperature,
+sharpness, grain, vignette, blend modes, and rasterized brush masks. AI-only
+modules are represented as visible, editable task layers and are marked as
+pending until a remote inpaint/segmentation provider is configured.
+
 ## Provider and secret boundary
 
 `IMAGE_PROVIDER_MODE=mock` is the safe default for local development and browser tests. It provides deterministic workflow behavior without requiring an external image service. Set `IMAGE_PROVIDER_MODE=minimax`, `IMAGE_PROVIDER_BASE_URL=https://api.minimaxi.com/v1`, `IMAGE_PROVIDER_MODEL=image-01`, and `IMAGE_PROVIDER_API_KEY` in the backend environment to enable the MiniMax reference-image generation path. External-provider credentials belong only in backend/server environment variables. No image-model API key belongs in frontend environment variables, source code, or browser requests.
 
-The first MiniMax integration uses the documented `image_generation` image-to-image
-API with one `subject_reference` image and a server-generated prompt. It returns
-one base64 candidate and stores the decoded bytes behind the task service. This
-is a whole-image reference generation path, not a pixel-perfect masked inpaint;
-the confirmed plan and mask are included as constraints, but a true local inpaint
-model is still required for hard region preservation.
+The existing MiniMax adapter remains an optional legacy path for the guided
+cloud workflow. It uses the documented `image_generation` image-to-image API
+with one `subject_reference` image and a server-generated prompt. It is a
+whole-image reference generation path, not a pixel-perfect masked inpaint;
+the browser editor and planner do not call it.
 
 Uploaded originals, masks, and generated versions are intended for S3-compatible object storage rather than the backend's local filesystem. The initial asset-retention target is 24 hours.
 
@@ -148,9 +159,10 @@ have already been run.
 - Pose repair is local and region-bounded. It requires a confirmed region and
   mask, and does not authorize full-body redraw, unrestricted pose generation,
   camera changes, or silent expansion into unrelated image areas.
-- PSD export, batch processing, user accounts, billing, and local GPU
-  inference are outside this MVP and are not acceptance requirements for this
-  release.
+- Batch processing, user accounts, billing, and local GPU inference are outside
+  this MVP and are not acceptance requirements for this release. Layered PSD
+  export is included in the browser editor and should be verified by opening a
+  generated file in a PSD-capable editor.
 - Real GitHub Pages and Render smoke verification is still pending authorized
   deployment. Local tests, configuration, or a successful build must not be
   reported as proof that the live Pages/Render path has been deployed or
@@ -174,4 +186,7 @@ have already been run.
 
 ## Scope
 
-This MVP does not include accounts, payments, public sharing, batch processing, PSD export, or a prompt editor. The shared workflow contract is documented in [`shared/task-contract.md`](shared/task-contract.md).
+This MVP still does not include accounts, payments, public sharing, batch
+processing, or local GPU inference. PSD export, browser masks, local adjustment
+filters, editable presets, and the planner-only workflow endpoint are included.
+The shared workflow contract is documented in [`shared/task-contract.md`](shared/task-contract.md).
