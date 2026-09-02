@@ -260,9 +260,16 @@ class WorkflowPlanner:
         if not isinstance(content, str):
             raise ValueError("planner content is missing")
         cleaned = content.strip()
+        if "</think>" in cleaned:
+            cleaned = cleaned.rsplit("</think>", 1)[-1].strip()
         if cleaned.startswith("```"):
             cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        decoded = json.loads(cleaned)
+        if not cleaned.startswith("{"):
+            start = cleaned.find("{")
+            if start < 0:
+                raise ValueError("planner JSON is missing")
+            cleaned = cleaned[start:]
+        decoded = json.JSONDecoder().raw_decode(cleaned)[0]
         if not isinstance(decoded, dict):
             raise ValueError("planner JSON is not an object")
         return decoded
