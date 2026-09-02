@@ -1,4 +1,5 @@
 import inspect
+import base64
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -12,8 +13,10 @@ from app.config import Settings
 from app.domain.models import AssetURL, EditPlan, Goal, MaskStroke, Operation
 from app.services.image_provider import (
     ExternalImageModelProvider,
+    MiniMaxImageModelProvider,
     MockImageModelProvider,
     ProviderError,
+    create_image_provider,
 )
 
 
@@ -117,6 +120,112 @@ def test_external_provider_sends_a_structured_plan_and_normalizes_jobs():
     assert result.job_id == "job-42"
     assert result.asset_url.url.endswith("job-42.png")
     assert result.metadata == {"provider_request_id": "req-42"}
+
+
+def test_minimax_provider_submits_reference_image_and_keeps_generated_bytes_server_side():
+    requests = []
+    generated = MockImageModelProvider.result_fixture
+    encoded = base64.b64encode(generated).decode("ascii")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "id": "minimax-image-42",
+                "data": {"image_base64": [encoded]},
+                "metadata": {"failed_count": "0", "success_count": "1"},
+                "base_resp": {"status_code": 0, "status_msg": "success"},
+            },
+        )
+
+    secret = "server-only-secret"
+    settings = Settings(
+        image_provider_mode="minimax",
+        image_provider_base_url="https://api.minimaxi.com/v1",
+        image_provider_api_key=secret,
+        image_provider_model="image-01",
+    )
+    provider = MiniMaxImageModelProvider(
+        settings,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    plan = EditPlan(
+        operations=(
+            Operation(
+                kind="skin_retouch",
+                goal=Goal.NATURAL_RETOUCH,
+                instructions="保留妆容，只减轻局部瑕疵",
+                intensity=42,
+            ),
+        ),
+        notes="保持原图构图",
+    )
+    source_url = "https://cos.example.test/api/v1/storage/tasks/task-1/original/look.jpg"
+
+    job = provider.submit_edit(source_url, plan)
+    result = provider.poll(job.job_id)
+    body, content_type = provider.download_result(result.asset_url)
+    payload = json.loads(requests[0].content)
+
+    assert requests[0].url == "https://api.minimaxi.com/v1/image_generation"
+    assert requests[0].headers["authorization"] == f"Bearer {secret}"
+    assert payload["model"] == "image-01"
+    assert payload["response_format"] == "base64"
+    assert payload["n"] == 1
+    assert payload["subject_reference"] == [
+        {"type": "character", "image_file": source_url}
+    ]
+    assert "保留妆容" in payload["prompt"]
+    assert "face identity" in payload["prompt"]
+    assert job.job_id == "minimax-image-42"
+    assert job.status == "succeeded"
+    assert result.metadata == {
+        "provider": "minimax",
+        "model": "image-01",
+        "demo": False,
+        "provider_request_id": "minimax-image-42",
+    }
+    assert body == generated
+    assert content_type == "image/png"
+
+
+def test_create_image_provider_selects_minimax_mode():
+    provider = create_image_provider(
+        Settings(
+            image_provider_mode="minimax",
+            image_provider_base_url="https://api.minimaxi.com/v1",
+            image_provider_api_key="server-only-secret",
+        )
+    )
+
+    assert isinstance(provider, MiniMaxImageModelProvider)
+
+
+def test_minimax_provider_rejects_a_success_response_without_images():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "minimax-image-empty",
+                "data": {"image_base64": []},
+                "base_resp": {"status_code": 0, "status_msg": "success"},
+            },
+        )
+
+    provider = MiniMaxImageModelProvider(
+        Settings(
+            image_provider_mode="minimax",
+            image_provider_base_url="https://api.minimaxi.com/v1",
+            image_provider_api_key="server-only-secret",
+        ),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(ProviderError) as raised:
+        provider.submit_edit("https://assets.example.test/original.png", EditPlan())
+
+    assert raised.value.code == "INVALID_PROVIDER_RESPONSE"
 
 
 def test_external_provider_reuses_a_job_for_the_same_operation():

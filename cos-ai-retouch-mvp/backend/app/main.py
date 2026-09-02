@@ -15,7 +15,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import sessionmaker
 
-from app.api.routes_tasks import maintenance_router, router as tasks_router
+from app.api.routes_tasks import (
+    maintenance_router,
+    router as tasks_router,
+    storage_router,
+)
 from app.config import Settings, get_settings
 from app.db import create_db_engine
 from app.repositories.tasks import TaskRepository
@@ -187,6 +191,7 @@ def create_app(
 
     app.include_router(tasks_router)
     app.include_router(maintenance_router)
+    app.include_router(storage_router)
     return app
 
 

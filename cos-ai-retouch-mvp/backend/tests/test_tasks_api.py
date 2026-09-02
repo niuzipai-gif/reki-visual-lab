@@ -358,6 +358,52 @@ def test_healthz_and_task_creation_require_invite_and_return_upload_reservation(
     assert "invite-demo" not in created.text
 
 
+def test_small_deployment_can_upload_original_through_the_signed_backend_bridge(
+    repository,
+):
+    from app.main import create_app
+
+    settings = Settings(
+        storage_public_url="http://testserver",
+        invite_tokens=["invite-demo"],
+        require_invite_tokens=True,
+        max_upload_bytes=1024 * 1024,
+        asset_ttl_hours=1,
+    )
+    storage = InMemoryStorageAdapter(settings)
+    app = create_app(
+        settings=settings,
+        repository=repository,
+        storage=storage,
+        provider=CountingProvider(settings),
+    )
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/tasks",
+            json={
+                "invite_token": "invite-demo",
+                "filename": "cos-photo.jpg",
+                "content_type": "image/jpeg",
+                "byte_size": 10,
+            },
+        )
+        upload_url = created.json()["upload_url"]
+        uploaded = client.put(
+            upload_url,
+            content=b"jpeg-bytes",
+            headers={"Content-Type": "image/jpeg"},
+        )
+        downloaded = client.get(upload_url)
+
+    assert created.status_code == 200
+    assert upload_url.startswith("http://testserver/api/v1/storage/")
+    assert uploaded.status_code == 200
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"jpeg-bytes"
+    assert downloaded.headers["content-type"].startswith("image/jpeg")
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

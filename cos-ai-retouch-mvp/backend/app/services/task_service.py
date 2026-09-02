@@ -1128,13 +1128,19 @@ class TaskService:
                 code="UPSTREAM_UNAVAILABLE",
                 retryable=True,
             ) from exc
+        normalized_content_type = (
+            payload[1].split(";", 1)[0].strip().lower()
+            if isinstance(payload, tuple)
+            and len(payload) == 2
+            and isinstance(payload[1], str)
+            else ""
+        )
         if (
             not isinstance(payload, tuple)
             or len(payload) != 2
             or not isinstance(payload[0], bytes)
             or not payload[0]
-            or not isinstance(payload[1], str)
-            or payload[1].split(";", 1)[0].strip().lower() != "image/png"
+            or normalized_content_type not in {"image/png", "image/jpeg"}
             or len(payload[0]) > self.settings.max_upload_bytes
         ):
             raise ProviderError(
@@ -1148,7 +1154,7 @@ class TaskService:
             self.storage.put_object(
                 object_key,
                 payload[0],
-                content_type="image/png",
+                content_type=normalized_content_type,
             )
             signed_url = self.storage.create_download_url(object_key)
         except StorageError as exc:

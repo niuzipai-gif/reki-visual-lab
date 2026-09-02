@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     asset_ttl_hours: int = 24
     max_upload_bytes: int = 20 * 1024 * 1024
     runtime_environment: Literal["development", "production", "test"] = "development"
-    image_provider_mode: Literal["mock", "external"] = "mock"
+    image_provider_mode: Literal["mock", "external", "minimax"] = "mock"
     image_provider_api_key: SecretStr | None = Field(default=None, repr=False)
     image_provider_base_url: str | None = None
     image_provider_model: str = "cos-retouch-default"
@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     storage_region: str | None = None
     storage_access_key: SecretStr | None = Field(default=None, repr=False)
     storage_secret_key: SecretStr | None = Field(default=None, repr=False)
+    storage_signing_secret: SecretStr = Field(
+        default=SecretStr("local-development-signing-secret"), repr=False
+    )
     storage_public_url: str | None = None
 
     def get_database_url(self) -> str:
@@ -65,6 +68,9 @@ class Settings(BaseSettings):
 
     def get_storage_secret_key(self) -> str | None:
         return self._get_secret(self.storage_secret_key)
+
+    def get_storage_signing_secret(self) -> str:
+        return self.storage_signing_secret.get_secret_value()
 
 
 @lru_cache(maxsize=1)

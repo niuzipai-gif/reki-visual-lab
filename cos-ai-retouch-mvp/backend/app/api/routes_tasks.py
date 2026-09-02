@@ -6,17 +6,19 @@ from collections.abc import Generator
 from math import isfinite
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Header, Request, Response
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict
 
 from app.domain.models import EditPlan, TaskStatus
 from app.repositories.tasks import TaskRepository
 from app.services.cleanup import cleanup_expired_assets
+from app.services.storage import InMemoryStorageAdapter, StorageError
 from app.services.task_service import TaskService, TaskServiceError
 
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
 maintenance_router = APIRouter(prefix="/api/v1/maintenance", tags=["maintenance"])
+storage_router = APIRouter(prefix="/api/v1/storage", tags=["storage"])
 
 
 _PUBLIC_ERROR_MESSAGES = {
@@ -187,6 +189,38 @@ def _has_invalid_mask_strokes(payload: Any) -> bool:
     return False
 
 
+@storage_router.api_route("/{object_path:path}", methods=["PUT", "GET"])
+async def bridge_memory_asset(object_path: str, request: Request) -> Response:
+    """Bridge the in-memory adapter for small Render deployments.
+
+    S3 deployments continue to use native presigned URLs.  The bridge exists
+    only when the app is using the explicitly short-lived in-memory adapter;
+    the URL signature is checked before either upload or read.
+    """
+
+    storage = getattr(request.app.state, "storage", None)
+    if not isinstance(storage, InMemoryStorageAdapter):
+        raise HTTPException(status_code=404, detail="asset not found")
+    signed_url = str(request.url)
+    try:
+        if request.method == "PUT":
+            request_body = await request.body()
+            storage.put_signed_object(
+                signed_url,
+                request_body,
+                content_type=request.headers.get("content-type", ""),
+            )
+            return Response(status_code=200)
+        body, content_type = storage.read_signed_object(signed_url)
+    except StorageError as exc:
+        raise HTTPException(status_code=403, detail="signed asset is invalid") from exc
+    return Response(
+        content=body,
+        media_type=content_type,
+        headers={"Cache-Control": "private, max-age=60, no-store"},
+    )
+
+
 @router.post("")
 def create_task(
     payload: CreateTaskRequest | None = Body(default=None),
@@ -299,4 +333,5 @@ __all__ = [
     "get_task_service",
     "maintenance_router",
     "router",
+    "storage_router",
 ]

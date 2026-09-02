@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from datetime import datetime, timedelta, timezone
-from hashlib import sha256
 from typing import Any, Protocol
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 from uuid import UUID
 
 import boto3
@@ -180,6 +181,8 @@ def _validate_object_key(object_key: str) -> str:
         raise StorageError("object key contains an invalid path component")
     if parts[2] not in {"original", "mask", "versions"}:
         raise StorageError("object key is outside the asset namespace")
+    if parts[2] == "original" and not parts[3]:
+        raise StorageError("original object key must contain a filename")
     if parts[2] == "mask" and not parts[3].endswith(".json"):
         raise StorageError("mask object key must end with .json")
     if parts[2] == "versions" and not parts[3].endswith(".png"):
@@ -200,19 +203,35 @@ class InMemoryStorageAdapter:
         object_key: str,
         expires_at: datetime,
         content_length: int | None = None,
+        content_type: str | None = None,
     ) -> str:
         encoded_key = quote(object_key, safe="/")
         expires = int(expires_at.timestamp())
-        signature = sha256(f"{object_key}:{expires}".encode("utf-8")).hexdigest()
+        signing_secret = self.settings.get_storage_signing_secret()
+        signature = hmac.new(
+            signing_secret.encode("utf-8"),
+            f"{object_key}:{expires}".encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
         size_query = (
             f"&X-Upload-Content-Length={content_length}"
             if content_length is not None
             else ""
         )
+        type_query = (
+            f"&X-Upload-Content-Type={quote(content_type, safe='')}"
+            if content_type is not None
+            else ""
+        )
+        base_url = (self.settings.storage_public_url or "https://storage.local").rstrip(
+            "/"
+        )
+        path_prefix = "/api/v1/storage/" if self.settings.storage_public_url else "/"
         return (
-            f"https://storage.local/{encoded_key}"
+            f"{base_url}{path_prefix}{encoded_key}"
             f"?X-Amz-Expires={_ttl_seconds(self.settings)}"
-            f"&X-Amz-Date={expires}&X-Amz-Signature={signature}{size_query}"
+            f"&X-Amz-Date={expires}&X-Amz-Signature={signature}"
+            f"{size_query}{type_query}"
         )
 
     def create_upload_url(
@@ -229,7 +248,12 @@ class InMemoryStorageAdapter:
         expires_at = _expires_at(self.settings)
         return _asset(
             kind="original",
-            url=self._signed_url(object_key, expires_at, content_length),
+            url=self._signed_url(
+                object_key,
+                expires_at,
+                content_length,
+                content_type,
+            ),
             object_key=object_key,
             content_type=content_type,
             expires_at=expires_at,
@@ -252,6 +276,72 @@ class InMemoryStorageAdapter:
             raise StorageError("object body must be bytes")
         self.objects[object_key] = body
         self.content_types[object_key] = content_type
+
+    def _resolve_signed_url(self, signed_url: str) -> str:
+        if not isinstance(signed_url, str) or not signed_url:
+            raise StorageError("signed asset URL is invalid")
+        parsed = urlsplit(signed_url)
+        base_url = (self.settings.storage_public_url or "https://storage.local").rstrip(
+            "/"
+        )
+        expected_base = urlsplit(base_url)
+        if (
+            parsed.scheme.lower() != expected_base.scheme.lower()
+            or parsed.netloc.lower() != expected_base.netloc.lower()
+        ):
+            raise StorageError("signed asset URL is invalid")
+        prefix = "/api/v1/storage/" if self.settings.storage_public_url else "/"
+        if not parsed.path.startswith(prefix):
+            raise StorageError("signed asset URL is invalid")
+        object_key = unquote(parsed.path[len(prefix) :]).lstrip("/")
+        _validate_object_key(object_key)
+        query = parse_qs(parsed.query)
+        raw_expires = query.get("X-Amz-Date", [""])[0]
+        signature = query.get("X-Amz-Signature", [""])[0]
+        try:
+            expires = int(raw_expires)
+        except (TypeError, ValueError) as exc:
+            raise StorageError("signed asset URL is invalid") from exc
+        if expires < int(datetime.now(timezone.utc).timestamp()):
+            raise StorageError("signed asset URL has expired")
+        expected_signature = hmac.new(
+            self.settings.get_storage_signing_secret().encode("utf-8"),
+            f"{object_key}:{expires}".encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected_signature):
+            raise StorageError("signed asset URL is invalid")
+        return object_key
+
+    def put_signed_object(
+        self,
+        signed_url: str,
+        body: bytes,
+        *,
+        content_type: str,
+    ) -> None:
+        object_key = self._resolve_signed_url(signed_url)
+        parts = object_key.split("/")
+        if len(parts) != 4 or parts[2] != "original":
+            raise StorageError("signed asset URL is not an upload URL")
+        expected_content_type = parse_qs(urlsplit(signed_url).query).get(
+            "X-Upload-Content-Type", [""]
+        )[0]
+        if expected_content_type != content_type:
+            raise StorageError("upload content type does not match the reservation")
+        if not isinstance(body, bytes) or not body:
+            raise StorageError("upload body must not be empty")
+        if len(body) > self.settings.max_upload_bytes:
+            raise StorageError("upload exceeds the maximum upload size")
+        self.put_object(object_key, body, content_type=content_type)
+
+    def read_signed_object(self, signed_url: str) -> tuple[bytes, str]:
+        object_key = self._resolve_signed_url(signed_url)
+        body = self.objects.get(object_key)
+        content_type = self.content_types.get(object_key)
+        if body is None or content_type is None:
+            raise StorageError("asset was not uploaded")
+        return body, content_type
 
 
 class S3StorageAdapter:

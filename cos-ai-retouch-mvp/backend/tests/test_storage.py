@@ -35,6 +35,49 @@ def test_memory_storage_uses_a_basename_and_returns_an_expiring_upload_asset():
     assert ".." not in asset.object_key
 
 
+def test_memory_storage_can_bridge_a_signed_asset_through_the_backend():
+    settings = Settings(
+        storage_public_url="http://testserver",
+        max_upload_bytes=1024,
+    )
+    storage = InMemoryStorageAdapter(settings)
+    task_id = uuid4()
+    asset = storage.create_upload_url(
+        task_id,
+        "cos-look.jpg",
+        "image/jpeg",
+        content_length=10,
+    )
+
+    storage.put_signed_object(asset.url, b"jpeg-bytes", content_type="image/jpeg")
+    body, content_type = storage.read_signed_object(asset.url)
+
+    assert "/api/v1/storage/tasks/" in asset.url
+    assert body == b"jpeg-bytes"
+    assert content_type == "image/jpeg"
+
+
+def test_memory_storage_rejects_an_invalid_signed_asset_bridge_request():
+    settings = Settings(
+        storage_public_url="http://testserver",
+        max_upload_bytes=1024,
+    )
+    storage = InMemoryStorageAdapter(settings)
+    asset = storage.create_upload_url(
+        uuid4(),
+        "cos-look.jpg",
+        "image/jpeg",
+        content_length=10,
+    )
+
+    with pytest.raises(StorageError):
+        storage.put_signed_object(
+            asset.url.replace("X-Amz-Signature=", "X-Amz-Signature=invalid"),
+            b"jpeg-bytes",
+            content_type="image/jpeg",
+        )
+
+
 @pytest.mark.parametrize(
     "content_type", ["image/gif", "application/octet-stream", "IMAGE/PNG"]
 )

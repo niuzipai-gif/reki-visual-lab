@@ -29,15 +29,17 @@ services:
         sync: false
       - key: STORAGE_SECRET_KEY
         sync: false
+      - key: STORAGE_SIGNING_SECRET
+        sync: false
       - key: STORAGE_PUBLIC_URL
         sync: false
       - key: RUNTIME_ENVIRONMENT
         value: production
       - key: IMAGE_PROVIDER_MODE
-        value: mock
+        value: minimax
       - key: IMAGE_PROVIDER_BASE_URL
         sync: false
       - key: IMAGE_PROVIDER_MODEL
-        value: cos-retouch-default
+        value: image-01
       - key: IMAGE_PROVIDER_API_KEY
         sync: false

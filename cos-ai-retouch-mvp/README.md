@@ -62,7 +62,14 @@ python -m compileall -q app tests
 
 ## Provider and secret boundary
 
-`IMAGE_PROVIDER_MODE=mock` is the safe default for local development and browser tests. It provides deterministic workflow behavior without requiring an external image service. External-provider credentials belong only in backend/server environment variables. No image-model API key belongs in frontend environment variables, source code, or browser requests.
+`IMAGE_PROVIDER_MODE=mock` is the safe default for local development and browser tests. It provides deterministic workflow behavior without requiring an external image service. Set `IMAGE_PROVIDER_MODE=minimax`, `IMAGE_PROVIDER_BASE_URL=https://api.minimaxi.com/v1`, `IMAGE_PROVIDER_MODEL=image-01`, and `IMAGE_PROVIDER_API_KEY` in the backend environment to enable the MiniMax reference-image generation path. External-provider credentials belong only in backend/server environment variables. No image-model API key belongs in frontend environment variables, source code, or browser requests.
+
+The first MiniMax integration uses the documented `image_generation` image-to-image
+API with one `subject_reference` image and a server-generated prompt. It returns
+one base64 candidate and stores the decoded bytes behind the task service. This
+is a whole-image reference generation path, not a pixel-perfect masked inpaint;
+the confirmed plan and mask are included as constraints, but a true local inpaint
+model is still required for hard region preservation.
 
 Uploaded originals, masks, and generated versions are intended for S3-compatible object storage rather than the backend's local filesystem. The initial asset-retention target is 24 hours.
 
@@ -90,16 +97,17 @@ results must be stored in S3-compatible object storage, and no Render disk is
 configured for image persistence.
 
 The Blueprint intentionally leaves runtime configuration for the Render
-Dashboard. In the service's **Environment** settings, add
-`IMAGE_PROVIDER_API_KEY` with the exact key supplied by the provider, then
-save and redeploy the service. Keep this value in Render's secret environment
-settings only; never put it in this README, the repository, Pages variables,
-or browser code. Fill `DATABASE_URL`, `ALLOWED_ORIGINS`, and the storage
-credentials there as well. Invite validation is open by default; set
-`REQUIRE_INVITE_TOKENS=true` and configure `INVITE_TOKENS` to restore strict
-validation. For the mock provider smoke flow,
-keep `IMAGE_PROVIDER_MODE=mock`; switch to `external` only after the provider
-endpoint, model, and API key have been configured server-side.
+Dashboard. For a small no-S3 validation deployment, set
+`RUNTIME_ENVIRONMENT=development`, `STORAGE_PUBLIC_URL` to the Render service
+URL, and a private `STORAGE_SIGNING_SECRET`; the backend then exposes a
+short-lived signed bridge for the original image. This is ephemeral and not
+appropriate for durable storage. To enable MiniMax, set
+`IMAGE_PROVIDER_MODE=minimax`, `IMAGE_PROVIDER_BASE_URL=https://api.minimaxi.com/v1`,
+`IMAGE_PROVIDER_MODEL=image-01`, and `IMAGE_PROVIDER_API_KEY`. Keep the API key
+in Render's secret environment settings only; never put it in this README, the
+repository, Pages variables, or browser code. Invite validation is open by
+default; set `REQUIRE_INVITE_TOKENS=true` and configure `INVITE_TOKENS` to restore
+strict validation.
 
 Before a commercial public launch, move the frontend to a Render Static Site
 (or equivalent production static host) and migrate to persistent production

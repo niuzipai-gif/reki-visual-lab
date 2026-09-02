@@ -136,7 +136,11 @@ def test_maintenance_cleanup_reuses_invite_boundary_and_returns_cleanup_count(
 
     from app.main import create_app
 
-    settings = Settings(invite_tokens=["invite-demo"], asset_ttl_hours=24)
+    settings = Settings(
+        invite_tokens=["invite-demo"],
+        require_invite_tokens=True,
+        asset_ttl_hours=24,
+    )
     storage = InMemoryStorageAdapter(settings)
     old_id, old_keys = _expired_task(
         repository,

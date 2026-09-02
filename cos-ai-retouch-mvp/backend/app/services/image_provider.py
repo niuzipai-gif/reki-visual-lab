@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -364,6 +365,7 @@ class ExternalImageModelProvider:
         api_key: str,
         payload: dict[str, Any] | None = None,
         operation_key: str | None = None,
+        unwrap_data: bool = True,
     ) -> dict[str, Any]:
         headers = {
             "Accept": "application/json",
@@ -424,7 +426,7 @@ class ExternalImageModelProvider:
                 retryable=True,
             )
         nested = data.get("data")
-        if isinstance(nested, dict):
+        if unwrap_data and isinstance(nested, dict):
             return nested
         return data
 
@@ -654,16 +656,266 @@ class ExternalImageModelProvider:
                 code="INVALID_PROVIDER_RESPONSE",
                 retryable=True,
             )
-        if (
-            not isinstance(content_type, str)
-            or content_type.split(";", 1)[0].strip().lower() != "image/png"
-        ):
+        normalized_content_type = (
+            content_type.split(";", 1)[0].strip().lower()
+            if isinstance(content_type, str)
+            else ""
+        )
+        if normalized_content_type not in {"image/png", "image/jpeg"}:
             raise ProviderError(
-                "image provider returned a non-PNG result",
+                "image provider returned an unsupported image",
                 code="INVALID_PROVIDER_RESPONSE",
                 retryable=True,
             )
-        return body, "image/png"
+        return body, normalized_content_type
+
+
+_MINIMAX_OPERATION_LABELS = {
+    "skin_retouch": "refine small skin blemishes and uneven texture while preserving real pores and makeup",
+    "hair_detail": "clean stray hairs and wig edges while preserving the hairstyle and hairline",
+    "clothing_repair": "repair small costume wrinkles, threads, and material inconsistencies while preserving costume design",
+    "body_pose_repair": "make only subtle local proportion or connection corrections without changing the main pose",
+    "background_cleanup": "remove small distracting objects or cosplay-shooting artifacts while preserving background geometry",
+    "light_balance": "make a gentle local light and color balance while preserving the original light direction and atmosphere",
+}
+
+
+def _minimax_prompt(plan: EditPlan) -> str:
+    """Translate the confirmed structured plan into a bounded edit prompt."""
+
+    requested: list[str] = []
+    for operation in plan.operations:
+        if not operation.enabled:
+            continue
+        instruction = (operation.instructions or "").strip()
+        label = _MINIMAX_OPERATION_LABELS.get(
+            operation.kind,
+            "make a restrained local retouch based on the selected area",
+        )
+        if instruction:
+            label = f"{label}; user note: {instruction}"
+        requested.append(f"- {label} (intensity {operation.intensity}/100)")
+    if not requested:
+        requested.append("- make a restrained natural retouch only")
+
+    preserve = ", ".join(plan.preserve)
+    notes = f" Additional user notes: {plan.notes.strip()}" if plan.notes else ""
+    prompt = (
+        "Edit this original COS cosplay photograph as a professional retouching assistant. "
+        "Use the original image as the composition and identity reference. Apply only the selected, "
+        "localized improvements below; do not redesign the character or create a new scene.\n"
+        "Requested improvements:\n"
+        f"{chr(10).join(requested)}\n"
+        f"Preserve exactly: {preserve}."
+        " Keep the same person, face identity, costume design, pose, framing, perspective, background structure, "
+        "light direction, depth of field, and natural photographic noise. No face swap, no beauty-filter plastic skin, "
+        "no extra fingers, no changed accessories, no watermark, no text, no global recolor, no global relighting."
+        f"{notes}"
+    )
+    return prompt[:1500]
+
+
+def _image_content_type(body: bytes) -> str:
+    if body.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if body.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    raise ProviderError(
+        "image provider returned an unsupported image",
+        code="INVALID_PROVIDER_RESPONSE",
+        retryable=True,
+    )
+
+
+class MiniMaxImageModelProvider(ExternalImageModelProvider):
+    """MiniMax image-to-image adapter using one server-side reference image.
+
+    MiniMax returns generated images in the create response.  The adapter keeps
+    base64 bytes in memory and exposes only a short-lived internal asset handle
+    to the task service, so the API key and provider response never reach the
+    browser.
+    """
+
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        http_client: Any = None,
+        transport: Any = None,
+    ):
+        super().__init__(settings, http_client=http_client, transport=transport)
+        self._results: dict[str, ProviderResult] = {}
+        self._image_bodies: dict[str, tuple[bytes, str]] = {}
+
+    def submit_analysis(self, source_url: str) -> ProviderJob:
+        """Return the safe retouch menu until a vision endpoint is available.
+
+        MiniMax's public image API is generation/reference-image based; it does
+        not expose image understanding in this endpoint.  The UI therefore gets
+        a conservative menu and the actual confirmed edit goes through MiniMax.
+        """
+
+        with self._submission_lock:
+            operation_key = _operation_key("analysis", source_url)
+            existing_job_id = self._operation_jobs.get(operation_key)
+            if existing_job_id is not None:
+                return self._jobs[existing_job_id]
+            job_id = f"minimax-analysis-{operation_key[:16]}"
+            job = ProviderJob(job_id=job_id, operation="analysis", status="succeeded")
+            self._jobs[job_id] = job
+            self._results[job_id] = ProviderResult(
+                job_id=job_id,
+                status="succeeded",
+                analysis=_MOCK_ANALYSIS_FIXTURE,
+                metadata={
+                    "provider": "local",
+                    "model": "cos-retouch-menu-v1",
+                    "demo": False,
+                },
+            )
+            self._operation_jobs[operation_key] = job_id
+            return job
+
+    def submit_edit(self, source_url: str, plan: EditPlan) -> ProviderJob:
+        if not isinstance(plan, EditPlan):
+            raise ProviderError(
+                "edit plan must be structured",
+                code="INVALID_EDIT_PLAN",
+                retryable=False,
+            )
+        with self._submission_lock:
+            base_url, api_key = self._configuration()
+            operation_key = _operation_key("edit", source_url, plan)
+            existing_job_id = self._operation_jobs.get(operation_key)
+            if existing_job_id is not None:
+                return self._jobs[existing_job_id]
+
+            payload: dict[str, Any] = {
+                "model": self.settings.image_provider_model,
+                "prompt": _minimax_prompt(plan),
+                "subject_reference": [
+                    {"type": "character", "image_file": source_url}
+                ],
+                "response_format": "base64",
+                "n": 1,
+                "prompt_optimizer": False,
+                "aigc_watermark": False,
+            }
+            aspect_ratio = getattr(self.settings, "image_provider_aspect_ratio", None)
+            if aspect_ratio:
+                payload["aspect_ratio"] = aspect_ratio
+            data = self._request(
+                "POST",
+                f"{base_url}/image_generation",
+                api_key=api_key,
+                payload=payload,
+                operation_key=operation_key,
+                unwrap_data=False,
+            )
+            base_response = data.get("base_resp")
+            if isinstance(base_response, dict) and str(
+                base_response.get("status_code", "0")
+            ) not in {"0", "None"}:
+                raise ProviderError(
+                    "image provider rejected the generation request",
+                    code="UPSTREAM_ERROR",
+                    retryable=False,
+                )
+            raw_job_id = data.get("id")
+            if not isinstance(raw_job_id, str) or not raw_job_id.strip():
+                raise ProviderError(
+                    "image provider returned an invalid job",
+                    code="INVALID_PROVIDER_RESPONSE",
+                    retryable=True,
+                )
+            response_data = data.get("data")
+            if not isinstance(response_data, dict):
+                raise ProviderError(
+                    "image provider returned an invalid result",
+                    code="INVALID_PROVIDER_RESPONSE",
+                    retryable=True,
+                )
+
+            asset_url: AssetURL | None = None
+            encoded_images = response_data.get("image_base64")
+            if isinstance(encoded_images, list) and encoded_images:
+                encoded = encoded_images[0]
+                if not isinstance(encoded, str) or not encoded:
+                    raise ProviderError(
+                        "image provider returned an invalid image",
+                        code="INVALID_PROVIDER_RESPONSE",
+                        retryable=True,
+                    )
+                try:
+                    body = base64.b64decode(encoded, validate=True)
+                    content_type = _image_content_type(body)
+                except ProviderError:
+                    raise
+                except Exception as exc:
+                    raise ProviderError(
+                        "image provider returned an invalid image",
+                        code="INVALID_PROVIDER_RESPONSE",
+                        retryable=True,
+                    ) from exc
+                if not body or len(body) > self.settings.max_upload_bytes:
+                    raise ProviderError(
+                        "image provider returned an invalid image",
+                        code="INVALID_PROVIDER_RESPONSE",
+                        retryable=True,
+                    )
+                asset_url = AssetURL(
+                    kind="version",
+                    url=f"https://minimax.local/results/{quote(raw_job_id, safe='')}.img",
+                    expires_at=_expires_at(self.settings),
+                )
+                self._image_bodies[asset_url.url] = (body, content_type)
+            else:
+                image_urls = response_data.get("image_urls")
+                if isinstance(image_urls, list) and image_urls:
+                    asset_url = self._asset_from_payload(image_urls[0])
+
+            if asset_url is None:
+                raise ProviderError(
+                    "image provider returned no generated image",
+                    code="INVALID_PROVIDER_RESPONSE",
+                    retryable=True,
+                )
+            job = ProviderJob(
+                job_id=raw_job_id,
+                operation="edit",
+                status="succeeded",
+            )
+            result = ProviderResult(
+                job_id=raw_job_id,
+                status="succeeded",
+                asset_url=asset_url,
+                metadata={
+                    "provider": "minimax",
+                    "model": self.settings.image_provider_model,
+                    "demo": False,
+                    "provider_request_id": raw_job_id,
+                },
+            )
+            self._jobs[raw_job_id] = job
+            self._results[raw_job_id] = result
+            self._operation_jobs[operation_key] = raw_job_id
+            return job
+
+    def poll(self, job_id: str) -> ProviderResult:
+        result = self._results.get(job_id)
+        if result is None:
+            raise ProviderError(
+                "provider job was not found",
+                code="JOB_NOT_FOUND",
+                retryable=False,
+            )
+        return result
+
+    def download_result(self, asset_url: AssetURL) -> tuple[bytes, str]:
+        local_result = self._image_bodies.get(asset_url.url)
+        if local_result is not None:
+            return local_result
+        return super().download_result(asset_url)
 
 
 ImageProvider = ImageModelProvider
@@ -680,6 +932,12 @@ def create_image_provider(
     resolved = settings or get_settings()
     if resolved.image_provider_mode == "mock":
         return MockImageModelProvider(resolved)
+    if resolved.image_provider_mode == "minimax":
+        return MiniMaxImageModelProvider(
+            resolved,
+            http_client=http_client,
+            transport=transport,
+        )
     return ExternalImageModelProvider(
         resolved,
         http_client=http_client,
@@ -691,6 +949,7 @@ __all__ = [
     "ExternalImageModelProvider",
     "ImageModelProvider",
     "ImageProvider",
+    "MiniMaxImageModelProvider",
     "MockImageModelProvider",
     "ProviderError",
     "ProviderJob",
