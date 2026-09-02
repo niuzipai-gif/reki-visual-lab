@@ -9,6 +9,7 @@ import {
 } from "./api";
 import type { TaskOperation, TaskView } from "../domain/task";
 import AnalysisPanel from "../components/AnalysisPanel";
+import PhotoEditorPanel from "../components/PhotoEditorPanel";
 import InviteGate from "../components/InviteGate";
 import ResultPanel from "../components/ResultPanel";
 import StudioHeader from "../components/StudioHeader";
@@ -26,6 +27,11 @@ export interface OperationKeyStore {
 }
 
 type InviteToken = string | null;
+
+interface EditorSource {
+  file: File;
+  url: string;
+}
 
 export function createOperationKeyStore(
   generateKey: () => string = createIdempotencyKey,
@@ -54,6 +60,7 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
   const [task, setTask] = useState<TaskView | null>(null);
   const [reviewRequested, setReviewRequested] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [editorSource, setEditorSource] = useState<EditorSource | null>(null);
   const [operationKeyStore] = useState(createOperationKeyStore);
   const previewUrlRef = useRef<string | null>(null);
   const previewCleanupRef = useRef<(() => void) | null>(null);
@@ -98,6 +105,7 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
     setPreviewUrl(null);
     setTask(null);
     setReviewRequested(false);
+    setEditorSource(null);
   }
 
   function handleRecovery(action: ErrorRecoveryAction) {
@@ -119,6 +127,15 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
     return (
       <main className="app-shell gate-shell">
         <InviteGate onSubmit={handleInviteSubmit} error={gateError} />
+      </main>
+    );
+  }
+
+  if (editorSource) {
+    return (
+      <main className="app-shell studio-shell editor-shell" data-stage="editor">
+        <StudioHeader currentStep="upload" />
+        <PhotoEditorPanel filename={editorSource.file.name} sourceUrl={editorSource.url} onBack={() => setEditorSource(null)} />
       </main>
     );
   }
@@ -151,6 +168,7 @@ export default function App({ apiClient = defaultApiClient }: AppProps) {
               apiClient={apiClient}
               getOperationKey={operationKeyStore.get}
               onTaskUpdate={handleTaskUpdate}
+              onOpenEditor={(file, url) => setEditorSource({ file, url })}
               onPreviewChange={handlePreviewChange}
               onTaskReset={resetWorkflow}
             />

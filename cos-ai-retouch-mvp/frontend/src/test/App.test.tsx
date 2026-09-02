@@ -526,4 +526,21 @@ describe("COS retouch app", () => {
     expect(await screen.findByRole("heading", { name: "选一张最像你的" })).toBeVisible();
     expect(screen.getByTestId("before-after-comparison")).toBeVisible();
   });
+
+  it("opens the browser editor directly from a selected photo without calling the task API", async () => {
+    const user = userEvent.setup();
+    const client = makeClient();
+    render(<App apiClient={client} />);
+
+    await openUploadWorkspace(user);
+    await user.upload(
+      screen.getByLabelText("选择 JPG 或 PNG 原图"),
+      new File(["jpeg-data"], "browser-editor.jpg", { type: "image/jpeg" }),
+    );
+    await user.click(await screen.findByRole("button", { name: "进入网页修图工作台" }));
+
+    expect(await screen.findByRole("heading", { name: "COS 修图工作台" })).toBeVisible();
+    expect(screen.getByRole("main")).toHaveAttribute("data-stage", "editor");
+    expect(client.createTask).not.toHaveBeenCalled();
+  });
 });

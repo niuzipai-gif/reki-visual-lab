@@ -2,6 +2,7 @@ import {
   DEFAULT_ADJUSTMENTS,
   type AdjustmentValues,
   type EditorDocument,
+  type EditorBlendMode,
   type EditorLayer,
   type EditorMaskStroke,
   type EditorOperationStep,
@@ -33,6 +34,10 @@ export function clampAdjustments(values: Partial<AdjustmentValues>): AdjustmentV
     },
     { ...DEFAULT_ADJUSTMENTS },
   );
+}
+
+export function toCanvasBlendMode(mode: EditorBlendMode): GlobalCompositeOperation {
+  return (mode === "normal" ? "source-over" : mode) as GlobalCompositeOperation;
 }
 
 function clampByte(value: number): number {

@@ -20,6 +20,7 @@ export type PreviewChangeHandler = (previewUrl: string | null, release?: () => v
 interface UploadPanelProps {
   inviteToken: string | null;
   onTaskUpdate: (task: TaskView) => void;
+  onOpenEditor?: (file: File, previewUrl: string) => void;
   onPreviewChange?: PreviewChangeHandler;
   onTaskReset?: () => void;
   getOperationKey?: (taskId: string, operation: TaskOperation) => string;
@@ -57,6 +58,7 @@ function isNewFileSelection(previous: File, next: File): boolean {
 export default function UploadPanel({
   inviteToken,
   onTaskUpdate,
+  onOpenEditor,
   onPreviewChange,
   onTaskReset,
   getOperationKey,
@@ -244,6 +246,11 @@ export default function UploadPanel({
           <img src={previewUrl} alt="待处理原图预览" />
           <span>{file?.name}</span>
         </div>
+      )}
+      {previewUrl && file && onOpenEditor && (
+        <button className="secondary-button upload-editor-button" type="button" onClick={() => onOpenEditor(file, previewUrl)}>
+          进入网页修图工作台
+        </button>
       )}
       {error && <p className="error-text" role="alert">{error}</p>}
       <button className="primary-button" type="button" disabled={!file || busy} onClick={() => void handleUpload()}>
